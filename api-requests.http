@@ -1,0 +1,75 @@
+### Обновить профиль
+PATCH http://localhost:8080/api/user/me
+Authorization: Bearer your-access-token-here
+Content-Type: application/json
+
+{
+  "displayName": "Gabriel",
+  "avatar": "https://cdn.example.com/avatar.png",
+  "phoneNumber": "+7772131211"
+}
+
+### Профиль пользователя
+GET http://localhost:8080/api/user/me
+Authorization: "Bearer your-access-token-here"
+
+### Регистрация пользователя
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "test2@gmail.com",
+  "password": "password123",
+  "displayName": "Test User 2",
+  "phoneNumber": "+77001234567"
+}
+
+### Вход
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "password123"
+}
+
+### Обновление токена
+POST http://localhost:8080/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "your-refresh-token-here"
+}
+
+### Выход
+POST http://localhost:8080/api/auth/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "your-refresh-token-here"
+}
+
+### Запрос на восстановление пароля
+POST http://localhost:8080/api/auth/reset-password
+Content-Type: application/json
+
+{
+  "email": "test@example.com"
+}
+
+### Подтверждение сброса пароля
+POST http://localhost:8080/api/auth/reset-password/confirm
+Content-Type: application/json
+
+{
+  "token": "reset-token-from-email",
+  "newPassword": "newpassword123"
+}
+
+### Получение текущего пользователя
+GET http://localhost:8080/api/user/me
+Authorization: Bearer your-access-token-here
+
+
+GET http://localhost:8080/api/user/me
+Authorization: Bearer ACCESS_TOKEN

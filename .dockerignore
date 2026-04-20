@@ -1,0 +1,13 @@
+.git
+.github
+.idea
+.vscode
+target
+.m2repo
+.env
+docker-compose.yml
+README.md
+CHECKLIST.md
+IMPLEMENTATION.md
+QUICKSTART.md
+api-requests.http

@@ -1,0 +1,14 @@
+package kz.hrms.splitupauth.entity;
+
+public enum AdminActionType {
+    ACCESS_CONFIRMED,
+    ACCESS_REJECTED,
+    ROOM_BLOCKED,
+    USER_BANNED,
+    USER_UNBANNED,
+    REFUND_INITIATED,
+    REFUND_APPROVED,
+    REFUND_REJECTED,
+    DISPUTE_RESOLVED,
+    BATCH_CONFIRM
+}
