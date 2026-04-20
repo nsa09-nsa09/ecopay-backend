@@ -1,21 +1,37 @@
-  services:
-    postgres:
-      image: postgres:15-alpine
-      container_name: ecopay-db
-      environment:
-        POSTGRES_DB: ${POSTGRES_DB:-ecopay}
-        POSTGRES_USER: ${POSTGRES_USER:-postgres}
-        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-0000}
-      ports:
-        - "${POSTGRES_PORT:-5432}:5432"
-      volumes:
-        - postgres_data:/var/lib/postgresql/data
-      healthcheck:
-        test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ecopay}" ]
-        interval: 5s
-        timeout: 5s
-        retries: 10
-      restart: unless-stopped
-  
-  volumes:
-    postgres_data:
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ecopay-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ecopay}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-0000}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ecopay}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecopay-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
