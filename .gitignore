@@ -34,5 +34,15 @@ build/
 
 ### .env ###
 .env
+.env.*
+!.env.example
 
 .m2repo/
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Logs ###
+*.log
+logs/

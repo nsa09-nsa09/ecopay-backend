@@ -1,0 +1,32 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set in Dokploy Environment (service name of the external Postgres)}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in Dokploy Environment}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in Dokploy Environment}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in Dokploy Environment}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in Dokploy Environment}
+      JWT_ACCESS_EXPIRATION: ${JWT_ACCESS_EXPIRATION:-900000}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-604800000}
+      APP_SECURITY_FIELD_ENCRYPTION_KEY: ${APP_SECURITY_FIELD_ENCRYPTION_KEY:?APP_SECURITY_FIELD_ENCRYPTION_KEY must be set in Dokploy Environment}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:?APP_CORS_ALLOWED_ORIGINS must be set in Dokploy Environment}
+      APP_RATE_LIMIT_LOGIN_ATTEMPTS: ${APP_RATE_LIMIT_LOGIN_ATTEMPTS:-5}
+      APP_RATE_LIMIT_LOGIN_DURATION_MINUTES: ${APP_RATE_LIMIT_LOGIN_DURATION_MINUTES:-15}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+    restart: unless-stopped
+    expose:
+      - "8080"
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
