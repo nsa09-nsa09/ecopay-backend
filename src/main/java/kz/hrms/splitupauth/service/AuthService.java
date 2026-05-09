@@ -10,6 +10,7 @@ import kz.hrms.splitupauth.repository.PasswordResetTokenRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AuthService {
 
     private final UserRepository userRepository;
@@ -31,6 +33,7 @@ public class AuthService {
     private final EmailService emailService;
     private final RateLimitService rateLimitService;
     private final UserMapper userMapper;
+    private final PhoneVerificationService phoneVerificationService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -38,16 +41,29 @@ public class AuthService {
             throw new UserAlreadyExistsException("User with this email already exists");
         }
 
+        if (userRepository.existsByPhone(request.getPhone())) {
+            throw new PhoneAlreadyExistsException("User with this phone already exists");
+        }
+
         User user = User.builder()
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .displayName(request.getDisplayName())
+                .phone(request.getPhone())
                 .status(UserStatus.ACTIVE)
                 .role(Role.USER)
                 .reputation(0)
                 .build();
 
         user = userRepository.save(user);
+
+        try {
+            phoneVerificationService.requestCode(user, request.getPhone());
+        } catch (Exception ex) {
+            // SMS delivery failure must not block registration — user can resend.
+            log.warn("Failed to send initial SMS code for user {}: {}",
+                    user.getEmail(), ex.getMessage());
+        }
 
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);

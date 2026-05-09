@@ -68,6 +68,21 @@ public class PaymentTransaction {
     @Column(name = "raw_payload", columnDefinition = "jsonb")
     private JsonNode rawPayload;
 
+    @Column(name = "provider_signature", columnDefinition = "TEXT")
+    private String providerSignature;
+
+    @Column(name = "provider_status_code", length = 50)
+    private String providerStatusCode;
+
+    @Column(name = "failure_code", length = 50)
+    private String failureCode;
+
+    @Column(name = "failure_message", columnDefinition = "TEXT")
+    private String failureMessage;
+
+    @Column(name = "card_pan_mask", length = 20)
+    private String cardPanMask;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

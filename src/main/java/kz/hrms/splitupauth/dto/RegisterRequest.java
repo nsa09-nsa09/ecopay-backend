@@ -20,6 +20,7 @@ public class RegisterRequest {
     @NotBlank(message = "Display name is required")
     private String displayName;
 
-//    @Pattern(regexp = "^\\+?[1-9]\\d{1,14}$", message = "Phone number must be valid")
-//    private String phoneNumber;
+    @NotBlank(message = "Phone is required")
+    @Pattern(regexp = "^\\+7\\d{10}$", message = "Phone must be in +7XXXXXXXXXX format")
+    private String phone;
 }

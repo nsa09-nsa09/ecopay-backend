@@ -15,6 +15,8 @@ public class UserDto {
     private Long id;
     private String email;
     private String displayName;
+    private String phone;
+    private boolean phoneVerified;
     private String avatar;
     private UserStatus status;
     private Role role;

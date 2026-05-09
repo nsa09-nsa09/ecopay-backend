@@ -35,6 +35,12 @@ public class User {
     @Column(name = "display_name", nullable = false)
     private String displayName;
 
+    @Column(unique = true)
+    private String phone;
+
+    @Column(name = "phone_verified_at")
+    private LocalDateTime phoneVerifiedAt;
+
     private String avatar;
 
     @Enumerated(EnumType.STRING)

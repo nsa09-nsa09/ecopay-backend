@@ -51,6 +51,30 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
     }
 
+    @ExceptionHandler(TooManySmsAttemptsException.class)
+    public ResponseEntity<ErrorResponse> handleTooManySmsAttempts(TooManySmsAttemptsException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
+    }
+
+    @ExceptionHandler(InvalidVerificationCodeException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidCode(InvalidVerificationCodeException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    @ExceptionHandler(VerificationCodeExpiredException.class)
+    public ResponseEntity<ErrorResponse> handleCodeExpired(VerificationCodeExpiredException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.GONE.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.GONE).body(error);
+    }
+
+    @ExceptionHandler(PhoneAlreadyExistsException.class)
+    public ResponseEntity<ErrorResponse> handlePhoneAlreadyExists(PhoneAlreadyExistsException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
     @ExceptionHandler(UserBannedException.class)
     public ResponseEntity<ErrorResponse> handleUserBanned(UserBannedException ex) {
         ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());

@@ -2,10 +2,13 @@ package kz.hrms.splitupauth.controller;
 
 import jakarta.validation.Valid;
 import kz.hrms.splitupauth.dto.*;
+import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.AuthService;
+import kz.hrms.splitupauth.service.PhoneVerificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -14,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final PhoneVerificationService phoneVerificationService;
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
@@ -46,5 +50,23 @@ public class AuthController {
     public ResponseEntity<Void> confirmPasswordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
         authService.confirmPasswordReset(request);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/phone/request-code")
+    public ResponseEntity<Void> requestPhoneCode(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody RequestPhoneCodeRequest request
+    ) {
+        phoneVerificationService.requestCode(user, request.getPhone());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/phone/verify")
+    public ResponseEntity<Void> verifyPhone(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody VerifyPhoneRequest request
+    ) {
+        phoneVerificationService.verifyCode(user, request.getPhone(), request.getCode());
+        return ResponseEntity.noContent().build();
     }
 }

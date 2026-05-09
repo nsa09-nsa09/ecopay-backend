@@ -8,6 +8,7 @@ import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,7 +19,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface RoomRepository extends JpaRepository<Room, Long> {
+public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificationExecutor<Room> {
     List<Room> findByDeletedAtIsNullOrderByCreatedAtDesc();
     Page<Room> findByDeletedAtIsNull(Pageable pageable);
 

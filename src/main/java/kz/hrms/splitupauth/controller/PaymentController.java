@@ -29,6 +29,14 @@ public class PaymentController {
                 .body(paymentService.createPaymentIntent(roomMemberId, user, request));
     }
 
+    @GetMapping("/intents/{paymentIntentId}")
+    public ResponseEntity<PaymentIntentResponse> getPaymentIntent(
+            @PathVariable Long paymentIntentId,
+            @AuthenticationPrincipal User user
+    ) {
+        return ResponseEntity.ok(paymentService.getPaymentIntent(paymentIntentId, user));
+    }
+
     @PostMapping("/intents/{paymentIntentId}/confirm-success")
     public ResponseEntity<PaymentIntentResponse> confirmPaymentSuccess(
             @PathVariable Long paymentIntentId,

@@ -81,6 +81,13 @@
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
+        <!-- XML parsing for Freedom Pay responses (Jackson 3.x namespace) -->
+        <dependency>
+            <groupId>tools.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-xml</artifactId>
+            <version>3.1.0</version>
+        </dependency>
+
         <!-- Source: https://mvnrepository.com/artifact/org.springdoc/springdoc-openapi-starter-webmvc-ui -->
         <dependency>
             <groupId>org.springdoc</groupId>
