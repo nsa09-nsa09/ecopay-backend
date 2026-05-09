@@ -1,4 +1,9 @@
 -- Phase 8: Reviews and reputation.
+-- V1 created an older `reviews` table with columns (room_id, author_user_id,
+-- target_user_id, status, hidden_by_admin_id). The Review entity uses a
+-- different shape (author_id, recipient_id, hidden_by_admin BOOLEAN),
+-- so we replace the table here. Safe because no code referenced V1's columns.
+DROP TABLE IF EXISTS reviews CASCADE;
 
 CREATE TABLE IF NOT EXISTS reviews (
     id              BIGSERIAL    PRIMARY KEY,

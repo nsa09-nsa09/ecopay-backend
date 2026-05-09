@@ -2,7 +2,7 @@ package kz.hrms.splitupauth.payment.gateway.freedom;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.annotation.PostConstruct;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -30,9 +30,9 @@ public class FreedomPayClient {
     private final FreedomPayProperties properties;
     private RestClient restClient;
 
-    @Autowired
-    public void initRestClient(RestClient.Builder builder) {
-        this.restClient = builder.baseUrl(properties.getBaseUrl()).build();
+    @PostConstruct
+    public void initRestClient() {
+        this.restClient = RestClient.builder().baseUrl(properties.getBaseUrl()).build();
     }
 
     /**
