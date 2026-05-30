@@ -1,11 +1,13 @@
 package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.*;
+import kz.hrms.splitupauth.entity.EmailVerificationToken;
 import kz.hrms.splitupauth.entity.PasswordResetToken;
 import kz.hrms.splitupauth.entity.RefreshToken;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.*;
+import kz.hrms.splitupauth.repository.EmailVerificationTokenRepository;
 import kz.hrms.splitupauth.repository.PasswordResetTokenRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.util.JwtUtil;
@@ -25,6 +27,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final RefreshTokenService refreshTokenService;
@@ -45,16 +48,15 @@ public class AuthService {
                 .status(UserStatus.ACTIVE)
                 .role(Role.USER)
                 .reputation(0)
+                .emailVerified(false)
                 .build();
 
         user = userRepository.save(user);
 
-        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
+        sendVerificationEmail(user);
 
+        // No tokens issued: the account must verify its email before logging in.
         return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
                 .user(userMapper.toDto(user))
                 .build();
     }
@@ -76,6 +78,10 @@ public class AuthService {
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             rateLimitService.recordLoginAttempt(request.getEmail(), false);
             throw new InvalidCredentialsException("Invalid email or password");
+        }
+
+        if (Boolean.FALSE.equals(user.getEmailVerified())) {
+            throw new EmailNotVerifiedException("Email not verified. Please check your inbox for the verification link.");
         }
 
         rateLimitService.recordLoginAttempt(request.getEmail(), true);
@@ -164,5 +170,56 @@ public void requestPasswordReset(PasswordResetRequest request) {
         passwordResetTokenRepository.save(resetToken);
 
         refreshTokenService.revokeAllUserTokens(user);
+    }
+
+    @Transactional
+    public void verifyEmail(String token) {
+        EmailVerificationToken verificationToken = emailVerificationTokenRepository
+                .findByToken(token)
+                .orElseThrow(() ->
+                        new TokenExpiredException("Invalid or expired verification token"));
+
+        if (verificationToken.getUsed()) {
+            throw new TokenExpiredException("Verification token already used");
+        }
+
+        if (verificationToken.isExpired()) {
+            throw new TokenExpiredException("Verification token expired");
+        }
+
+        User user = verificationToken.getUser();
+        user.setEmailVerified(true);
+        userRepository.save(user);
+
+        verificationToken.setUsed(true);
+        emailVerificationTokenRepository.save(verificationToken);
+    }
+
+    @Transactional
+    public void resendVerificationEmail(ResendVerificationRequest request) {
+        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+
+        // Stay silent for unknown or already-verified accounts to avoid email enumeration.
+        if (user == null || Boolean.TRUE.equals(user.getEmailVerified())) {
+            return;
+        }
+
+        sendVerificationEmail(user);
+    }
+
+    private void sendVerificationEmail(User user) {
+        emailVerificationTokenRepository.deleteByUser(user);
+
+        String token = UUID.randomUUID().toString();
+        EmailVerificationToken verificationToken = EmailVerificationToken.builder()
+                .token(token)
+                .user(user)
+                .expiresAt(LocalDateTime.now().plusHours(24))
+                .used(false)
+                .build();
+
+        emailVerificationTokenRepository.save(verificationToken);
+
+        emailService.sendVerificationEmail(user.getEmail(), token);
     }
 }

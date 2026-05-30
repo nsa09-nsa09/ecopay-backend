@@ -39,6 +39,7 @@ INSERT INTO users (
     display_name,
     status,
     reputation,
+    email_verified,
     created_at
 )
 VALUES
@@ -48,6 +49,7 @@ VALUES
         'Askar',
         'ACTIVE',
         10,
+        TRUE,
         NOW()
     ),
     (
@@ -56,6 +58,7 @@ VALUES
         'Maria',
         'ACTIVE',
         5,
+        TRUE,
         NOW()
     ),
     (
@@ -64,6 +67,7 @@ VALUES
         'Timur',
         'ACTIVE',
         0,
+        TRUE,
         NOW()
     );
 

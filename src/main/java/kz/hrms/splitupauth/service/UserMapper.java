@@ -16,6 +16,7 @@ public class UserMapper {
                 .status(user.getStatus())
                 .role(user.getRole())
                 .reputation(user.getReputation())
+                .emailVerified(user.getEmailVerified())
                 .build();
     }
 }

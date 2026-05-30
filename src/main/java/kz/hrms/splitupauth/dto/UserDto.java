@@ -19,4 +19,5 @@ public class UserDto {
     private UserStatus status;
     private Role role;
     private Integer reputation;
+    private Boolean emailVerified;
 }
