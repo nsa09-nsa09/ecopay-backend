@@ -12,8 +12,14 @@ public class PaymentIntentResponse {
     private Long id;
     private String idempotencyKey;
     private BigDecimal amount;
+    private String currency;
     private PaymentIntentStatus status;
     private String providerName;
     private String externalPaymentId;
     private Long roomMemberId;
+    private String paymentUrl;
+    private Boolean requiresRedirect;
+    private Boolean saveCardRequested;
+    private String failureCode;
+    private String failureMessage;
 }

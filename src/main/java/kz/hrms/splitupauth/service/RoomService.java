@@ -25,6 +25,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -128,47 +129,53 @@ public class RoomService {
             RoomStatus status,
             RoomType roomType,
             Long categoryId,
+            Long serviceId,
             String sortBy,
             String sortDir
     ) {
+        Pageable pageable = buildPageable(page, size, sortBy, sortDir);
+
+        Specification<Room> spec = (root, q, cb) -> cb.isNull(root.get("deletedAt"));
+        if (status != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), status));
+        }
+        if (roomType != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("roomType"), roomType));
+        }
+        if (categoryId != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("category").get("id"), categoryId));
+        }
+        if (serviceId != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("service").get("id"), serviceId));
+        }
+
+        Page<Room> resultPage = roomRepository.findAll(spec, pageable);
+        return toPagedResponse(resultPage);
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<RoomSummaryDto> getMyRooms(User user, int page, int size) {
+        Pageable pageable = buildPageable(page, size, null, null);
+
+        Specification<Room> spec = (root, q, cb) -> cb.and(
+                cb.isNull(root.get("deletedAt")),
+                cb.equal(root.get("owner"), user)
+        );
+
+        Page<Room> resultPage = roomRepository.findAll(spec, pageable);
+        return toPagedResponse(resultPage);
+    }
+
+    private Pageable buildPageable(int page, int size, String sortBy, String sortDir) {
         String resolvedSortBy = (sortBy == null || sortBy.isBlank()) ? "createdAt" : sortBy;
         Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        if (page < 0) page = 0;
+        if (size <= 0) size = 20;
+        if (size > 100) size = 100;
+        return PageRequest.of(page, size, Sort.by(direction, resolvedSortBy));
+    }
 
-        if (page < 0) {
-            page = 0;
-        }
-
-        if (size <= 0) {
-            size = 20;
-        }
-
-        if (size > 100) {
-            size = 100;
-        }
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, resolvedSortBy));
-
-        Page<Room> resultPage;
-
-        if (status != null && roomType != null && categoryId != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndStatusAndRoomTypeAndCategory_Id(
-                    status, roomType, categoryId, pageable
-            );
-        } else if (status != null && roomType != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndStatusAndRoomType(status, roomType, pageable);
-        } else if (status != null && categoryId != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndStatusAndCategory_Id(status, categoryId, pageable);
-        } else if (roomType != null && categoryId != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndRoomTypeAndCategory_Id(roomType, categoryId, pageable);
-        } else if (status != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndStatus(status, pageable);
-        } else if (roomType != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndRoomType(roomType, pageable);
-        } else if (categoryId != null) {
-            resultPage = roomRepository.findByDeletedAtIsNullAndCategory_Id(categoryId, pageable);
-        } else {
-            resultPage = roomRepository.findByDeletedAtIsNull(pageable);
-        }
-
+    private PagedResponse<RoomSummaryDto> toPagedResponse(Page<Room> resultPage) {
         return PagedResponse.<RoomSummaryDto>builder()
                 .items(resultPage.getContent().stream().map(roomMapper::toSummary).toList())
                 .page(resultPage.getNumber())

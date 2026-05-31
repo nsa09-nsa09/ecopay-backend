@@ -49,6 +49,32 @@ public class PaymentIntent {
     @Column(name = "external_payment_id", length = 100)
     private String externalPaymentId;
 
+    @Column(name = "payment_url", columnDefinition = "TEXT")
+    private String paymentUrl;
+
+    @Column(name = "save_card_requested", nullable = false)
+    @Builder.Default
+    private Boolean saveCardRequested = false;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "saved_card_id")
+    private SavedCard savedCard;
+
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
+
+    @Column(name = "last_webhook_at")
+    private LocalDateTime lastWebhookAt;
+
+    @Column(name = "provider_status_code", length = 50)
+    private String providerStatusCode;
+
+    @Column(name = "failure_code", length = 50)
+    private String failureCode;
+
+    @Column(name = "failure_message", columnDefinition = "TEXT")
+    private String failureMessage;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -60,6 +86,9 @@ public class PaymentIntent {
         createdAt = LocalDateTime.now();
         if (status == null) {
             status = PaymentIntentStatus.PENDING;
+        }
+        if (saveCardRequested == null) {
+            saveCardRequested = false;
         }
     }
 

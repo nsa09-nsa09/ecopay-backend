@@ -37,12 +37,22 @@ public class RoomController {
             @RequestParam(required = false) RoomStatus status,
             @RequestParam(required = false) RoomType roomType,
             @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) Long serviceId,
             @RequestParam(required = false) String sortBy,
             @RequestParam(required = false) String sortDir
     ) {
         return ResponseEntity.ok(
-                roomService.getRooms(page, size, status, roomType, categoryId, sortBy, sortDir)
+                roomService.getRooms(page, size, status, roomType, categoryId, serviceId, sortBy, sortDir)
         );
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<PagedResponse<RoomSummaryDto>> getMyRooms(
+            @AuthenticationPrincipal User user,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return ResponseEntity.ok(roomService.getMyRooms(user, page, size));
     }
 
     @GetMapping("/{id}")

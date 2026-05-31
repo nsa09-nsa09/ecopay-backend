@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.security;
 
 import kz.hrms.splitupauth.config.CorsProperties;
+import kz.hrms.splitupauth.sms.SmsProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -22,7 +23,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(CorsProperties.class)
+@EnableConfigurationProperties({CorsProperties.class, SmsProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -36,7 +37,13 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/api/v1/auth/**",
+                                "/api/v1/auth/register",
+                                "/api/v1/auth/login",
+                                "/api/v1/auth/refresh",
+                                "/api/v1/auth/logout",
+                                "/api/v1/auth/reset-password",
+                                "/api/v1/auth/reset-password/confirm",
+                                "/api/v1/webhooks/**",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -44,6 +51,8 @@ public class SecurityConfig {
                                 "/actuator/health/**"
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/me").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/rooms/**").permitAll()
                         .requestMatchers("/api/v1/staff/**").hasAnyAuthority("ADMIN", "SUPPORT")
                         .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN")
