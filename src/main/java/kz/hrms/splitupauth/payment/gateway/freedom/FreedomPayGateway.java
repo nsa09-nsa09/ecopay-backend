@@ -192,6 +192,19 @@ public class FreedomPayGateway implements PaymentGateway {
 
         String resultRaw = nonNull(params.get("pg_result"), params.get("pg_can_reject"));
         String resultStatus = "1".equals(resultRaw) ? "SUCCESS" : "FAILED";
+        if ("REFUND".equals(params.get("pg_event_type"))
+                || params.get("pg_refund_id") != null) {
+            // Refund result callback (async). NOTE: confirm exact Freedom Pay refund
+            // callback param names against the live provider spec before relying on it.
+            return GatewayWebhookEvent.builder()
+                    .kind("REFUND")
+                    .resultStatus(resultStatus)
+                    .externalPaymentId(params.get("pg_refund_id"))
+                    .providerRequestId(requestId)
+                    .signature(params.get("pg_sig"))
+                    .rawParams(params)
+                    .build();
+        }
         if ("PAYOUT".equals(params.get("pg_event_type"))
                 || params.get("pg_payout_id") != null) {
             // Payout webhook

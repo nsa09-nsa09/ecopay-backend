@@ -42,6 +42,7 @@ public class RoomService {
     private final ServiceRepository serviceRepository;
     private final TariffPlanRepository tariffPlanRepository;
     private final RoomMapper roomMapper;
+    private final RoomEventLogger roomEventLogger;
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -61,6 +62,10 @@ public class RoomService {
 
     @Transactional
     public RoomResponse createRoom(User currentUser, CreateRoomRequest request) {
+        if (currentUser.getPhoneVerifiedAt() == null) {
+            throw new ForbiddenOperationException("Verify your phone number before creating a room");
+        }
+
         Category category = null;
         if (request.getCategoryId() != null) {
             category = categoryRepository.findById(request.getCategoryId())
@@ -109,6 +114,11 @@ public class RoomService {
                 .build();
 
         room = roomRepository.save(room);
+
+        roomEventLogger.log(room, null, currentUser, "OWNER", "room_created",
+                java.util.Map.of("roomType", String.valueOf(room.getRoomType()),
+                        "maxMembers", room.getMaxMembers(),
+                        "pricePerMember", String.valueOf(room.getPricePerMember())));
 
         return roomMapper.toResponse(room);
     }
@@ -402,6 +412,8 @@ public class RoomService {
         room.setCompletedAt(LocalDateTime.now());
 
         room = roomRepository.save(room);
+
+        roomEventLogger.log(room, null, currentUser, "OWNER", "room_completed", java.util.Map.of());
 
         return roomMapper.toResponse(room);
     }

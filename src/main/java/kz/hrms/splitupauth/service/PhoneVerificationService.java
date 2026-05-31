@@ -13,6 +13,7 @@ import kz.hrms.splitupauth.sms.SmsProperties;
 import kz.hrms.splitupauth.sms.SmsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +34,14 @@ public class PhoneVerificationService {
     private final SmsService smsService;
     private final PasswordEncoder passwordEncoder;
     private final SmsProperties smsProperties;
+
+    /**
+     * Dev/test only: a master code that verifies any phone without the real SMS code
+     * (the dev SMS provider only logs codes, so automated flows can't read them).
+     * Empty in prod → disabled.
+     */
+    @Value("${app.phone.dev-bypass-code:}")
+    private String devBypassCode;
 
     /**
      * Issue a new verification code for the given phone and user. Enforces:
@@ -99,6 +108,15 @@ public class PhoneVerificationService {
      */
     @Transactional
     public void verifyCode(User user, String phone, String code) {
+        // Dev/test bypass: accept a configured master code without the real SMS code.
+        if (devBypassCode != null && !devBypassCode.isBlank() && devBypassCode.equals(code)) {
+            user.setPhone(phone);
+            user.setPhoneVerifiedAt(LocalDateTime.now());
+            userRepository.save(user);
+            log.warn("[DEV] phone {} verified via dev-bypass code for user {}", phone, user.getId());
+            return;
+        }
+
         PhoneVerification verification = verificationRepository
                 .findTopByUserAndPhoneAndVerifiedAtIsNullOrderByCreatedAtDesc(user, phone)
                 .orElseThrow(() -> new ResourceNotFoundException(

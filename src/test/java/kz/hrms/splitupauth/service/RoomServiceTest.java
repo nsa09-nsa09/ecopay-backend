@@ -45,6 +45,8 @@ class RoomServiceTest {
     private TariffPlanRepository tariffPlanRepository;
     @Mock
     private RoomMapper roomMapper;
+    @Mock
+    private RoomEventLogger roomEventLogger;
 
     private RoomService roomService;
 
@@ -55,7 +57,8 @@ class RoomServiceTest {
                 categoryRepository,
                 serviceRepository,
                 tariffPlanRepository,
-                roomMapper
+                roomMapper,
+                roomEventLogger
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));

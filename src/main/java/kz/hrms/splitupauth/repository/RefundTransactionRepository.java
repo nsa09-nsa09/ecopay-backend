@@ -14,6 +14,8 @@ public interface RefundTransactionRepository extends JpaRepository<RefundTransac
 
     Optional<RefundTransaction> findByIdempotencyKey(String idempotencyKey);
 
+    Optional<RefundTransaction> findByProviderRefundId(String providerRefundId);
+
     List<RefundTransaction> findByDisputeOrderByCreatedAtDesc(Dispute dispute);
 
     List<RefundTransaction> findByPaymentTransaction_PaymentIntent_UserOrderByCreatedAtDesc(User user);

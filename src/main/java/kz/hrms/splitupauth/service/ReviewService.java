@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.CreateReviewRequest;
+import kz.hrms.splitupauth.util.TextSanitizer;
 import kz.hrms.splitupauth.dto.ReputationDto;
 import kz.hrms.splitupauth.dto.ReviewDto;
 import kz.hrms.splitupauth.entity.MemberStatus;
@@ -65,7 +66,7 @@ public class ReviewService {
                 .recipient(recipient)
                 .room(room)
                 .rating(req.getRating())
-                .text(req.getText())
+                .text(TextSanitizer.sanitize(req.getText()))
                 .build();
         review = reviewRepository.save(review);
 

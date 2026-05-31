@@ -66,11 +66,11 @@ public class AuthService {
         }
 
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
+        String refreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
+                .refreshToken(refreshToken)
                 .user(userMapper.toDto(user))
                 .build();
     }
@@ -97,11 +97,11 @@ public class AuthService {
         rateLimitService.recordLoginAttempt(request.getEmail(), true);
 
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
+        String refreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
+                .refreshToken(refreshToken)
                 .user(userMapper.toDto(user))
                 .build();
     }
@@ -115,14 +115,15 @@ public class AuthService {
             throw new UserBannedException("Your account has been banned");
         }
 
-        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken newRefreshToken = refreshTokenService.createRefreshToken(user);
-
+        // Rotate: revoke the presented token first, then issue a fresh one.
         refreshTokenService.revokeRefreshToken(request.getRefreshToken());
+
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
+        String newRefreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(newRefreshToken.getToken())
+                .refreshToken(newRefreshToken)
                 .user(userMapper.toDto(user))
                 .build();
     }

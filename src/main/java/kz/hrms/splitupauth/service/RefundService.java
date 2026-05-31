@@ -114,6 +114,40 @@ public class RefundService {
         return map(refund);
     }
 
+    /**
+     * Apply an async refund result callback from the provider. Finalizes a PENDING
+     * refund (that the gateway accepted but hadn't settled) by its provider refund id.
+     * Idempotent: ignores unknown or already-terminal refunds. Prod-only — the dev mock
+     * settles refunds synchronously and never sends this callback.
+     */
+    @Transactional
+    public void applyRefundWebhook(String providerRefundId, boolean success) {
+        if (providerRefundId == null || providerRefundId.isBlank()) {
+            log.warn("Refund webhook without provider refund id, ignoring");
+            return;
+        }
+        RefundTransaction refund = refundTransactionRepository
+                .findByProviderRefundId(providerRefundId).orElse(null);
+        if (refund == null) {
+            log.warn("Refund webhook references unknown provider refund id {}", providerRefundId);
+            return;
+        }
+        if (refund.getStatus() != RefundStatus.PENDING) {
+            return; // terminal — idempotent no-op
+        }
+        if (success) {
+            refund.setStatus(RefundStatus.SUCCESS);
+            applyRefundToParentTransaction(refund);
+        } else {
+            refund.setStatus(RefundStatus.FAILED);
+        }
+        refundTransactionRepository.save(refund);
+        eventLogger.log("REFUND", refund.getId(),
+                success ? "WEBHOOK_SUCCESS" : "WEBHOOK_FAILED",
+                "PENDING", refund.getStatus().name(),
+                null, null, refund.getIdempotencyKey(), java.util.Map.of());
+    }
+
     @Transactional(readOnly = true)
     public List<RefundTransactionResponse> listMine(User currentUser) {
         return refundTransactionRepository

@@ -6,6 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -14,6 +15,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "admin_action_log")
+@Immutable // append-only audit row (see V8) — Hibernate must never UPDATE it
 @Data
 @Builder
 @NoArgsConstructor

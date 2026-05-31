@@ -87,6 +87,8 @@ class RoomMemberServiceTest {
     private DisputeRepository disputeRepository;
     @Mock
     private ModerationQueueRepository moderationQueueRepository;
+    @Mock
+    private RoomEventLogger roomEventLogger;
 
     private RoomMemberService roomMemberService;
 
@@ -103,7 +105,8 @@ class RoomMemberServiceTest {
                 supportTicketRepository,
                 moderationService,
                 disputeRepository,
-                moderationQueueRepository
+                moderationQueueRepository,
+                roomEventLogger
         );
 
         lenient().when(roomMemberRepository.save(any(RoomMember.class)))
@@ -526,6 +529,7 @@ class RoomMemberServiceTest {
                 .role(role)
                 .displayName("User " + userId)
                 .status(UserStatus.ACTIVE)
+                .phoneVerifiedAt(LocalDateTime.now()) // verified — passes the join/pay phone-verification guard
                 .build();
     }
 }

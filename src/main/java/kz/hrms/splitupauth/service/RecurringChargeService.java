@@ -39,6 +39,7 @@ public class RecurringChargeService {
     private final SavedCardRepository savedCardRepository;
     private final PaymentGatewayRegistry gatewayRegistry;
     private final PaymentEventLogger eventLogger;
+    private final PaymentService paymentService;
 
     /** Runs every day at 03:30 server time. */
     @Scheduled(cron = "0 30 3 * * *")
@@ -121,6 +122,10 @@ public class RecurringChargeService {
             if (resp.isSuccess()) {
                 intent.setStatus(PaymentIntentStatus.SUCCESS);
                 intent.setExternalPaymentId(resp.getExternalPaymentId());
+                paymentIntentRepository.save(intent);
+                // Record the transaction + create the owner payout for this renewal
+                // (previously missing → owner was never paid for recurring periods).
+                paymentService.applySuccessfulCharge(intent, null, null);
             } else {
                 intent.setStatus(PaymentIntentStatus.FAILED);
                 intent.setFailureCode(resp.getFailureCode());

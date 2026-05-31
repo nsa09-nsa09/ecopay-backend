@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.payment.gateway;
 
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -14,6 +15,13 @@ public class PaymentGatewayRegistry {
 
     private final List<PaymentGateway> gateways;
     private Map<String, PaymentGateway> byName;
+
+    /**
+     * Active provider for the default flow: {@code freedompay} in prod,
+     * {@code mock} in dev/test (see application*.properties).
+     */
+    @Value("${ecopay.payments.provider:" + FreedomPayGateway.PROVIDER_NAME + "}")
+    private String activeProvider;
 
     public PaymentGateway resolve(String providerName) {
         if (byName == null) {
@@ -32,6 +40,6 @@ public class PaymentGatewayRegistry {
     }
 
     public PaymentGateway defaultGateway() {
-        return resolve(FreedomPayGateway.PROVIDER_NAME);
+        return resolve(activeProvider);
     }
 }
