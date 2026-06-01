@@ -1,5 +1,5 @@
 -- =========================================================
--- Bölip Töle / EcoSplit schema
+-- Bölip Töle / EcoPay schema
 -- DATABASE: splitup
 -- PostgreSQL 14+
 -- V1 INIT SCHEMA
