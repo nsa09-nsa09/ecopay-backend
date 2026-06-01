@@ -29,6 +29,13 @@ public class RoomMemberController {
         return ResponseEntity.status(HttpStatus.CREATED).body(roomMemberService.joinRoom(id, user, request));
     }
 
+    @GetMapping("/joined")
+    public ResponseEntity<List<JoinedRoomDto>> getMyJoinedRooms(
+            @AuthenticationPrincipal User user
+    ) {
+        return ResponseEntity.ok(roomMemberService.getMyJoinedRooms(user));
+    }
+
     @GetMapping("/{id}/members")
     public ResponseEntity<PagedResponse<RoomMemberDto>> getRoomMembers(
             @PathVariable Long id,

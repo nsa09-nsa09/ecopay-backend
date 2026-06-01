@@ -21,9 +21,5 @@ public class UserDto {
     private UserStatus status;
     private Role role;
     private Integer reputation;
-<<<<<<< HEAD
     private Boolean emailVerified;
 }
-=======
-}
->>>>>>> origin/feat/freedompay-mvp-integration

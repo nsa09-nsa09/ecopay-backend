@@ -52,7 +52,6 @@ public class AuthController {
         return ResponseEntity.ok().build();
     }
 
-<<<<<<< HEAD
     @GetMapping("/verify-email")
     public ResponseEntity<String> verifyEmail(@RequestParam("token") String token) {
         authService.verifyEmail(token);
@@ -63,7 +62,8 @@ public class AuthController {
     public ResponseEntity<Void> resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
         authService.resendVerificationEmail(request);
         return ResponseEntity.ok().build();
-=======
+    }
+
     @PostMapping("/phone/request-code")
     public ResponseEntity<Void> requestPhoneCode(
             @AuthenticationPrincipal User user,
@@ -80,6 +80,5 @@ public class AuthController {
     ) {
         phoneVerificationService.verifyCode(user, request.getPhone(), request.getCode());
         return ResponseEntity.noContent().build();
->>>>>>> origin/feat/freedompay-mvp-integration
     }
 }

@@ -16,6 +16,7 @@ import java.util.Optional;
 public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
     Optional<RoomMember> findByIdAndRoomAndDeletedAtIsNull(Long id, Room room);
     Optional<RoomMember> findByRoomAndUserAndDeletedAtIsNull(Room room, User user);
+    List<RoomMember> findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(User user);
     List<RoomMember> findByStatusAndDeletedAtIsNull(MemberStatus status);
     List<RoomMember> findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(Room room);
     Page<RoomMember> findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(Room room, Pageable pageable);

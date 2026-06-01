@@ -53,6 +53,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/rooms/me").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/joined").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/rooms/**").permitAll()
                         .requestMatchers("/api/v1/staff/**").hasAnyAuthority("ADMIN", "SUPPORT")
                         .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN")

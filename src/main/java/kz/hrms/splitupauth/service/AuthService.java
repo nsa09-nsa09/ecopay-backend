@@ -61,9 +61,7 @@ public class AuthService {
 
         user = userRepository.save(user);
 
-<<<<<<< HEAD
         sendVerificationEmail(user);
-=======
         try {
             phoneVerificationService.requestCode(user, request.getPhone());
         } catch (Exception ex) {
@@ -74,7 +72,6 @@ public class AuthService {
 
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
->>>>>>> origin/feat/freedompay-mvp-integration
 
         // No tokens issued: the account must verify its email before logging in.
         return AuthResponse.builder()

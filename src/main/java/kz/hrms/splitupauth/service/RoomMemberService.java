@@ -124,6 +124,34 @@ public class RoomMemberService {
         return roomMemberMapper.toMyDto(roomMember, identifier);
     }
 
+    @Transactional(readOnly = true)
+    public List<JoinedRoomDto> getMyJoinedRooms(User currentUser) {
+        return roomMemberRepository.findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(currentUser).stream()
+                .filter(member -> member.getRoom() != null && member.getRoom().getDeletedAt() == null)
+                .map(member -> {
+                    Room room = member.getRoom();
+                    return JoinedRoomDto.builder()
+                            .roomId(room.getId())
+                            .memberId(member.getId())
+                            .title(room.getTitle())
+                            .roomType(room.getRoomType())
+                            .roomStatus(room.getStatus())
+                            .memberStatus(member.getStatus())
+                            .requiresAdminReview(member.getRequiresAdminReview())
+                            .maxMembers(room.getMaxMembers())
+                            .priceTotal(room.getPriceTotal())
+                            .pricePerMember(room.getPricePerMember())
+                            .currency(room.getCurrency())
+                            .startDate(room.getStartDate())
+                            .ownerUserId(room.getOwner().getId())
+                            .ownerDisplayName(room.getOwner().getDisplayName())
+                            .serviceId(room.getService().getId())
+                            .serviceName(room.getService().getName())
+                            .build();
+                })
+                .toList();
+    }
+
     @Transactional
     public RoomMemberDto confirmOwnerAccess(
             Long roomId,
