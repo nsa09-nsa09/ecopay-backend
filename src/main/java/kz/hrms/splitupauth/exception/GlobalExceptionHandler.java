@@ -1,7 +1,10 @@
 package kz.hrms.splitupauth.exception;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,6 +16,8 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
     @ExceptionHandler(ForbiddenOperationException.class)
     public ResponseEntity<ErrorResponse> handleForbidden(ForbiddenOperationException ex) {
         ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
@@ -111,13 +116,34 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(errorResponse);
     }
 
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(),
+                "You do not have permission to perform this action");
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
-        ex.printStackTrace();
+        // Always log the full stack trace so operators can see what actually failed
+        // — the previous behaviour of swallowing this with `printStackTrace()`
+        // made admin endpoints opaque ("An unexpected error occurred").
+        log.error("Unhandled exception serving request: {}: {}",
+                ex.getClass().getSimpleName(), ex.getMessage(), ex);
+
+        // Surface the exception class + a short message in the response body. This
+        // is still safe (no stack trace, no SQL, no secrets) and gives the UI a
+        // hint instead of a generic 500. Validation/auth/known-error paths above
+        // already produce nicer, fully-translated messages.
+        String safeMessage = ex.getClass().getSimpleName();
+        String detail = ex.getMessage();
+        if (detail != null && !detail.isBlank() && detail.length() < 300) {
+            safeMessage = safeMessage + ": " + detail;
+        }
 
         ErrorResponse error = new ErrorResponse(
-            HttpStatus.INTERNAL_SERVER_ERROR.value(),
-            "An unexpected error occurred"
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                safeMessage
         );
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
     }
