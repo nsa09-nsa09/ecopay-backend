@@ -64,6 +64,11 @@ public class RoomMapper {
                 .ownerVerified(Boolean.TRUE.equals(room.getOwner().getOwnerVerified()))
                 .serviceId(room.getService().getId())
                 .serviceName(room.getService().getName())
+                .accessType(room.getAccessType())
+                .regionRestriction(room.getRegionRestriction())
+                .operatorRestrictions(room.getOperatorRestrictions())
+                .tariffNameSnapshot(room.getTariffNameSnapshot())
+                .periodType(room.getPeriodType())
                 .build();
     }
 }
