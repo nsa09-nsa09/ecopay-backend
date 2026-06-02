@@ -9,6 +9,7 @@ import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
 import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
+import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
@@ -22,6 +23,8 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
 import kz.hrms.splitupauth.repository.ReviewRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomOccupancyProjection;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
@@ -53,6 +56,10 @@ public class RoomService {
     private final RoomEventLogger roomEventLogger;
     private final ObjectMapper objectMapper;
     private final ReviewRepository reviewRepository;
+    private final RoomMemberRepository roomMemberRepository;
+
+    /** Member statuses that occupy a seat (see CLAUDE.md). */
+    private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -171,6 +178,9 @@ public class RoomService {
 
         RoomResponse response = roomMapper.toResponse(room);
         applyOwnerRating(response, room.getOwner().getId());
+        int occupied = (int) roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
+        response.setFilledSeats(occupied);
+        response.setFreeSeats(Math.max(0, response.getMaxMembers() - occupied));
         return response;
     }
 
@@ -230,6 +240,7 @@ public class RoomService {
     private PagedResponse<RoomSummaryDto> toPagedResponse(Page<Room> resultPage) {
         List<RoomSummaryDto> items = resultPage.getContent().stream().map(roomMapper::toSummary).toList();
         enrichOwnerRatings(items);
+        enrichSeats(items);
         return PagedResponse.<RoomSummaryDto>builder()
                 .items(items)
                 .page(resultPage.getNumber())
@@ -255,6 +266,24 @@ public class RoomService {
             OwnerRatingProjection p = byOwner.get(summary.getOwnerUserId());
             summary.setOwnerRating(roundRating(p));
             summary.setOwnerReviewCount(p != null && p.getReviewCount() != null ? p.getReviewCount().intValue() : 0);
+        }
+    }
+
+    /** Batch occupied-seat counts for a page of summaries (one query, no N+1). */
+    private void enrichSeats(List<RoomSummaryDto> summaries) {
+        if (summaries.isEmpty()) {
+            return;
+        }
+        Set<Long> roomIds = summaries.stream()
+                .map(RoomSummaryDto::getId)
+                .collect(Collectors.toSet());
+        Map<Long, Long> occupiedByRoom = roomMemberRepository.countOccupiedByRoomIds(roomIds, OCCUPYING_STATUSES).stream()
+                .collect(Collectors.toMap(RoomOccupancyProjection::getRoomId, RoomOccupancyProjection::getOccupied));
+        for (RoomSummaryDto summary : summaries) {
+            int occupied = occupiedByRoom.getOrDefault(summary.getId(), 0L).intValue();
+            int max = summary.getMaxMembers() != null ? summary.getMaxMembers() : 0;
+            summary.setFilledSeats(occupied);
+            summary.setFreeSeats(Math.max(0, max - occupied));
         }
     }
 
