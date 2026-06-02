@@ -4,7 +4,6 @@ import kz.hrms.splitupauth.dto.AuthResponse;
 import kz.hrms.splitupauth.dto.LoginRequest;
 import kz.hrms.splitupauth.dto.TwoFactorVerifyRequest;
 import kz.hrms.splitupauth.dto.UserDto;
-import kz.hrms.splitupauth.entity.RefreshToken;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.StaffTwoFactorChallenge;
 import kz.hrms.splitupauth.entity.StaffTwoFactorChallengeStatus;
@@ -188,12 +187,8 @@ class AuthServiceTest {
 
     private void stubTokens(User user) {
         when(jwtUtil.generateAccessToken(user.getEmail())).thenReturn("access");
-        RefreshToken rt = RefreshToken.builder()
-                .token("refresh")
-                .user(user)
-                .expiresAt(LocalDateTime.now().plusDays(7))
-                .build();
-        when(refreshTokenService.createRefreshToken(eq(user))).thenReturn(rt);
+        // createRefreshToken returns the token string (String-based refresh-token model).
+        when(refreshTokenService.createRefreshToken(eq(user))).thenReturn("refresh");
         when(userMapper.toDto(user)).thenReturn(UserDto.builder()
                 .id(user.getId())
                 .email(user.getEmail())
