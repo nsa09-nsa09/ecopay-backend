@@ -33,8 +33,10 @@ public class CreateRoomRequest {
     @Min(value = 2, message = "Max members must be at least 2")
     private Integer maxMembers;
 
+    @PositiveOrZero(message = "Total price cannot be negative")
     private BigDecimal priceTotal;
 
+    @PositiveOrZero(message = "Price per member cannot be negative")
     private BigDecimal pricePerMember;
 
     private String currency;
@@ -43,6 +45,7 @@ public class CreateRoomRequest {
     private PeriodType periodType;
 
     @NotNull(message = "Start date is required")
+    @Future(message = "Start date must be in the future")
     private LocalDateTime startDate;
 
     private String cancellationPolicy;
