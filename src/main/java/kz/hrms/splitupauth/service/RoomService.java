@@ -2,6 +2,10 @@ package kz.hrms.splitupauth.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.RoomFilter;
@@ -11,7 +15,9 @@ import kz.hrms.splitupauth.dto.UpdateRoomRequest;
 import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.ServiceEntity;
@@ -228,23 +234,33 @@ public class RoomService {
         if (f.getMinFreeSeats() != null && f.getMinFreeSeats() > 0) {
             int minFree = f.getMinFreeSeats();
             spec = spec.and((root, q, cb) -> {
-                // occupied seats = count of PENDING/ACTIVE members for this room (correlated subquery)
-                jakarta.persistence.criteria.Subquery<Long> sub = q.subquery(Long.class);
-                jakarta.persistence.criteria.Root<kz.hrms.splitupauth.entity.RoomMember> m =
-                        sub.from(kz.hrms.splitupauth.entity.RoomMember.class);
-                sub.select(cb.count(m));
-                sub.where(
-                        cb.equal(m.get("room"), root),
-                        cb.isNull(m.get("deletedAt")),
-                        m.get("status").in(OCCUPYING_STATUSES)
-                );
                 // maxMembers - occupied >= minFree  ⇔  occupied <= maxMembers - minFree
-                return cb.le(sub, cb.diff(root.<Integer>get("maxMembers"), minFree));
+                Subquery<Long> occupied = occupiedSubquery(q, cb, root);
+                return cb.le(occupied, cb.diff(root.<Integer>get("maxMembers"), minFree));
             });
+        }
+
+        // Sorting by computed fields (free seats / owner rating / popularity) is applied
+        // as an ORDER BY inside the Specification when the Pageable carries no sort.
+        if (isComputedSort(sortBy)) {
+            spec = spec.and(computedOrderSpec(sortBy.trim()));
         }
 
         Page<Room> resultPage = roomRepository.findAll(spec, pageable);
         return toPagedResponse(resultPage);
+    }
+
+    /** Correlated subquery counting seat-occupying (PENDING/ACTIVE) members of {@code roomRoot}. */
+    private Subquery<Long> occupiedSubquery(CriteriaQuery<?> q, CriteriaBuilder cb, Root<Room> roomRoot) {
+        Subquery<Long> sub = q.subquery(Long.class);
+        Root<RoomMember> m = sub.from(RoomMember.class);
+        sub.select(cb.count(m));
+        sub.where(
+                cb.equal(m.get("room"), roomRoot),
+                cb.isNull(m.get("deletedAt")),
+                m.get("status").in(OCCUPYING_STATUSES)
+        );
+        return sub;
     }
 
     @Transactional(readOnly = true)
@@ -260,13 +276,81 @@ public class RoomService {
         return toPagedResponse(resultPage);
     }
 
+    /** Sort keys that cannot map to a single entity column (ordered via Specification ORDER BY). */
+    private static final Set<String> COMPUTED_SORTS = Set.of("most_seats", "best_rating", "popular");
+
+    private boolean isComputedSort(String sortBy) {
+        return sortBy != null && COMPUTED_SORTS.contains(sortBy.trim());
+    }
+
     private Pageable buildPageable(int page, int size, String sortBy, String sortDir) {
-        String resolvedSortBy = (sortBy == null || sortBy.isBlank()) ? "createdAt" : sortBy;
-        Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
         if (page < 0) page = 0;
         if (size <= 0) size = 20;
         if (size > 100) size = 100;
-        return PageRequest.of(page, size, Sort.by(direction, resolvedSortBy));
+        // Computed sorts carry no Pageable sort; ORDER BY is applied inside the Specification.
+        if (isComputedSort(sortBy)) {
+            return PageRequest.of(page, size);
+        }
+        return PageRequest.of(page, size, entitySort(sortBy, sortDir));
+    }
+
+    private Sort entitySort(String sortBy, String sortDir) {
+        String key = sortBy == null ? "" : sortBy.trim();
+        switch (key) {
+            case "price_asc":
+                return Sort.by(Sort.Direction.ASC, "pricePerMember");
+            case "price_desc":
+                return Sort.by(Sort.Direction.DESC, "pricePerMember");
+            case "newest":
+                return Sort.by(Sort.Direction.DESC, "createdAt");
+            case "starting_soon":
+                return Sort.by(Sort.Direction.ASC, "startDate");
+            default:
+                // Legacy: treat sortBy as a raw entity field with sortDir, default createdAt desc.
+                String field = key.isBlank() ? "createdAt" : key;
+                Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+                return Sort.by(direction, field);
+        }
+    }
+
+    /** Apply ORDER BY for a computed sort key. Skipped for the count query (Long result type). */
+    private Specification<Room> computedOrderSpec(String key) {
+        return (root, q, cb) -> {
+            Class<?> resultType = q.getResultType();
+            if (resultType == Long.class || resultType == long.class) {
+                return cb.conjunction();
+            }
+            switch (key) {
+                case "most_seats": {
+                    // free seats = maxMembers - occupied, descending
+                    Subquery<Long> occupied = occupiedSubquery(q, cb, root);
+                    q.orderBy(cb.desc(cb.diff(root.<Integer>get("maxMembers"), occupied)));
+                    break;
+                }
+                case "best_rating": {
+                    Subquery<Double> avg = q.subquery(Double.class);
+                    Root<Review> rv = avg.from(Review.class);
+                    avg.select(cb.avg(rv.get("rating")));
+                    avg.where(
+                            cb.equal(rv.get("recipient"), root.get("owner")),
+                            cb.isFalse(rv.get("hiddenByAdmin"))
+                    );
+                    q.orderBy(cb.desc(cb.coalesce(avg, 0.0)));
+                    break;
+                }
+                case "popular": {
+                    Subquery<Long> cnt = q.subquery(Long.class);
+                    Root<RoomMember> m = cnt.from(RoomMember.class);
+                    cnt.select(cb.count(m));
+                    cnt.where(cb.equal(m.get("room"), root), cb.isNull(m.get("deletedAt")));
+                    q.orderBy(cb.desc(cnt));
+                    break;
+                }
+                default:
+                    break;
+            }
+            return cb.conjunction();
+        };
     }
 
     private PagedResponse<RoomSummaryDto> toPagedResponse(Page<Room> resultPage) {
