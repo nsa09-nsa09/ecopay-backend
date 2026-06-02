@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.controller;
 
 import kz.hrms.splitupauth.dto.PagedResponse;
+import kz.hrms.splitupauth.dto.RoomFilter;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
@@ -27,8 +28,14 @@ public class AdminRoomController {
             @RequestParam(required = false) String sortBy,
             @RequestParam(required = false) String sortDir
     ) {
+        RoomFilter filter = RoomFilter.builder()
+                .status(status)
+                .roomType(roomType)
+                .categoryId(categoryId)
+                .serviceId(serviceId)
+                .build();
         return ResponseEntity.ok(
-                roomService.getRooms(page, size, status, roomType, categoryId, serviceId, sortBy, sortDir)
+                roomService.getRooms(page, size, filter, sortBy, sortDir)
         );
     }
 }

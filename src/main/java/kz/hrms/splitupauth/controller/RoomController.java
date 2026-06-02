@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.controller;
 
 import jakarta.validation.Valid;
 import kz.hrms.splitupauth.dto.*;
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
@@ -38,11 +39,29 @@ public class RoomController {
             @RequestParam(required = false) RoomType roomType,
             @RequestParam(required = false) Long categoryId,
             @RequestParam(required = false) Long serviceId,
+            @RequestParam(required = false) java.math.BigDecimal priceMin,
+            @RequestParam(required = false) java.math.BigDecimal priceMax,
+            @RequestParam(required = false) Integer minFreeSeats,
+            @RequestParam(required = false) AccessType accessType,
+            @RequestParam(required = false) String region,
+            @RequestParam(required = false) Boolean verifiedOwnerOnly,
             @RequestParam(required = false) String sortBy,
             @RequestParam(required = false) String sortDir
     ) {
+        RoomFilter filter = RoomFilter.builder()
+                .status(status)
+                .roomType(roomType)
+                .categoryId(categoryId)
+                .serviceId(serviceId)
+                .priceMin(priceMin)
+                .priceMax(priceMax)
+                .minFreeSeats(minFreeSeats)
+                .accessType(accessType)
+                .region(region)
+                .verifiedOwnerOnly(verifiedOwnerOnly)
+                .build();
         return ResponseEntity.ok(
-                roomService.getRooms(page, size, status, roomType, categoryId, serviceId, sortBy, sortDir)
+                roomService.getRooms(page, size, filter, sortBy, sortDir)
         );
     }
 
