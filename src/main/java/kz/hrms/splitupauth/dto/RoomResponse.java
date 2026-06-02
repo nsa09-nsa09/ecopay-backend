@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.dto;
 
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -40,6 +41,11 @@ public class RoomResponse {
     private ConnectionType connectionType;
     private String operatorRestrictions;
     private Boolean operatorTermsConfirmed;
+    private AccessType accessType;
+    private String regionRestriction;
+    private Boolean requiresEmailForInvite;
+    private Boolean emailChangeForbidden;
+    private Integer accessGrantSlaHours;
     private LocalDateTime readyForVerificationAt;
     private LocalDateTime completedAt;
     private LocalDateTime blockedAt;

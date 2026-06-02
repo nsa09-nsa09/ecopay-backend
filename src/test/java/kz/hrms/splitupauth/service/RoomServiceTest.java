@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
@@ -58,7 +59,8 @@ class RoomServiceTest {
                 serviceRepository,
                 tariffPlanRepository,
                 roomMapper,
-                roomEventLogger
+                roomEventLogger,
+                new ObjectMapper()
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));

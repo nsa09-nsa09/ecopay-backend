@@ -94,6 +94,22 @@ public class Room {
     @Column(name = "operator_restrictions", columnDefinition = "text")
     private String operatorRestrictions;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "access_type", length = 20)
+    private AccessType accessType;
+
+    @Column(name = "region_restriction", length = 10)
+    private String regionRestriction;
+
+    @Column(name = "requires_email_for_invite")
+    private Boolean requiresEmailForInvite;
+
+    @Column(name = "email_change_forbidden")
+    private Boolean emailChangeForbidden;
+
+    @Column(name = "access_grant_sla_hours")
+    private Integer accessGrantSlaHours;
+
     @Column(name = "operator_terms_confirmed", nullable = false)
     @Builder.Default
     private Boolean operatorTermsConfirmed = false;

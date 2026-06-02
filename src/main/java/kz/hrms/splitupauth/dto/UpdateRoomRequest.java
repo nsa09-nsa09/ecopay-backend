@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.dto;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import lombok.Data;
 
@@ -38,4 +39,16 @@ public class UpdateRoomRequest {
     private String operatorRestrictions;
 
     private Boolean operatorTermsConfirmed;
+
+    private AccessType accessType;
+
+    @Size(max = 10, message = "Region restriction must be at most 10 characters")
+    private String regionRestriction;
+
+    private Boolean requiresEmailForInvite;
+
+    private Boolean emailChangeForbidden;
+
+    @Min(value = 0, message = "Access grant SLA hours cannot be negative")
+    private Integer accessGrantSlaHours;
 }
