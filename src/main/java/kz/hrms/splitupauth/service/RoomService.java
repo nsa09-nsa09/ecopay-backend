@@ -20,6 +20,8 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
+import kz.hrms.splitupauth.repository.OwnerRatingProjection;
+import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
@@ -35,6 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -47,6 +52,7 @@ public class RoomService {
     private final RoomMapper roomMapper;
     private final RoomEventLogger roomEventLogger;
     private final ObjectMapper objectMapper;
+    private final ReviewRepository reviewRepository;
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -163,7 +169,9 @@ public class RoomService {
                 .filter(r -> r.getDeletedAt() == null)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        return roomMapper.toResponse(room);
+        RoomResponse response = roomMapper.toResponse(room);
+        applyOwnerRating(response, room.getOwner().getId());
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -220,8 +228,10 @@ public class RoomService {
     }
 
     private PagedResponse<RoomSummaryDto> toPagedResponse(Page<Room> resultPage) {
+        List<RoomSummaryDto> items = resultPage.getContent().stream().map(roomMapper::toSummary).toList();
+        enrichOwnerRatings(items);
         return PagedResponse.<RoomSummaryDto>builder()
-                .items(resultPage.getContent().stream().map(roomMapper::toSummary).toList())
+                .items(items)
                 .page(resultPage.getNumber())
                 .size(resultPage.getSize())
                 .totalItems(resultPage.getTotalElements())
@@ -229,6 +239,37 @@ public class RoomService {
                 .hasNext(resultPage.hasNext())
                 .hasPrevious(resultPage.hasPrevious())
                 .build();
+    }
+
+    /** Batch-load owner review stats for a page of summaries (one query, no N+1). */
+    private void enrichOwnerRatings(List<RoomSummaryDto> summaries) {
+        if (summaries.isEmpty()) {
+            return;
+        }
+        Set<Long> ownerIds = summaries.stream()
+                .map(RoomSummaryDto::getOwnerUserId)
+                .collect(Collectors.toSet());
+        Map<Long, OwnerRatingProjection> byOwner = reviewRepository.aggregateRatingByRecipientIds(ownerIds).stream()
+                .collect(Collectors.toMap(OwnerRatingProjection::getRecipientId, p -> p));
+        for (RoomSummaryDto summary : summaries) {
+            OwnerRatingProjection p = byOwner.get(summary.getOwnerUserId());
+            summary.setOwnerRating(roundRating(p));
+            summary.setOwnerReviewCount(p != null && p.getReviewCount() != null ? p.getReviewCount().intValue() : 0);
+        }
+    }
+
+    private void applyOwnerRating(RoomResponse response, Long ownerId) {
+        List<OwnerRatingProjection> rows = reviewRepository.aggregateRatingByRecipientIds(List.of(ownerId));
+        OwnerRatingProjection p = rows.isEmpty() ? null : rows.get(0);
+        response.setOwnerRating(roundRating(p));
+        response.setOwnerReviewCount(p != null && p.getReviewCount() != null ? p.getReviewCount().intValue() : 0);
+    }
+
+    private Double roundRating(OwnerRatingProjection p) {
+        if (p == null || p.getAvgRating() == null) {
+            return null;
+        }
+        return Math.round(p.getAvgRating() * 10.0) / 10.0;
     }
 
     @Transactional

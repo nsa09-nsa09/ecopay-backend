@@ -21,6 +21,10 @@ import java.time.LocalDateTime;
 public class RoomResponse {
     private Long id;
     private Long ownerUserId;
+    private String ownerDisplayName;
+    private Boolean ownerVerified;
+    private Double ownerRating;
+    private Integer ownerReviewCount;
     private Long categoryId;
     private Long serviceId;
     private Long tariffPlanId;

@@ -51,6 +51,10 @@ public class User {
     @Builder.Default
     private Integer reputation = 0;
 
+    @Column(name = "owner_verified", nullable = false)
+    @Builder.Default
+    private Boolean ownerVerified = false;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -71,6 +75,10 @@ public class User {
 
         if (reputation == null) {
             reputation = 0;
+        }
+
+        if (ownerVerified == null) {
+            ownerVerified = false;
         }
     }
 
