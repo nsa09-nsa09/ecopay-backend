@@ -1,10 +1,13 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -43,6 +46,7 @@ public class RoomService {
     private final TariffPlanRepository tariffPlanRepository;
     private final RoomMapper roomMapper;
     private final RoomEventLogger roomEventLogger;
+    private final ObjectMapper objectMapper;
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -89,6 +93,31 @@ public class RoomService {
 
         validateCreateRequest(request);
 
+        // Hybrid access/restrictions: request value wins, else inherit tariff defaults.
+        JsonNode rules = tariffRules(tariffPlan);
+        AccessType accessType = request.getAccessType() != null
+                ? request.getAccessType()
+                : enumRule(rules, "defaultAccessType");
+        if (accessType == null) {
+            throw new InvalidRequestException("Access type is required");
+        }
+        String regionRestriction = request.getRegionRestriction() != null
+                ? request.getRegionRestriction()
+                : textRule(rules, "region");
+        Boolean requiresEmailForInvite = request.getRequiresEmailForInvite() != null
+                ? request.getRequiresEmailForInvite()
+                : boolRule(rules, "requiresEmailForInvite");
+        Boolean emailChangeForbidden = request.getEmailChangeForbidden() != null
+                ? request.getEmailChangeForbidden()
+                : boolRule(rules, "emailChangeForbidden");
+        Integer accessGrantSlaHours = request.getAccessGrantSlaHours() != null
+                ? request.getAccessGrantSlaHours()
+                : intRule(rules, "accessGrantSlaHours");
+        // Surface the catalog sharing warning as the room's restriction note when none provided.
+        String operatorRestrictions = request.getOperatorRestrictions() != null
+                ? request.getOperatorRestrictions()
+                : textRule(rules, "sharingWarning");
+
         Room room = Room.builder()
                 .owner(currentUser)
                 .category(category)
@@ -109,8 +138,13 @@ public class RoomService {
                 .providerName(request.getProviderName())
                 .tariffNameSnapshot(request.getTariffNameSnapshot())
                 .connectionType(request.getConnectionType())
-                .operatorRestrictions(request.getOperatorRestrictions())
+                .operatorRestrictions(operatorRestrictions)
                 .operatorTermsConfirmed(Boolean.TRUE.equals(request.getOperatorTermsConfirmed()))
+                .accessType(accessType)
+                .regionRestriction(regionRestriction)
+                .requiresEmailForInvite(requiresEmailForInvite)
+                .emailChangeForbidden(emailChangeForbidden)
+                .accessGrantSlaHours(accessGrantSlaHours)
                 .build();
 
         room = roomRepository.save(room);
@@ -259,6 +293,26 @@ public class RoomService {
             room.setOperatorTermsConfirmed(request.getOperatorTermsConfirmed());
         }
 
+        if (request.getAccessType() != null) {
+            room.setAccessType(request.getAccessType());
+        }
+
+        if (request.getRegionRestriction() != null) {
+            room.setRegionRestriction(request.getRegionRestriction());
+        }
+
+        if (request.getRequiresEmailForInvite() != null) {
+            room.setRequiresEmailForInvite(request.getRequiresEmailForInvite());
+        }
+
+        if (request.getEmailChangeForbidden() != null) {
+            room.setEmailChangeForbidden(request.getEmailChangeForbidden());
+        }
+
+        if (request.getAccessGrantSlaHours() != null) {
+            room.setAccessGrantSlaHours(request.getAccessGrantSlaHours());
+        }
+
         validateExistingRoom(room);
 
         room = roomRepository.save(room);
@@ -357,6 +411,51 @@ public class RoomService {
 
     private boolean hasPositiveAmount(BigDecimal amount) {
         return amount != null && amount.signum() > 0;
+    }
+
+    /** Parse a tariff plan's operator_rules JSON; returns null if absent or malformed. */
+    private JsonNode tariffRules(TariffPlan tariffPlan) {
+        if (tariffPlan == null || tariffPlan.getOperatorRules() == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(tariffPlan.getOperatorRules());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String textRule(JsonNode rules, String field) {
+        if (rules == null || !rules.hasNonNull(field)) {
+            return null;
+        }
+        return rules.get(field).asText();
+    }
+
+    private Boolean boolRule(JsonNode rules, String field) {
+        if (rules == null || !rules.hasNonNull(field)) {
+            return null;
+        }
+        return rules.get(field).asBoolean();
+    }
+
+    private Integer intRule(JsonNode rules, String field) {
+        if (rules == null || !rules.hasNonNull(field)) {
+            return null;
+        }
+        return rules.get(field).asInt();
+    }
+
+    private AccessType enumRule(JsonNode rules, String field) {
+        String value = textRule(rules, field);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return AccessType.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private void transitionRoomToVerification(Room room, LocalDateTime transitionTime) {
