@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
+import kz.hrms.splitupauth.dto.RoomFilter;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
@@ -188,27 +189,58 @@ public class RoomService {
     public PagedResponse<RoomSummaryDto> getRooms(
             int page,
             int size,
-            RoomStatus status,
-            RoomType roomType,
-            Long categoryId,
-            Long serviceId,
+            RoomFilter filter,
             String sortBy,
             String sortDir
     ) {
         Pageable pageable = buildPageable(page, size, sortBy, sortDir);
 
+        RoomFilter f = filter != null ? filter : RoomFilter.builder().build();
+
         Specification<Room> spec = (root, q, cb) -> cb.isNull(root.get("deletedAt"));
-        if (status != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), status));
+        if (f.getStatus() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), f.getStatus()));
         }
-        if (roomType != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("roomType"), roomType));
+        if (f.getRoomType() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("roomType"), f.getRoomType()));
         }
-        if (categoryId != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("category").get("id"), categoryId));
+        if (f.getCategoryId() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("category").get("id"), f.getCategoryId()));
         }
-        if (serviceId != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("service").get("id"), serviceId));
+        if (f.getServiceId() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("service").get("id"), f.getServiceId()));
+        }
+        if (f.getPriceMin() != null) {
+            spec = spec.and((root, q, cb) -> cb.greaterThanOrEqualTo(root.get("pricePerMember"), f.getPriceMin()));
+        }
+        if (f.getPriceMax() != null) {
+            spec = spec.and((root, q, cb) -> cb.lessThanOrEqualTo(root.get("pricePerMember"), f.getPriceMax()));
+        }
+        if (f.getAccessType() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("accessType"), f.getAccessType()));
+        }
+        if (f.getRegion() != null && !f.getRegion().isBlank()) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("regionRestriction"), f.getRegion()));
+        }
+        if (Boolean.TRUE.equals(f.getVerifiedOwnerOnly())) {
+            spec = spec.and((root, q, cb) -> cb.isTrue(root.get("owner").get("ownerVerified")));
+        }
+        if (f.getMinFreeSeats() != null && f.getMinFreeSeats() > 0) {
+            int minFree = f.getMinFreeSeats();
+            spec = spec.and((root, q, cb) -> {
+                // occupied seats = count of PENDING/ACTIVE members for this room (correlated subquery)
+                jakarta.persistence.criteria.Subquery<Long> sub = q.subquery(Long.class);
+                jakarta.persistence.criteria.Root<kz.hrms.splitupauth.entity.RoomMember> m =
+                        sub.from(kz.hrms.splitupauth.entity.RoomMember.class);
+                sub.select(cb.count(m));
+                sub.where(
+                        cb.equal(m.get("room"), root),
+                        cb.isNull(m.get("deletedAt")),
+                        m.get("status").in(OCCUPYING_STATUSES)
+                );
+                // maxMembers - occupied >= minFree  ⇔  occupied <= maxMembers - minFree
+                return cb.le(sub, cb.diff(root.<Integer>get("maxMembers"), minFree));
+            });
         }
 
         Page<Room> resultPage = roomRepository.findAll(spec, pageable);
