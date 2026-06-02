@@ -5,10 +5,13 @@ import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,4 +24,16 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
     Page<RoomMember> findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(Room room, Pageable pageable);
     long countByRoomAndStatusInAndDeletedAtIsNull(Room room, List<MemberStatus> statuses);
     Optional<RoomMember> findByRoomAndUserAndStatusIn(Room room, User user, List<MemberStatus> statuses);
+
+    /** Batch occupied-seat counts for a set of rooms (avoids N+1 in listings). */
+    @Query("""
+            select m.room.id as roomId, count(m) as occupied
+            from RoomMember m
+            where m.deletedAt is null
+              and m.status in :statuses
+              and m.room.id in :roomIds
+            group by m.room.id
+            """)
+    List<RoomOccupancyProjection> countOccupiedByRoomIds(@Param("roomIds") Collection<Long> roomIds,
+                                                         @Param("statuses") Collection<MemberStatus> statuses);
 }

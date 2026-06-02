@@ -34,6 +34,8 @@ public class RoomResponse {
     private String title;
     private String description;
     private Integer maxMembers;
+    private Integer filledSeats;
+    private Integer freeSeats;
     private BigDecimal priceTotal;
     private BigDecimal pricePerMember;
     private String currency;

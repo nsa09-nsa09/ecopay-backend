@@ -11,6 +11,7 @@ import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.entity.VerificationMode;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
@@ -51,6 +52,8 @@ class RoomServiceTest {
     private RoomEventLogger roomEventLogger;
     @Mock
     private ReviewRepository reviewRepository;
+    @Mock
+    private RoomMemberRepository roomMemberRepository;
 
     private RoomService roomService;
 
@@ -64,7 +67,8 @@ class RoomServiceTest {
                 roomMapper,
                 roomEventLogger,
                 new ObjectMapper(),
-                reviewRepository
+                reviewRepository,
+                roomMemberRepository
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
