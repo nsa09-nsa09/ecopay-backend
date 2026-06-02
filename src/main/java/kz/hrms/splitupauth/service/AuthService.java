@@ -4,6 +4,7 @@ import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.EmailVerificationToken;
 import kz.hrms.splitupauth.entity.PasswordResetToken;
 import kz.hrms.splitupauth.entity.RefreshToken;
+import kz.hrms.splitupauth.entity.StaffTwoFactorChallenge;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.*;
@@ -37,6 +38,7 @@ public class AuthService {
     private final RateLimitService rateLimitService;
     private final UserMapper userMapper;
     private final PhoneVerificationService phoneVerificationService;
+    private final StaffTwoFactorService staffTwoFactorService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -104,6 +106,47 @@ public class AuthService {
 
         rateLimitService.recordLoginAttempt(request.getEmail(), true);
 
+        // ADMIN / SUPPORT accounts must complete an email 2FA step before any
+        // access or refresh tokens are issued.
+        if (staffTwoFactorService.requiresTwoFactor(user)) {
+            StaffTwoFactorChallenge challenge = staffTwoFactorService.createChallenge(user);
+            return AuthResponse.builder()
+                    .requiresTwoFactor(true)
+                    .challengeId(challenge.getId())
+                    .expiresAt(challenge.getExpiresAt())
+                    .maskedEmail(StaffTwoFactorService.maskEmail(user.getEmail()))
+                    .build();
+        }
+
+        return issueTokens(user);
+    }
+
+    /**
+     * Second step of the staff login flow. Verifies the OTP and, on success,
+     * returns the normal access + refresh token bundle.
+     */
+    @Transactional
+    public AuthResponse verifyStaffTwoFactor(TwoFactorVerifyRequest request) {
+        User user = staffTwoFactorService.verifyChallenge(
+                request.getChallengeId(), request.getCode());
+
+        if (user.getStatus() == UserStatus.BANNED) {
+            throw new UserBannedException("Your account has been banned");
+        }
+
+        return issueTokens(user);
+    }
+
+    /**
+     * Re-issue the OTP for an existing staff 2FA challenge. Cooldown-protected
+     * by the underlying service.
+     */
+    @Transactional
+    public void resendStaffTwoFactor(TwoFactorResendRequest request) {
+        staffTwoFactorService.resendChallenge(request.getChallengeId());
+    }
+
+    private AuthResponse issueTokens(User user) {
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
 

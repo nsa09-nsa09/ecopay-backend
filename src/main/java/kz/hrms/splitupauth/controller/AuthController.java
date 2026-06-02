@@ -29,6 +29,27 @@ public class AuthController {
         return ResponseEntity.ok(authService.login(request));
     }
 
+    /**
+     * Step 2 of the ADMIN / SUPPORT login: caller submits the challenge id
+     * returned by /login plus the 6-digit code that was emailed to them.
+     */
+    @PostMapping("/login/2fa/verify")
+    public ResponseEntity<AuthResponse> verifyTwoFactor(
+            @Valid @RequestBody TwoFactorVerifyRequest request) {
+        return ResponseEntity.ok(authService.verifyStaffTwoFactor(request));
+    }
+
+    /**
+     * Re-issues the OTP for an outstanding staff 2FA challenge. Cooldown
+     * protected by the service layer.
+     */
+    @PostMapping("/login/2fa/resend")
+    public ResponseEntity<Void> resendTwoFactor(
+            @Valid @RequestBody TwoFactorResendRequest request) {
+        authService.resendStaffTwoFactor(request);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/refresh")
     public ResponseEntity<AuthResponse> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
         return ResponseEntity.ok(authService.refreshToken(request));

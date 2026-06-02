@@ -43,6 +43,35 @@ public class EmailService {
         }
     }
 
+    public void sendStaffTwoFactorCode(String to, String code) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(fromEmail.trim());
+            helper.setTo(to);
+            helper.setSubject("Your EcoPay sign-in code");
+
+            helper.setText(buildStaffTwoFactorEmail(code), true);
+
+            mailSender.send(message);
+        } catch (MessagingException e) {
+            throw new RuntimeException("Failed to send email", e);
+        }
+    }
+
+    private String buildStaffTwoFactorEmail(String code) {
+        return "<html>" +
+                "<body>" +
+                "<h2>Sign-in verification code</h2>" +
+                "<p>Use the code below to finish signing in to the EcoPay staff console:</p>" +
+                "<p style=\"font-size:24px;font-weight:bold;letter-spacing:6px;\">" + code + "</p>" +
+                "<p>This code will expire in a few minutes. If you did not try to sign in, " +
+                "please change your password immediately.</p>" +
+                "</body>" +
+                "</html>";
+    }
+
     public void sendVerificationEmail(String to, String token) {
         try {
             MimeMessage message = mailSender.createMimeMessage();
