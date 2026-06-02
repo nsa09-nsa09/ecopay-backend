@@ -26,6 +26,9 @@ public class RoomSummaryDto {
     private LocalDateTime startDate;
     private Long ownerUserId;
     private String ownerDisplayName;
+    private Boolean ownerVerified;
+    private Double ownerRating;
+    private Integer ownerReviewCount;
     private Long serviceId;
     private String serviceName;
 }

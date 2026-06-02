@@ -12,6 +12,8 @@ public class RoomMapper {
         return RoomResponse.builder()
                 .id(room.getId())
                 .ownerUserId(room.getOwner().getId())
+                .ownerDisplayName(room.getOwner().getDisplayName())
+                .ownerVerified(Boolean.TRUE.equals(room.getOwner().getOwnerVerified()))
                 .categoryId(room.getCategory() != null ? room.getCategory().getId() : null)
                 .serviceId(room.getService().getId())
                 .tariffPlanId(room.getTariffPlan() != null ? room.getTariffPlan().getId() : null)
@@ -59,6 +61,7 @@ public class RoomMapper {
                 .startDate(room.getStartDate())
                 .ownerUserId(room.getOwner().getId())
                 .ownerDisplayName(room.getOwner().getDisplayName())
+                .ownerVerified(Boolean.TRUE.equals(room.getOwner().getOwnerVerified()))
                 .serviceId(room.getService().getId())
                 .serviceName(room.getService().getName())
                 .build();

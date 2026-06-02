@@ -86,6 +86,7 @@ public class PhoneVerificationService {
         if (!phone.equals(user.getPhone())) {
             user.setPhone(phone);
             user.setPhoneVerifiedAt(null);
+            user.setOwnerVerified(false);
             userRepository.save(user);
         }
 
@@ -112,6 +113,7 @@ public class PhoneVerificationService {
         if (devBypassCode != null && !devBypassCode.isBlank() && devBypassCode.equals(code)) {
             user.setPhone(phone);
             user.setPhoneVerifiedAt(LocalDateTime.now());
+            user.setOwnerVerified(true);
             userRepository.save(user);
             log.warn("[DEV] phone {} verified via dev-bypass code for user {}", phone, user.getId());
             return;
@@ -142,6 +144,7 @@ public class PhoneVerificationService {
 
         user.setPhone(phone);
         user.setPhoneVerifiedAt(LocalDateTime.now());
+        user.setOwnerVerified(true);
         userRepository.save(user);
     }
 
