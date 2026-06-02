@@ -51,7 +51,9 @@ public class AdminDashboardService {
         long openDisputes = singleLong(
                 "SELECT COUNT(d) FROM Dispute d WHERE d.status = kz.hrms.splitupauth.entity.DisputeStatus.OPEN");
         long pendingModeration = singleLong(
-                "SELECT COUNT(m) FROM ModerationQueue m WHERE m.status = kz.hrms.splitupauth.entity.ModerationQueueStatus.PENDING");
+                "SELECT COUNT(m) FROM ModerationQueue m WHERE m.status IN "
+                        + "(kz.hrms.splitupauth.entity.ModerationQueueStatus.OPEN, "
+                        + "kz.hrms.splitupauth.entity.ModerationQueueStatus.IN_REVIEW)");
         long pendingPayouts = singleLong(
                 "SELECT COUNT(p) FROM Payout p WHERE p.status IN ('PENDING','PENDING_METHOD','PROCESSING')");
 
