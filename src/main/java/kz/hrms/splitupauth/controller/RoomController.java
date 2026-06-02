@@ -6,6 +6,7 @@ import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.service.InMemoryRateLimiter;
 import kz.hrms.splitupauth.service.RoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,12 +23,15 @@ import kz.hrms.splitupauth.dto.PagedResponse;
 public class RoomController {
 
     private final RoomService roomService;
+    private final InMemoryRateLimiter rateLimiter;
 
     @PostMapping
     public ResponseEntity<RoomResponse> createRoom(
             @AuthenticationPrincipal User user,
             @Valid @RequestBody CreateRoomRequest request
     ) {
+        rateLimiter.check("room-create:" + user.getId(), 10, 600,
+                "Too many rooms created — please slow down");
         return ResponseEntity.status(HttpStatus.CREATED).body(roomService.createRoom(user, request));
     }
 

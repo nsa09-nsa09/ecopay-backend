@@ -101,4 +101,20 @@ test.describe("Business chain (happy path)", () => {
     expect(res.status()).toBeGreaterThanOrEqual(400);
     expect(res.status()).toBeLessThan(500);
   });
+
+  test("room creation is rate limited per user (429 after the cap)", async ({ request }) => {
+    const owner = await register(request, "RateLimit Owner");
+    const body = {
+      serviceId: 2, tariffPlanId: 2, categoryId: 1, roomType: "DIGITAL",
+      title: "RL room", maxMembers: 4, priceTotal: 7290, pricePerMember: 1822.5,
+      currency: "KZT", periodType: "MONTHLY", startDate: "2027-01-01T00:00:00",
+    };
+    // The cap is 10 creates / 10 min per user.
+    for (let i = 0; i < 10; i++) {
+      const ok = await request.post(`rooms`, { ...auth(owner.token), data: body });
+      expect(ok.status(), `create #${i + 1}`).toBe(201);
+    }
+    const blocked = await request.post(`rooms`, { ...auth(owner.token), data: body });
+    expect(blocked.status()).toBe(429);
+  });
 });

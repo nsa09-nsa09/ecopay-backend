@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.service.InMemoryRateLimiter;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,6 +20,7 @@ import java.util.List;
 public class RoomMemberController {
 
     private final RoomMemberService roomMemberService;
+    private final InMemoryRateLimiter rateLimiter;
 
     @PostMapping("/{id}/members")
     public ResponseEntity<RoomMemberDto> createMembership(
@@ -26,6 +28,8 @@ public class RoomMemberController {
             @AuthenticationPrincipal User user,
             @Valid @RequestBody JoinRoomRequest request
     ) {
+        rateLimiter.check("room-join:" + user.getId(), 20, 600,
+                "Too many join attempts — please slow down");
         return ResponseEntity.status(HttpStatus.CREATED).body(roomMemberService.joinRoom(id, user, request));
     }
 
