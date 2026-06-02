@@ -6,6 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -14,6 +15,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "room_event_log")
+@Immutable // append-only audit row: Hibernate must never issue UPDATE (mutable JsonNode
+           // columns would otherwise trigger a spurious flush-time UPDATE → blocked by V8)
 @Data
 @Builder
 @NoArgsConstructor

@@ -1,10 +1,8 @@
 package kz.hrms.splitupauth;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
-class SplitUpAuthApplicationTests {
+class SplitUpAuthApplicationTests extends AbstractIntegrationTest {
 
     @Test
     void contextLoads() {

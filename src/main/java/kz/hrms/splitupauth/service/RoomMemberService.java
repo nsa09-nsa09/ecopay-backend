@@ -37,8 +37,13 @@ public class RoomMemberService {
     private final ModerationService moderationService;
     private final DisputeRepository disputeRepository;
     private final ModerationQueueRepository moderationQueueRepository;
+    private final RoomEventLogger roomEventLogger;
     @Transactional
     public RoomMemberDto joinRoom(Long roomId, User currentUser, JoinRoomRequest request) {
+        if (currentUser.getPhoneVerifiedAt() == null) {
+            throw new ForbiddenOperationException("Verify your phone number before joining a room");
+        }
+
         Room room = roomRepository.findByIdForUpdate(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
@@ -68,6 +73,9 @@ public class RoomMemberService {
 
             roomMemberIdentifierRepository.save(identifier);
         }
+
+        roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "member_joined",
+                java.util.Map.of("roomType", String.valueOf(room.getRoomType())));
 
         return roomMemberMapper.toDto(roomMember);
     }
@@ -180,6 +188,9 @@ public class RoomMemberService {
 
         roomMember.setAccessMethod(request.getAccessMethod());
 
+        roomEventLogger.log(room, roomMember, currentUser, "OWNER", "owner_access_granted",
+                java.util.Map.of("accessMethod", String.valueOf(request.getAccessMethod())));
+
         tryActivateMembership(roomMember);
 
         roomMemberRepository.save(roomMember);
@@ -208,9 +219,17 @@ public class RoomMemberService {
             roomMember.setMemberConfirmedAt(LocalDateTime.now());
         }
 
+        roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "member_confirmed",
+                java.util.Map.of());
+
         tryActivateMembership(roomMember);
 
         roomMemberRepository.save(roomMember);
+
+        if (roomMember.getStatus() == MemberStatus.ACTIVE) {
+            roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "membership_activated",
+                    java.util.Map.of());
+        }
 
         RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
                 .orElse(null);
@@ -295,6 +314,15 @@ public class RoomMemberService {
 
         if (roomMember.getActivatedAt() == null) {
             roomMember.setActivatedAt(LocalDateTime.now());
+        }
+
+        // Product rule: a room goes ACTIVE as soon as it has its first ACTIVE member.
+        // (Without this the room never left OPEN/IN_VERIFICATION → reviews and
+        // completion were unreachable.)
+        Room room = roomMember.getRoom();
+        if (room.getStatus() == RoomStatus.OPEN || room.getStatus() == RoomStatus.IN_VERIFICATION) {
+            room.setStatus(RoomStatus.ACTIVE);
+            roomRepository.save(room);
         }
     }
     private void validateJoin(Room room, User currentUser, JoinRoomRequest request) {

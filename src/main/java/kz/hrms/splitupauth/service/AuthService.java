@@ -14,6 +14,7 @@ import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +41,10 @@ public class AuthService {
     private final PhoneVerificationService phoneVerificationService;
     private final StaffTwoFactorService staffTwoFactorService;
 
+    // Dev/test only: auto-verify email on registration so login works without SMTP.
+    @Value("${app.dev.auto-verify-email:false}")
+    private boolean devAutoVerifyEmail;
+
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -63,7 +68,13 @@ public class AuthService {
 
         user = userRepository.save(user);
 
-        sendVerificationEmail(user);
+        if (devAutoVerifyEmail) {
+            // Dev/test: skip the email round-trip so the account can log in without SMTP.
+            user.setEmailVerified(true);
+            user = userRepository.save(user);
+        } else {
+            sendVerificationEmail(user);
+        }
         try {
             phoneVerificationService.requestCode(user, request.getPhone());
         } catch (Exception ex) {
@@ -71,9 +82,6 @@ public class AuthService {
             log.warn("Failed to send initial SMS code for user {}: {}",
                     user.getEmail(), ex.getMessage());
         }
-
-        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
 
         // No tokens issued: the account must verify its email before logging in.
         return AuthResponse.builder()
@@ -148,11 +156,11 @@ public class AuthService {
 
     private AuthResponse issueTokens(User user) {
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
+        String refreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
+                .refreshToken(refreshToken)
                 .user(userMapper.toDto(user))
                 .build();
     }
@@ -166,14 +174,15 @@ public class AuthService {
             throw new UserBannedException("Your account has been banned");
         }
 
-        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        RefreshToken newRefreshToken = refreshTokenService.createRefreshToken(user);
-
+        // Rotate: revoke the presented token first, then issue a fresh one.
         refreshTokenService.revokeRefreshToken(request.getRefreshToken());
+
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
+        String newRefreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(newRefreshToken.getToken())
+                .refreshToken(newRefreshToken)
                 .user(userMapper.toDto(user))
                 .build();
     }

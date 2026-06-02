@@ -1,5 +1,7 @@
 package kz.hrms.splitupauth.dto;
 
+import kz.hrms.splitupauth.entity.AccessType;
+import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import lombok.AllArgsConstructor;
@@ -20,12 +22,22 @@ public class RoomSummaryDto {
     private RoomType roomType;
     private RoomStatus status;
     private Integer maxMembers;
+    private Integer filledSeats;
+    private Integer freeSeats;
     private BigDecimal priceTotal;
     private BigDecimal pricePerMember;
     private String currency;
     private LocalDateTime startDate;
     private Long ownerUserId;
     private String ownerDisplayName;
+    private Boolean ownerVerified;
+    private Double ownerRating;
+    private Integer ownerReviewCount;
     private Long serviceId;
     private String serviceName;
+    private AccessType accessType;
+    private String regionRestriction;
+    private String operatorRestrictions;
+    private String tariffNameSnapshot;
+    private PeriodType periodType;
 }

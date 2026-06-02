@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
@@ -9,6 +10,8 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.entity.VerificationMode;
 import kz.hrms.splitupauth.repository.CategoryRepository;
+import kz.hrms.splitupauth.repository.ReviewRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
@@ -45,6 +48,12 @@ class RoomServiceTest {
     private TariffPlanRepository tariffPlanRepository;
     @Mock
     private RoomMapper roomMapper;
+    @Mock
+    private RoomEventLogger roomEventLogger;
+    @Mock
+    private ReviewRepository reviewRepository;
+    @Mock
+    private RoomMemberRepository roomMemberRepository;
 
     private RoomService roomService;
 
@@ -55,7 +64,11 @@ class RoomServiceTest {
                 categoryRepository,
                 serviceRepository,
                 tariffPlanRepository,
-                roomMapper
+                roomMapper,
+                roomEventLogger,
+                new ObjectMapper(),
+                reviewRepository,
+                roomMemberRepository
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));

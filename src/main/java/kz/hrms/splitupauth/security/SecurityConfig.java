@@ -56,9 +56,15 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
+                        // Public room browsing only: the catalog list and a single room by id.
+                        // Everything deeper under a room (members, membership) requires auth,
+                        // and falls through to anyRequest().authenticated() below.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/rooms/me").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/rooms/joined").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/**").permitAll()
+                        // Single room is public (catalog detail); deeper paths (e.g. /{id}/members)
+                        // fall through to authenticated() to avoid leaking member PII.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/*").permitAll()
                         .requestMatchers("/api/v1/staff/**").hasAnyAuthority("ADMIN", "SUPPORT")
                         .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN")
                         .anyRequest().authenticated()

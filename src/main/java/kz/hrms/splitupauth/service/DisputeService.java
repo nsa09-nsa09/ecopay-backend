@@ -160,6 +160,11 @@ public class DisputeService {
         Dispute dispute = disputeRepository.findById(disputeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Dispute not found"));
 
+        // A resolved/rejected dispute is terminal — cannot be re-decided.
+        if (dispute.getStatus() == DisputeStatus.RESOLVED || dispute.getStatus() == DisputeStatus.REJECTED) {
+            throw new InvalidRequestException("Dispute has already been decided");
+        }
+
         DisputeStatus newStatus;
         try {
             newStatus = DisputeStatus.valueOf(request.getStatus().trim().toUpperCase());

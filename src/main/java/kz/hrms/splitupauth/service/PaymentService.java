@@ -45,6 +45,8 @@ public class PaymentService {
     private final SavedCardService savedCardService;
     private final PaymentEventLogger eventLogger;
     private final PayoutService payoutService;
+    private final RefundService refundService;
+    private final RoomEventLogger roomEventLogger;
 
     @Transactional
     public PaymentIntentResponse createPaymentIntent(
@@ -63,14 +65,21 @@ public class PaymentService {
             throw new ForbiddenOperationException("You can only create payment intent for your own membership");
         }
 
-        if (roomMember.getStatus() != MemberStatus.APPLIED) {
-            throw new InvalidRequestException("Payment intent can only be created for APPLIED membership");
+        if (currentUser.getPhoneVerifiedAt() == null) {
+            throw new ForbiddenOperationException("Verify your phone number before paying");
         }
 
+        // Idempotency must be checked BEFORE the status guard: once a payment succeeds the
+        // membership leaves APPLIED, and a retried call with the same key must still return
+        // the original intent (not fail the status check → no double charge, true idempotency).
         PaymentIntent existing = paymentIntentRepository.findByIdempotencyKey(request.getIdempotencyKey())
                 .orElse(null);
         if (existing != null) {
             return mapToResponse(existing);
+        }
+
+        if (roomMember.getStatus() != MemberStatus.APPLIED) {
+            throw new InvalidRequestException("Payment intent can only be created for APPLIED membership");
         }
 
         PaymentGateway gateway = gatewayRegistry.defaultGateway();
@@ -140,20 +149,64 @@ public class PaymentService {
             intent.setExternalPaymentId(chargeResp.getExternalPaymentId());
             intent.setPaymentUrl(chargeResp.getPaymentUrl());
             intent.setProviderStatusCode(chargeResp.getProviderStatusCode());
-            // For saved-card charges Freedom Pay returns success synchronously.
-            if (savedCard != null && !chargeResp.isRequiresRedirect()) {
+            // A synchronous, non-redirect success finalizes immediately (saved-card
+            // charges and the dev mock gateway). Real Freedom Pay init always requires
+            // a redirect, so that path still waits for the webhook.
+            if (!chargeResp.isRequiresRedirect()) {
                 intent.setStatus(PaymentIntentStatus.SUCCESS);
             }
         }
         intent = paymentIntentRepository.save(intent);
 
         if (intent.getStatus() == PaymentIntentStatus.SUCCESS) {
-            recordSuccessTransaction(intent, null, null);
-            roomMemberService.markMembershipAsPaid(intent.getRoomMember());
-            payoutService.createOwnerPayoutForSuccessfulPayment(intent);
+            applySuccessfulCharge(intent, null, null);
         }
 
         return mapToResponse(intent);
+    }
+
+    /**
+     * Single source of truth for the side effects of a successful charge:
+     * record the transaction, advance the membership (idempotent), and create
+     * the owner payout. Used by the initial intent flow, the webhook flow, and
+     * recurring auto-charges.
+     */
+    @Transactional
+    public void applySuccessfulCharge(PaymentIntent intent, String cardPanMask, String providerSignature) {
+        recordSuccessTransaction(intent, cardPanMask, providerSignature);
+        roomMemberService.markMembershipAsPaid(intent.getRoomMember());
+        payoutService.createOwnerPayoutForSuccessfulPayment(intent);
+
+        RoomMember member = intent.getRoomMember();
+        roomEventLogger.log(
+                member == null ? null : member.getRoom(), member, intent.getUser(), "MEMBER",
+                "payment_success",
+                Map.of("intentId", String.valueOf(intent.getId()),
+                        "amount", String.valueOf(intent.getAmount())));
+    }
+
+    /**
+     * Fails PENDING intents whose 30-minute window elapsed without a terminal
+     * callback. Prevents stale intents from lingering forever (the user can then
+     * safely retry). Returns the number of intents expired.
+     */
+    @Transactional
+    public int expireStalePendingIntents() {
+        var stale = paymentIntentRepository.findByStatusAndExpiresAtBefore(
+                PaymentIntentStatus.PENDING, LocalDateTime.now());
+        for (PaymentIntent intent : stale) {
+            intent.setStatus(PaymentIntentStatus.FAILED);
+            intent.setFailureCode("EXPIRED");
+            intent.setFailureMessage("Payment was not completed before the intent expired");
+            paymentIntentRepository.save(intent);
+            eventLogger.log("INTENT", intent.getId(), "EXPIRED",
+                    "PENDING", "FAILED", null, null, intent.getIdempotencyKey(),
+                    Map.of("expiresAt", String.valueOf(intent.getExpiresAt())));
+        }
+        if (!stale.isEmpty()) {
+            log.info("Expired {} stale PENDING payment intents", stale.size());
+        }
+        return stale.size();
     }
 
     @Transactional(readOnly = true)
@@ -183,6 +236,22 @@ public class PaymentService {
      */
     @Transactional
     public void applyWebhookEvent(GatewayWebhookEvent event) {
+        // Async payout result callback (no intent id) — route to the payout service.
+        if ("PAYOUT".equals(event.getKind())) {
+            payoutService.applyPayoutWebhook(
+                    event.getExternalPaymentId(),
+                    "SUCCESS".equals(event.getResultStatus()));
+            return;
+        }
+
+        // Async refund result callback — route to the refund service.
+        if ("REFUND".equals(event.getKind())) {
+            refundService.applyRefundWebhook(
+                    event.getExternalPaymentId(),
+                    "SUCCESS".equals(event.getResultStatus()));
+            return;
+        }
+
         if (event.getIntentId() == null) {
             log.warn("Webhook event without intent id, ignoring");
             return;
@@ -208,13 +277,40 @@ public class PaymentService {
         }
 
         if ("SUCCESS".equals(event.getResultStatus())) {
+            // Defence-in-depth: never trust a SUCCESS callback whose amount/currency
+            // does not match the intent we created. The signature already covers the
+            // amount, but a mismatch means tampering or a provider bug → treat as FAILED.
+            if (event.getAmount() != null
+                    && intent.getAmount().compareTo(event.getAmount()) != 0) {
+                log.error("Webhook amount mismatch for intent {}: expected {} got {} — rejecting",
+                        intent.getId(), intent.getAmount(), event.getAmount());
+                intent.setStatus(PaymentIntentStatus.FAILED);
+                intent.setFailureCode("AMOUNT_MISMATCH");
+                intent.setFailureMessage("Callback amount " + event.getAmount()
+                        + " does not match intent amount " + intent.getAmount());
+                paymentIntentRepository.save(intent);
+                eventLogger.log("INTENT", intent.getId(), "WEBHOOK_AMOUNT_MISMATCH",
+                        "PENDING", "FAILED", null, event.getProviderRequestId(),
+                        intent.getIdempotencyKey(),
+                        Map.of("expected", intent.getAmount().toPlainString(),
+                                "received", event.getAmount().toPlainString()));
+                return;
+            }
+            if (event.getCurrency() != null && !event.getCurrency().isBlank()
+                    && !"KZT".equalsIgnoreCase(event.getCurrency())) {
+                log.error("Webhook currency mismatch for intent {}: got {} — rejecting",
+                        intent.getId(), event.getCurrency());
+                intent.setStatus(PaymentIntentStatus.FAILED);
+                intent.setFailureCode("CURRENCY_MISMATCH");
+                intent.setFailureMessage("Callback currency " + event.getCurrency() + " is not KZT");
+                paymentIntentRepository.save(intent);
+                return;
+            }
             String fromStatus = intent.getStatus().name();
             intent.setStatus(PaymentIntentStatus.SUCCESS);
             intent.setExternalPaymentId(event.getExternalPaymentId());
             intent.setProviderStatusCode(event.getProviderStatusCode());
             intent = paymentIntentRepository.save(intent);
-
-            recordSuccessTransaction(intent, event.getCardPanMask(), event.getSignature());
 
             if (Boolean.TRUE.equals(intent.getSaveCardRequested())
                     && event.getCardToken() != null && !event.getCardToken().isBlank()) {
@@ -226,8 +322,7 @@ public class PaymentService {
                 );
             }
 
-            roomMemberService.markMembershipAsPaid(intent.getRoomMember());
-            payoutService.createOwnerPayoutForSuccessfulPayment(intent);
+            applySuccessfulCharge(intent, event.getCardPanMask(), event.getSignature());
 
             eventLogger.log("INTENT", intent.getId(), "WEBHOOK_SUCCESS",
                     fromStatus, intent.getStatus().name(),

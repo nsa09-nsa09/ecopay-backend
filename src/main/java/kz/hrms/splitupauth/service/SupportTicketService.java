@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.CreateSupportMessageRequest;
+import kz.hrms.splitupauth.util.TextSanitizer;
 import kz.hrms.splitupauth.dto.CreateSupportTicketRequest;
 import kz.hrms.splitupauth.dto.SupportMessageDto;
 import kz.hrms.splitupauth.dto.SupportTicketResponse;
@@ -61,11 +62,23 @@ public class SupportTicketService {
             }
         }
 
+        // IDOR guard: if a room is referenced without an (already-verified) membership,
+        // the caller must be the owner or an actual member of that room.
+        if (room != null && roomMember == null) {
+            boolean isOwner = room.getOwner().getId().equals(currentUser.getId());
+            boolean isMember = roomMemberRepository
+                    .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+                    .isPresent();
+            if (!isOwner && !isMember) {
+                throw new ForbiddenOperationException("You cannot create a ticket for a room you are not part of");
+            }
+        }
+
         SupportTicket ticket = SupportTicket.builder()
                 .user(currentUser)
                 .room(room)
                 .roomMember(roomMember)
-                .subject(request.getSubject())
+                .subject(TextSanitizer.sanitize(request.getSubject()))
                 .topic(request.getTopic())
                 .status(SupportTicketStatus.OPEN)
                 .priority(roomMember != null ? SupportTicketPriority.HIGH : SupportTicketPriority.NORMAL)
@@ -78,7 +91,7 @@ public class SupportTicketService {
                 .ticket(ticket)
                 .senderUser(currentUser)
                 .senderRole(SupportSenderRole.USER)
-                .message(request.getMessage())
+                .message(TextSanitizer.sanitize(request.getMessage()))
                 .build();
 
         supportMessageRepository.save(firstMessage);
@@ -132,7 +145,7 @@ public class SupportTicketService {
                 .ticket(ticket)
                 .senderUser(currentUser)
                 .senderRole(SupportSenderRole.USER)
-                .message(request.getMessage())
+                .message(TextSanitizer.sanitize(request.getMessage()))
                 .build();
 
         supportMessageRepository.save(message);

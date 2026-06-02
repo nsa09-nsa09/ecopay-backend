@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.dto;
 
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -20,6 +21,10 @@ import java.time.LocalDateTime;
 public class RoomResponse {
     private Long id;
     private Long ownerUserId;
+    private String ownerDisplayName;
+    private Boolean ownerVerified;
+    private Double ownerRating;
+    private Integer ownerReviewCount;
     private Long categoryId;
     private Long serviceId;
     private Long tariffPlanId;
@@ -29,6 +34,8 @@ public class RoomResponse {
     private String title;
     private String description;
     private Integer maxMembers;
+    private Integer filledSeats;
+    private Integer freeSeats;
     private BigDecimal priceTotal;
     private BigDecimal pricePerMember;
     private String currency;
@@ -40,6 +47,11 @@ public class RoomResponse {
     private ConnectionType connectionType;
     private String operatorRestrictions;
     private Boolean operatorTermsConfirmed;
+    private AccessType accessType;
+    private String regionRestriction;
+    private Boolean requiresEmailForInvite;
+    private Boolean emailChangeForbidden;
+    private Integer accessGrantSlaHours;
     private LocalDateTime readyForVerificationAt;
     private LocalDateTime completedAt;
     private LocalDateTime blockedAt;

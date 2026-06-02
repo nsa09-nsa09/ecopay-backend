@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.dto;
 
 import jakarta.validation.constraints.*;
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomType;
@@ -32,8 +33,10 @@ public class CreateRoomRequest {
     @Min(value = 2, message = "Max members must be at least 2")
     private Integer maxMembers;
 
+    @PositiveOrZero(message = "Total price cannot be negative")
     private BigDecimal priceTotal;
 
+    @PositiveOrZero(message = "Price per member cannot be negative")
     private BigDecimal pricePerMember;
 
     private String currency;
@@ -42,6 +45,7 @@ public class CreateRoomRequest {
     private PeriodType periodType;
 
     @NotNull(message = "Start date is required")
+    @Future(message = "Start date must be in the future")
     private LocalDateTime startDate;
 
     private String cancellationPolicy;
@@ -55,4 +59,17 @@ public class CreateRoomRequest {
     private String operatorRestrictions;
 
     private Boolean operatorTermsConfirmed;
+
+    // Access type — may be omitted; inherited from the tariff's defaults when null (hybrid).
+    private AccessType accessType;
+
+    @Size(max = 10, message = "Region restriction must be at most 10 characters")
+    private String regionRestriction;
+
+    private Boolean requiresEmailForInvite;
+
+    private Boolean emailChangeForbidden;
+
+    @Min(value = 0, message = "Access grant SLA hours cannot be negative")
+    private Integer accessGrantSlaHours;
 }

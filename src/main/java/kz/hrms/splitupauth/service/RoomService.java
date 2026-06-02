@@ -1,12 +1,23 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
+import kz.hrms.splitupauth.dto.RoomFilter;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
+import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
+import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.ServiceEntity;
@@ -17,6 +28,10 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
+import kz.hrms.splitupauth.repository.OwnerRatingProjection;
+import kz.hrms.splitupauth.repository.ReviewRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomOccupancyProjection;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
@@ -32,6 +47,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -42,6 +60,13 @@ public class RoomService {
     private final ServiceRepository serviceRepository;
     private final TariffPlanRepository tariffPlanRepository;
     private final RoomMapper roomMapper;
+    private final RoomEventLogger roomEventLogger;
+    private final ObjectMapper objectMapper;
+    private final ReviewRepository reviewRepository;
+    private final RoomMemberRepository roomMemberRepository;
+
+    /** Member statuses that occupy a seat (see CLAUDE.md). */
+    private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -61,6 +86,10 @@ public class RoomService {
 
     @Transactional
     public RoomResponse createRoom(User currentUser, CreateRoomRequest request) {
+        if (currentUser.getPhoneVerifiedAt() == null) {
+            throw new ForbiddenOperationException("Verify your phone number before creating a room");
+        }
+
         Category category = null;
         if (request.getCategoryId() != null) {
             category = categoryRepository.findById(request.getCategoryId())
@@ -84,6 +113,31 @@ public class RoomService {
 
         validateCreateRequest(request);
 
+        // Hybrid access/restrictions: request value wins, else inherit tariff defaults.
+        JsonNode rules = tariffRules(tariffPlan);
+        AccessType accessType = request.getAccessType() != null
+                ? request.getAccessType()
+                : enumRule(rules, "defaultAccessType");
+        if (accessType == null) {
+            throw new InvalidRequestException("Access type is required");
+        }
+        String regionRestriction = request.getRegionRestriction() != null
+                ? request.getRegionRestriction()
+                : textRule(rules, "region");
+        Boolean requiresEmailForInvite = request.getRequiresEmailForInvite() != null
+                ? request.getRequiresEmailForInvite()
+                : boolRule(rules, "requiresEmailForInvite");
+        Boolean emailChangeForbidden = request.getEmailChangeForbidden() != null
+                ? request.getEmailChangeForbidden()
+                : boolRule(rules, "emailChangeForbidden");
+        Integer accessGrantSlaHours = request.getAccessGrantSlaHours() != null
+                ? request.getAccessGrantSlaHours()
+                : intRule(rules, "accessGrantSlaHours");
+        // Surface the catalog sharing warning as the room's restriction note when none provided.
+        String operatorRestrictions = request.getOperatorRestrictions() != null
+                ? request.getOperatorRestrictions()
+                : textRule(rules, "sharingWarning");
+
         Room room = Room.builder()
                 .owner(currentUser)
                 .category(category)
@@ -104,11 +158,21 @@ public class RoomService {
                 .providerName(request.getProviderName())
                 .tariffNameSnapshot(request.getTariffNameSnapshot())
                 .connectionType(request.getConnectionType())
-                .operatorRestrictions(request.getOperatorRestrictions())
+                .operatorRestrictions(operatorRestrictions)
                 .operatorTermsConfirmed(Boolean.TRUE.equals(request.getOperatorTermsConfirmed()))
+                .accessType(accessType)
+                .regionRestriction(regionRestriction)
+                .requiresEmailForInvite(requiresEmailForInvite)
+                .emailChangeForbidden(emailChangeForbidden)
+                .accessGrantSlaHours(accessGrantSlaHours)
                 .build();
 
         room = roomRepository.save(room);
+
+        roomEventLogger.log(room, null, currentUser, "OWNER", "room_created",
+                java.util.Map.of("roomType", String.valueOf(room.getRoomType()),
+                        "maxMembers", room.getMaxMembers(),
+                        "pricePerMember", String.valueOf(room.getPricePerMember())));
 
         return roomMapper.toResponse(room);
     }
@@ -119,38 +183,84 @@ public class RoomService {
                 .filter(r -> r.getDeletedAt() == null)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        return roomMapper.toResponse(room);
+        RoomResponse response = roomMapper.toResponse(room);
+        applyOwnerRating(response, room.getOwner().getId());
+        int occupied = (int) roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
+        response.setFilledSeats(occupied);
+        response.setFreeSeats(Math.max(0, response.getMaxMembers() - occupied));
+        return response;
     }
 
     @Transactional(readOnly = true)
     public PagedResponse<RoomSummaryDto> getRooms(
             int page,
             int size,
-            RoomStatus status,
-            RoomType roomType,
-            Long categoryId,
-            Long serviceId,
+            RoomFilter filter,
             String sortBy,
             String sortDir
     ) {
         Pageable pageable = buildPageable(page, size, sortBy, sortDir);
 
+        RoomFilter f = filter != null ? filter : RoomFilter.builder().build();
+
         Specification<Room> spec = (root, q, cb) -> cb.isNull(root.get("deletedAt"));
-        if (status != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), status));
+        if (f.getStatus() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), f.getStatus()));
         }
-        if (roomType != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("roomType"), roomType));
+        if (f.getRoomType() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("roomType"), f.getRoomType()));
         }
-        if (categoryId != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("category").get("id"), categoryId));
+        if (f.getCategoryId() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("category").get("id"), f.getCategoryId()));
         }
-        if (serviceId != null) {
-            spec = spec.and((root, q, cb) -> cb.equal(root.get("service").get("id"), serviceId));
+        if (f.getServiceId() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("service").get("id"), f.getServiceId()));
+        }
+        if (f.getPriceMin() != null) {
+            spec = spec.and((root, q, cb) -> cb.greaterThanOrEqualTo(root.get("pricePerMember"), f.getPriceMin()));
+        }
+        if (f.getPriceMax() != null) {
+            spec = spec.and((root, q, cb) -> cb.lessThanOrEqualTo(root.get("pricePerMember"), f.getPriceMax()));
+        }
+        if (f.getAccessType() != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("accessType"), f.getAccessType()));
+        }
+        if (f.getRegion() != null && !f.getRegion().isBlank()) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("regionRestriction"), f.getRegion()));
+        }
+        if (Boolean.TRUE.equals(f.getVerifiedOwnerOnly())) {
+            spec = spec.and((root, q, cb) -> cb.isTrue(root.get("owner").get("ownerVerified")));
+        }
+        if (f.getMinFreeSeats() != null && f.getMinFreeSeats() > 0) {
+            int minFree = f.getMinFreeSeats();
+            spec = spec.and((root, q, cb) -> {
+                // maxMembers - occupied >= minFree  ⇔  occupied <= maxMembers - minFree
+                Subquery<Long> occupied = occupiedSubquery(q, cb, root);
+                return cb.le(occupied, cb.diff(root.<Integer>get("maxMembers"), minFree));
+            });
+        }
+
+        // Sorting by computed fields (free seats / owner rating / popularity) is applied
+        // as an ORDER BY inside the Specification when the Pageable carries no sort.
+        if (isComputedSort(sortBy)) {
+            spec = spec.and(computedOrderSpec(sortBy.trim()));
         }
 
         Page<Room> resultPage = roomRepository.findAll(spec, pageable);
         return toPagedResponse(resultPage);
+    }
+
+    /** Correlated subquery counting seat-occupying (PENDING/ACTIVE) members of {@code roomRoot}. */
+    private Subquery<Long> occupiedSubquery(CriteriaQuery<?> q, CriteriaBuilder cb, Root<Room> roomRoot) {
+        Subquery<Long> sub = q.subquery(Long.class);
+        Root<RoomMember> m = sub.from(RoomMember.class);
+        sub.select(cb.count(m));
+        sub.where(
+                cb.equal(m.get("room"), roomRoot),
+                cb.isNull(m.get("deletedAt")),
+                m.get("status").in(OCCUPYING_STATUSES)
+        );
+        return sub;
     }
 
     @Transactional(readOnly = true)
@@ -166,18 +276,89 @@ public class RoomService {
         return toPagedResponse(resultPage);
     }
 
+    /** Sort keys that cannot map to a single entity column (ordered via Specification ORDER BY). */
+    private static final Set<String> COMPUTED_SORTS = Set.of("most_seats", "best_rating", "popular");
+
+    private boolean isComputedSort(String sortBy) {
+        return sortBy != null && COMPUTED_SORTS.contains(sortBy.trim());
+    }
+
     private Pageable buildPageable(int page, int size, String sortBy, String sortDir) {
-        String resolvedSortBy = (sortBy == null || sortBy.isBlank()) ? "createdAt" : sortBy;
-        Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
         if (page < 0) page = 0;
         if (size <= 0) size = 20;
         if (size > 100) size = 100;
-        return PageRequest.of(page, size, Sort.by(direction, resolvedSortBy));
+        // Computed sorts carry no Pageable sort; ORDER BY is applied inside the Specification.
+        if (isComputedSort(sortBy)) {
+            return PageRequest.of(page, size);
+        }
+        return PageRequest.of(page, size, entitySort(sortBy, sortDir));
+    }
+
+    private Sort entitySort(String sortBy, String sortDir) {
+        String key = sortBy == null ? "" : sortBy.trim();
+        switch (key) {
+            case "price_asc":
+                return Sort.by(Sort.Direction.ASC, "pricePerMember");
+            case "price_desc":
+                return Sort.by(Sort.Direction.DESC, "pricePerMember");
+            case "newest":
+                return Sort.by(Sort.Direction.DESC, "createdAt");
+            case "starting_soon":
+                return Sort.by(Sort.Direction.ASC, "startDate");
+            default:
+                // Legacy: treat sortBy as a raw entity field with sortDir, default createdAt desc.
+                String field = key.isBlank() ? "createdAt" : key;
+                Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+                return Sort.by(direction, field);
+        }
+    }
+
+    /** Apply ORDER BY for a computed sort key. Skipped for the count query (Long result type). */
+    private Specification<Room> computedOrderSpec(String key) {
+        return (root, q, cb) -> {
+            Class<?> resultType = q.getResultType();
+            if (resultType == Long.class || resultType == long.class) {
+                return cb.conjunction();
+            }
+            switch (key) {
+                case "most_seats": {
+                    // free seats = maxMembers - occupied, descending
+                    Subquery<Long> occupied = occupiedSubquery(q, cb, root);
+                    q.orderBy(cb.desc(cb.diff(root.<Integer>get("maxMembers"), occupied)));
+                    break;
+                }
+                case "best_rating": {
+                    Subquery<Double> avg = q.subquery(Double.class);
+                    Root<Review> rv = avg.from(Review.class);
+                    avg.select(cb.avg(rv.get("rating")));
+                    avg.where(
+                            cb.equal(rv.get("recipient"), root.get("owner")),
+                            cb.isFalse(rv.get("hiddenByAdmin"))
+                    );
+                    q.orderBy(cb.desc(cb.coalesce(avg, 0.0)));
+                    break;
+                }
+                case "popular": {
+                    Subquery<Long> cnt = q.subquery(Long.class);
+                    Root<RoomMember> m = cnt.from(RoomMember.class);
+                    cnt.select(cb.count(m));
+                    cnt.where(cb.equal(m.get("room"), root), cb.isNull(m.get("deletedAt")));
+                    q.orderBy(cb.desc(cnt));
+                    break;
+                }
+                default:
+                    break;
+            }
+            return cb.conjunction();
+        };
     }
 
     private PagedResponse<RoomSummaryDto> toPagedResponse(Page<Room> resultPage) {
+        List<RoomSummaryDto> items = resultPage.getContent().stream().map(roomMapper::toSummary).toList();
+        enrichOwnerRatings(items);
+        enrichSeats(items);
         return PagedResponse.<RoomSummaryDto>builder()
-                .items(resultPage.getContent().stream().map(roomMapper::toSummary).toList())
+                .items(items)
                 .page(resultPage.getNumber())
                 .size(resultPage.getSize())
                 .totalItems(resultPage.getTotalElements())
@@ -185,6 +366,55 @@ public class RoomService {
                 .hasNext(resultPage.hasNext())
                 .hasPrevious(resultPage.hasPrevious())
                 .build();
+    }
+
+    /** Batch-load owner review stats for a page of summaries (one query, no N+1). */
+    private void enrichOwnerRatings(List<RoomSummaryDto> summaries) {
+        if (summaries.isEmpty()) {
+            return;
+        }
+        Set<Long> ownerIds = summaries.stream()
+                .map(RoomSummaryDto::getOwnerUserId)
+                .collect(Collectors.toSet());
+        Map<Long, OwnerRatingProjection> byOwner = reviewRepository.aggregateRatingByRecipientIds(ownerIds).stream()
+                .collect(Collectors.toMap(OwnerRatingProjection::getRecipientId, p -> p));
+        for (RoomSummaryDto summary : summaries) {
+            OwnerRatingProjection p = byOwner.get(summary.getOwnerUserId());
+            summary.setOwnerRating(roundRating(p));
+            summary.setOwnerReviewCount(p != null && p.getReviewCount() != null ? p.getReviewCount().intValue() : 0);
+        }
+    }
+
+    /** Batch occupied-seat counts for a page of summaries (one query, no N+1). */
+    private void enrichSeats(List<RoomSummaryDto> summaries) {
+        if (summaries.isEmpty()) {
+            return;
+        }
+        Set<Long> roomIds = summaries.stream()
+                .map(RoomSummaryDto::getId)
+                .collect(Collectors.toSet());
+        Map<Long, Long> occupiedByRoom = roomMemberRepository.countOccupiedByRoomIds(roomIds, OCCUPYING_STATUSES).stream()
+                .collect(Collectors.toMap(RoomOccupancyProjection::getRoomId, RoomOccupancyProjection::getOccupied));
+        for (RoomSummaryDto summary : summaries) {
+            int occupied = occupiedByRoom.getOrDefault(summary.getId(), 0L).intValue();
+            int max = summary.getMaxMembers() != null ? summary.getMaxMembers() : 0;
+            summary.setFilledSeats(occupied);
+            summary.setFreeSeats(Math.max(0, max - occupied));
+        }
+    }
+
+    private void applyOwnerRating(RoomResponse response, Long ownerId) {
+        List<OwnerRatingProjection> rows = reviewRepository.aggregateRatingByRecipientIds(List.of(ownerId));
+        OwnerRatingProjection p = rows.isEmpty() ? null : rows.get(0);
+        response.setOwnerRating(roundRating(p));
+        response.setOwnerReviewCount(p != null && p.getReviewCount() != null ? p.getReviewCount().intValue() : 0);
+    }
+
+    private Double roundRating(OwnerRatingProjection p) {
+        if (p == null || p.getAvgRating() == null) {
+            return null;
+        }
+        return Math.round(p.getAvgRating() * 10.0) / 10.0;
     }
 
     @Transactional
@@ -247,6 +477,26 @@ public class RoomService {
 
         if (request.getOperatorTermsConfirmed() != null) {
             room.setOperatorTermsConfirmed(request.getOperatorTermsConfirmed());
+        }
+
+        if (request.getAccessType() != null) {
+            room.setAccessType(request.getAccessType());
+        }
+
+        if (request.getRegionRestriction() != null) {
+            room.setRegionRestriction(request.getRegionRestriction());
+        }
+
+        if (request.getRequiresEmailForInvite() != null) {
+            room.setRequiresEmailForInvite(request.getRequiresEmailForInvite());
+        }
+
+        if (request.getEmailChangeForbidden() != null) {
+            room.setEmailChangeForbidden(request.getEmailChangeForbidden());
+        }
+
+        if (request.getAccessGrantSlaHours() != null) {
+            room.setAccessGrantSlaHours(request.getAccessGrantSlaHours());
         }
 
         validateExistingRoom(room);
@@ -349,6 +599,51 @@ public class RoomService {
         return amount != null && amount.signum() > 0;
     }
 
+    /** Parse a tariff plan's operator_rules JSON; returns null if absent or malformed. */
+    private JsonNode tariffRules(TariffPlan tariffPlan) {
+        if (tariffPlan == null || tariffPlan.getOperatorRules() == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(tariffPlan.getOperatorRules());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String textRule(JsonNode rules, String field) {
+        if (rules == null || !rules.hasNonNull(field)) {
+            return null;
+        }
+        return rules.get(field).asText();
+    }
+
+    private Boolean boolRule(JsonNode rules, String field) {
+        if (rules == null || !rules.hasNonNull(field)) {
+            return null;
+        }
+        return rules.get(field).asBoolean();
+    }
+
+    private Integer intRule(JsonNode rules, String field) {
+        if (rules == null || !rules.hasNonNull(field)) {
+            return null;
+        }
+        return rules.get(field).asInt();
+    }
+
+    private AccessType enumRule(JsonNode rules, String field) {
+        String value = textRule(rules, field);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return AccessType.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private void transitionRoomToVerification(Room room, LocalDateTime transitionTime) {
         ensureStatusTransition(room.getStatus(), RoomStatus.IN_VERIFICATION);
         validateExistingRoom(room);
@@ -402,6 +697,8 @@ public class RoomService {
         room.setCompletedAt(LocalDateTime.now());
 
         room = roomRepository.save(room);
+
+        roomEventLogger.log(room, null, currentUser, "OWNER", "room_completed", java.util.Map.of());
 
         return roomMapper.toResponse(room);
     }
