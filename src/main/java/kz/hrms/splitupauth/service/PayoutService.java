@@ -179,6 +179,47 @@ public class PayoutService {
         log.info("Payout {} marked {} by provider callback", payout.getId(), payout.getStatus());
     }
 
+    /**
+     * Clawback hook: called when a charge is refunded. If the owner payout that the
+     * charge triggered has not been paid out yet (PENDING/PENDING_METHOD) and the charge
+     * was fully refunded, reverse the payout so the platform never pays out refunded money.
+     * If the payout was already dispatched (PROCESSING/SUCCESS), it cannot be auto-recovered
+     * — we flag it for manual clawback via an audit event. Partial refunds on a not-yet-paid
+     * payout are also flagged (proportional recompute is an accounting decision).
+     */
+    @Transactional
+    public void reverseOwnerPayoutForRefund(PaymentIntent triggeringIntent, boolean fullRefund) {
+        if (triggeringIntent == null) {
+            return;
+        }
+        Payout payout = payoutRepository.findByTriggeringPaymentIntent(triggeringIntent).orElse(null);
+        if (payout == null) {
+            return;
+        }
+        String status = payout.getStatus();
+        boolean notYetPaid = "PENDING".equals(status) || "PENDING_METHOD".equals(status);
+
+        if (notYetPaid && fullRefund) {
+            String old = payout.getStatus();
+            payout.setStatus("REVERSED");
+            payout.setFailureReason("Reversed: triggering charge was refunded before payout");
+            payout.setProcessedAt(LocalDateTime.now());
+            payoutRepository.save(payout);
+            eventLogger.log("PAYOUT", payout.getId(), "REVERSED",
+                    old, "REVERSED", null, null, payout.getIdempotencyKey(),
+                    java.util.Map.of("reason", "charge_refunded"));
+            log.info("Payout {} reversed (charge refunded before payout)", payout.getId());
+        } else {
+            // Either already dispatched/paid, or a partial refund on a pending payout:
+            // cannot safely auto-adjust — record for manual clawback / review.
+            eventLogger.log("PAYOUT", payout.getId(), "CLAWBACK_REQUIRED",
+                    status, status, null, null, payout.getIdempotencyKey(),
+                    java.util.Map.of("fullRefund", String.valueOf(fullRefund)));
+            log.warn("Payout {} (status {}) needs manual clawback — its charge was refunded (full={})",
+                    payout.getId(), status, fullRefund);
+        }
+    }
+
     @Transactional(readOnly = true)
     public List<Payout> listMine(User user) {
         return payoutRepository.findByUserOrderByCreatedAtDesc(user);

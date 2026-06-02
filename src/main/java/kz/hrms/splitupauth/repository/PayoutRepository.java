@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.repository;
 
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
@@ -15,4 +16,6 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
     List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
 
     Optional<Payout> findByProviderPayoutId(String providerPayoutId);
+
+    Optional<Payout> findByTriggeringPaymentIntent(PaymentIntent triggeringPaymentIntent);
 }

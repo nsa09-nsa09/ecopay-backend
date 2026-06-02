@@ -35,6 +35,7 @@ public class RefundService {
     private final AdminActionLogRepository adminActionLogRepository;
     private final PaymentGatewayRegistry gatewayRegistry;
     private final PaymentEventLogger eventLogger;
+    private final PayoutService payoutService;
 
     /**
      * User-initiated refund request — owner of the original payment can request
@@ -171,12 +172,11 @@ public class RefundService {
     private void applyRefundToParentTransaction(RefundTransaction refund) {
         PaymentTransaction tx = refund.getPaymentTransaction();
         BigDecimal totalRefunded = refundTransactionRepository.sumActiveRefundAmounts(tx);
-        if (totalRefunded.compareTo(tx.getAmount()) >= 0) {
-            tx.setStatus(PaymentTransactionStatus.REFUNDED_FULL);
-        } else {
-            tx.setStatus(PaymentTransactionStatus.REFUNDED_PARTIAL);
-        }
+        boolean fullRefund = totalRefunded.compareTo(tx.getAmount()) >= 0;
+        tx.setStatus(fullRefund ? PaymentTransactionStatus.REFUNDED_FULL : PaymentTransactionStatus.REFUNDED_PARTIAL);
         paymentTransactionRepository.save(tx);
+        // Clawback: don't pay the owner for money that's been refunded.
+        payoutService.reverseOwnerPayoutForRefund(tx.getPaymentIntent(), fullRefund);
     }
 
     @Transactional
@@ -274,13 +274,9 @@ public class RefundService {
         refund.setProviderRefundId(request.getProviderRefundId());
         refundTransactionRepository.save(refund);
 
-        PaymentTransaction paymentTransaction = refund.getPaymentTransaction();
-        if (refund.getAmount().compareTo(paymentTransaction.getAmount()) >= 0) {
-            paymentTransaction.setStatus(PaymentTransactionStatus.REFUNDED_FULL);
-        } else {
-            paymentTransaction.setStatus(PaymentTransactionStatus.REFUNDED_PARTIAL);
-        }
-        paymentTransactionRepository.save(paymentTransaction);
+        // Mark the parent transaction refunded (full/partial) and reverse the owner payout
+        // if it hasn't been paid out yet — centralized with the user/webhook refund paths.
+        applyRefundToParentTransaction(refund);
 
         adminActionLogRepository.save(
                 AdminActionLog.builder()
