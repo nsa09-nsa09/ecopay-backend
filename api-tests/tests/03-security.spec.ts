@@ -106,4 +106,30 @@ test.describe("Security & IDOR", () => {
     });
     expect(res.status()).toBe(403);
   });
+
+  test("IDOR: a non-owner cannot update / cancel / complete / ready someone else's room", async ({ request }) => {
+    const owner = await register(request, "Room Owner");
+    const eve = await register(request, "Eve");
+    const room = await createDigitalRoom(request, owner.token);
+
+    const update = await request.patch(`rooms/${room.id}`, {
+      ...auth(eve.token), data: { title: "hijacked" },
+    });
+    expect(update.status()).toBe(403);
+
+    const cancel = await request.post(`rooms/${room.id}/cancel`, { ...auth(eve.token), data: {} });
+    expect(cancel.status()).toBe(403);
+
+    const complete = await request.post(`rooms/${room.id}/complete`, { ...auth(eve.token), data: {} });
+    expect(complete.status()).toBe(403);
+
+    const ready = await request.post(`rooms/${room.id}/ready-for-verification`, { ...auth(eve.token), data: {} });
+    expect(ready.status()).toBe(403);
+
+    // Sanity: the room is untouched (still OPEN, original title).
+    const after = await request.get(`rooms/${room.id}`);
+    const body = await after.json();
+    expect(body.status).toBe("OPEN");
+    expect(body.title).not.toBe("hijacked");
+  });
 });
