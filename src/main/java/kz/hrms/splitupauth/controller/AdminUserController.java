@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import kz.hrms.splitupauth.dto.AdminDecisionRequest;
 import kz.hrms.splitupauth.dto.AdminUserDto;
 import kz.hrms.splitupauth.dto.PagedResponse;
+import kz.hrms.splitupauth.dto.SetOwnerVerifiedRequest;
 import kz.hrms.splitupauth.entity.AdminActionLog;
 import kz.hrms.splitupauth.entity.AdminActionType;
 import kz.hrms.splitupauth.entity.User;
@@ -143,6 +144,41 @@ public class AdminUserController {
 
         writeAuditLog(admin, AdminActionType.USER_UNBANNED, u.getId(), request.getReason(),
                 prev, UserStatus.ACTIVE, httpRequest);
+
+        return ResponseEntity.ok(AdminUserDto.from(u));
+    }
+
+    @PatchMapping("/{id}/owner-verified")
+    public ResponseEntity<AdminUserDto> setOwnerVerified(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User admin,
+            @Valid @RequestBody SetOwnerVerifiedRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        User u = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        boolean prev = Boolean.TRUE.equals(u.getOwnerVerified());
+        u.setOwnerVerified(request.getVerified());
+        userRepository.save(u);
+
+        ObjectNode oldState = objectMapper.createObjectNode();
+        oldState.put("ownerVerified", prev);
+        ObjectNode newState = objectMapper.createObjectNode();
+        newState.put("ownerVerified", request.getVerified());
+        adminActionLogRepository.save(
+                AdminActionLog.builder()
+                        .eventId(UUID.randomUUID())
+                        .adminUser(admin)
+                        .actionType(AdminActionType.OWNER_VERIFICATION_CHANGED)
+                        .entityType("USER")
+                        .entityId(u.getId())
+                        .reason(request.getReason())
+                        .oldState(oldState)
+                        .newState(newState)
+                        .ipAddress(httpRequest.getRemoteAddr())
+                        .userAgent(httpRequest.getHeader("User-Agent"))
+                        .build()
+        );
 
         return ResponseEntity.ok(AdminUserDto.from(u));
     }

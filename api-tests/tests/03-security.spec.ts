@@ -96,4 +96,14 @@ test.describe("Security & IDOR", () => {
     });
     expect([401, 403]).toContain(res.status());
   });
+
+  test("a non-admin cannot set a user's verified-owner flag (admin only)", async ({ request }) => {
+    const user = await register(request, "Reg User");
+    const victim = await register(request, "Victim");
+    const res = await request.patch(`admin/users/${victim.id}/owner-verified`, {
+      ...auth(user.token),
+      data: { verified: true, reason: "nope" },
+    });
+    expect(res.status()).toBe(403);
+  });
 });
