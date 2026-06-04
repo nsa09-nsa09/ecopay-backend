@@ -11,6 +11,7 @@ import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
@@ -225,9 +226,81 @@ public class PaymentService {
             User currentUser,
             ConfirmPaymentRequest request
     ) {
-        // Webhook is the source of truth for SUCCESS/FAILED — this endpoint
-        // is now treated as a redirect-back hint that returns current state.
-        return getPaymentIntent(paymentIntentId, currentUser);
+        // Redirect-back reconciliation. The async webhook (result.php) is the
+        // primary source of truth, but it needs a publicly reachable URL. When
+        // the user is redirected back from the hosted payment page we actively
+        // query the gateway for the payment status and finalize if it already
+        // succeeded — this makes the flow complete end-to-end even when the
+        // inbound webhook cannot reach us (e.g. local dev without a tunnel).
+        PaymentIntent intent = paymentIntentRepository.findWithLockById(paymentIntentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
+
+        if (!intent.getUser().getId().equals(currentUser.getId())) {
+            throw new ForbiddenOperationException("Not your payment intent");
+        }
+
+        // Already terminal (e.g. the webhook arrived first) — nothing to do.
+        if (intent.getStatus() != PaymentIntentStatus.PENDING) {
+            return mapToResponse(intent);
+        }
+
+        // No external id means the charge was never initiated at the gateway.
+        if (intent.getExternalPaymentId() == null || intent.getExternalPaymentId().isBlank()) {
+            return mapToResponse(intent);
+        }
+
+        PaymentGateway gateway = gatewayRegistry.resolve(intent.getProviderName());
+        GatewayStatusResponse status;
+        try {
+            status = gateway.getStatus(intent.getExternalPaymentId());
+        } catch (Exception ex) {
+            log.warn("Status reconcile failed for intent {}: {}", intent.getId(), ex.getMessage());
+            return mapToResponse(intent);
+        }
+
+        String mapped = status == null ? "PENDING" : status.getStatus();
+
+        if ("SUCCESS".equals(mapped)) {
+            String fromStatus = intent.getStatus().name();
+            intent.setStatus(PaymentIntentStatus.SUCCESS);
+            if (status.getExternalPaymentId() != null && !status.getExternalPaymentId().isBlank()) {
+                intent.setExternalPaymentId(status.getExternalPaymentId());
+            }
+            intent.setProviderStatusCode(status.getProviderStatusCode());
+            intent = paymentIntentRepository.save(intent);
+
+            if (Boolean.TRUE.equals(intent.getSaveCardRequested())
+                    && status.getCardToken() != null && !status.getCardToken().isBlank()) {
+                savedCardService.upsertSavedCard(
+                        intent.getUser(),
+                        FreedomPayGateway.PROVIDER_NAME,
+                        status.getCardToken(),
+                        status.getCardPanMask()
+                );
+            }
+
+            applySuccessfulCharge(intent, status.getCardPanMask(), null);
+
+            eventLogger.log("INTENT", intent.getId(), "REDIRECT_RECONCILE_SUCCESS",
+                    fromStatus, intent.getStatus().name(),
+                    currentUser.getId(), null, intent.getIdempotencyKey(),
+                    Map.of("externalPaymentId", String.valueOf(intent.getExternalPaymentId())));
+        } else if ("FAILED".equals(mapped)) {
+            String fromStatus = intent.getStatus().name();
+            intent.setStatus(PaymentIntentStatus.FAILED);
+            intent.setProviderStatusCode(status.getProviderStatusCode());
+            intent.setFailureCode("GATEWAY_FAILED");
+            intent.setFailureMessage("Gateway reported the payment as failed");
+            intent = paymentIntentRepository.save(intent);
+
+            eventLogger.log("INTENT", intent.getId(), "REDIRECT_RECONCILE_FAILED",
+                    fromStatus, intent.getStatus().name(),
+                    currentUser.getId(), null, intent.getIdempotencyKey(),
+                    Map.of("providerStatus", String.valueOf(status.getProviderStatusCode())));
+        }
+        // else: still PENDING at the gateway — leave as-is; webhook/poll will finalize.
+
+        return mapToResponse(intent);
     }
 
     /**

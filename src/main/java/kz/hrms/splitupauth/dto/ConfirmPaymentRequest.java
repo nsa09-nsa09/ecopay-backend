@@ -1,11 +1,14 @@
 package kz.hrms.splitupauth.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 @Data
 public class ConfirmPaymentRequest {
 
-    @NotBlank(message = "External transaction id is required")
+    /**
+     * Optional gateway payment id observed on the redirect-back. The server
+     * reconciles against the stored external id from the charge init, so this
+     * is only a hint and may be blank.
+     */
     private String externalTransactionId;
 }
