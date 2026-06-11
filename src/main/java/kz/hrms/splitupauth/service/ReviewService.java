@@ -41,8 +41,11 @@ public class ReviewService {
         var room = roomRepository.findById(req.getRoomId())
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        if (room.getStatus() != RoomStatus.COMPLETED && room.getStatus() != RoomStatus.ACTIVE) {
-            throw new InvalidRequestException("Reviews are allowed only on ACTIVE or COMPLETED rooms");
+        // Eligibility per spec: review allowed only after the period/participation ended.
+        // ACTIVE means the period is still running — both sides are still co-using the
+        // service and the experience isn't final yet, so reviews are not eligible.
+        if (room.getStatus() != RoomStatus.COMPLETED) {
+            throw new InvalidRequestException("Reviews are allowed only after the room is COMPLETED");
         }
 
         // Both author and recipient must have been members (or owner) of this room.
