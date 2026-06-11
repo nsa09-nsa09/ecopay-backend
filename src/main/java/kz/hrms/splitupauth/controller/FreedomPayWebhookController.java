@@ -32,20 +32,20 @@ public class FreedomPayWebhookController {
 
     @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
     public ResponseEntity<String> result(@RequestParam Map<String, String> params) {
-        return processWebhook(params);
+        // Freedom Pay signs callbacks with the last path segment of the result URL.
+        return processWebhook("result", params);
     }
 
     @PostMapping(value = "/payout-result", produces = MediaType.APPLICATION_XML_VALUE)
     public ResponseEntity<String> payoutResult(@RequestParam Map<String, String> params) {
-        // Same envelope; the gateway differentiates internally.
-        return processWebhook(params);
+        return processWebhook("payout-result", params);
     }
 
-    private ResponseEntity<String> processWebhook(Map<String, String> params) {
+    private ResponseEntity<String> processWebhook(String script, Map<String, String> params) {
         Map<String, String> safe = new HashMap<>(params);
-        GatewayWebhookEvent event = gateway.verifyAndParseWebhook(safe);
+        GatewayWebhookEvent event = gateway.verifyAndParseWebhook(script, safe);
 
-        boolean signatureValid = gateway.verifyWebhookSignature(safe);
+        boolean signatureValid = gateway.verifyWebhookSignature(script, safe);
         String requestId = event.getProviderRequestId();
 
         // Inbox dedup — UNIQUE(provider_request_id) guarantees once-only.
@@ -54,7 +54,7 @@ public class FreedomPayWebhookController {
                     .findByProviderRequestId(requestId).orElse(null);
             if (existing != null) {
                 log.info("Duplicate Freedom Pay webhook for {}, replying ok", requestId);
-                return okResponse();
+                return okResponse(script);
             }
             FreedomWebhookInbox inbox = FreedomWebhookInbox.builder()
                     .providerRequestId(requestId)
@@ -69,7 +69,7 @@ public class FreedomPayWebhookController {
                 inbox.setProcessedAt(LocalDateTime.now());
                 inboxRepository.save(inbox);
                 log.warn("Freedom Pay webhook signature invalid for {}", requestId);
-                return errorResponse("invalid signature");
+                return errorResponse(script, "invalid signature");
             }
 
             paymentService.applyWebhookEvent(event);
@@ -77,21 +77,20 @@ public class FreedomPayWebhookController {
             inbox.setProcessingStatus("PROCESSED");
             inbox.setProcessedAt(LocalDateTime.now());
             inboxRepository.save(inbox);
-            return okResponse();
+            return okResponse(script);
         } catch (Exception ex) {
             log.error("Freedom Pay webhook handler failed: {}", ex.getMessage(), ex);
             // Reply ok to avoid endless retries; inbox row remains PENDING for offline retry.
-            return okResponse();
+            return okResponse(script);
         }
     }
 
-    private static ResponseEntity<String> okResponse() {
-        return ResponseEntity.ok("<response><pg_status>ok</pg_status></response>");
+    // Freedom Pay requires the merchant reply to be signed (pg_salt + pg_sig).
+    private ResponseEntity<String> okResponse(String script) {
+        return ResponseEntity.ok(gateway.buildWebhookResponse(script, "ok", "Order processed"));
     }
 
-    private static ResponseEntity<String> errorResponse(String description) {
-        return ResponseEntity.ok(
-                "<response><pg_status>error</pg_status><pg_description>"
-                        + description + "</pg_description></response>");
+    private ResponseEntity<String> errorResponse(String script, String description) {
+        return ResponseEntity.ok(gateway.buildWebhookResponse(script, "error", description));
     }
 }

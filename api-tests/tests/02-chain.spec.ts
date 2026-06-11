@@ -25,10 +25,10 @@ test.describe("Business chain (happy path)", () => {
     expect(membership.status).toBe("APPLIED");
     expect(membership.userId).toBe(member.id);
 
-    // 3. Pay (mock gateway → synchronous SUCCESS)
+    // 3. Pay (mock → synchronous SUCCESS; freedompay sandbox → webhook-finalized)
     const intent = await pay(request, member.token, membership.id);
     expect(intent.status).toBe("SUCCESS");
-    expect(intent.providerName).toBe("mock");
+    expect(["mock", "freedompay"]).toContain(intent.providerName);
     // Charged exactly the member share (no fee added on top)
     expect(Number(intent.amount)).toBe(Number(room.pricePerMember));
 

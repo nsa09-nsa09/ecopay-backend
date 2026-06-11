@@ -163,26 +163,35 @@ public class FreedomPayGateway implements PaymentGateway {
         params.put("pg_sig", sig);
 
         Map<String, String> response = client.postForm("/get_status.php", params);
-        String paymentStatus = response.getOrDefault("pg_payment_status", "").toUpperCase();
-        // Freedom returns: ok | revoked | failed | pending | new
+        // Sandbox-confirmed: the payment state arrives in pg_transaction_status
+        // (partial | pending | ok | failed | revoked | new), NOT pg_payment_status.
+        String paymentStatus = response.getOrDefault("pg_transaction_status",
+                response.getOrDefault("pg_payment_status", "")).toUpperCase();
         String mapped = switch (paymentStatus) {
             case "OK", "SUCCESS" -> "SUCCESS";
-            case "FAILED", "REJECTED" -> "FAILED";
-            default -> "PENDING";
+            case "FAILED", "ERROR", "REJECTED", "REVOKED" -> "FAILED";
+            default -> "PENDING"; // partial | pending | new | incomplete
         };
         return GatewayStatusResponse.builder()
                 .externalPaymentId(externalPaymentId)
                 .status(mapped)
                 .providerStatusCode(paymentStatus)
                 .cardPanMask(response.get("pg_card_pan"))
-                .cardToken(response.get("pg_card_id"))
+                .cardToken(response.getOrDefault("pg_card_token", response.get("pg_card_id")))
                 .build();
     }
 
     @Override
     public GatewayWebhookEvent verifyAndParseWebhook(Map<String, String> params) {
-        String script = nonNull(params.get("pg_script"), "result.php");
-        boolean valid = signatureService.verifyWithMerchantSecret(script, params);
+        return verifyAndParseWebhook(scriptNameFromUrl(properties.getResultUrl(), "result"), params);
+    }
+
+    /**
+     * Freedom Pay signs callbacks with the LAST path segment of the merchant's
+     * result URL as the script name (e.g. {@code result}, {@code payout-result}).
+     */
+    public GatewayWebhookEvent verifyAndParseWebhook(String script, Map<String, String> params) {
+        boolean valid = verifyWebhookSignature(script, params);
 
         String paymentId = params.get("pg_payment_id");
         String salt = params.get("pg_salt");
@@ -190,8 +199,13 @@ public class FreedomPayGateway implements PaymentGateway {
                 ? paymentId + ":" + (salt == null ? "" : salt)
                 : "no-payment-id:" + System.currentTimeMillis();
 
-        String resultRaw = nonNull(params.get("pg_result"), params.get("pg_can_reject"));
-        String resultStatus = "1".equals(resultRaw) ? "SUCCESS" : "FAILED";
+        // pg_result: 1 = success, 0 = failure, 2 = not completed yet.
+        String resultRaw = params.get("pg_result");
+        String resultStatus = switch (nonNull(resultRaw, "")) {
+            case "1" -> "SUCCESS";
+            case "0" -> "FAILED";
+            default -> "PENDING";
+        };
         if ("REFUND".equals(params.get("pg_event_type"))
                 || params.get("pg_refund_id") != null) {
             // Refund result callback (async). NOTE: confirm exact Freedom Pay refund
@@ -232,16 +246,47 @@ public class FreedomPayGateway implements PaymentGateway {
                 .failureCode(params.get("pg_error_code"))
                 .failureMessage(params.get("pg_error_description"))
                 .cardPanMask(params.get("pg_card_pan"))
-                .cardToken(params.get("pg_card_id"))
+                .cardToken(params.getOrDefault("pg_card_token", params.get("pg_card_id")))
                 .rawParams(params)
                 .signature(params.get("pg_sig"))
                 .providerRequestId(valid ? requestId : "INVALID:" + requestId)
                 .build();
     }
 
-    public boolean verifyWebhookSignature(Map<String, String> params) {
-        String script = nonNull(params.get("pg_script"), "result.php");
-        return signatureService.verifyWithMerchantSecret(script, params);
+    public boolean verifyWebhookSignature(String script, Map<String, String> params) {
+        return script.contains("payout")
+                ? signatureService.verifyWithPayoutSecret(script, params)
+                : signatureService.verifyWithMerchantSecret(script, params);
+    }
+
+    /**
+     * Builds the signed XML reply Freedom Pay expects on its result callbacks
+     * (pg_salt + pg_sig are mandatory in the merchant response).
+     */
+    public String buildWebhookResponse(String script, String status, String description) {
+        Map<String, String> p = new LinkedHashMap<>();
+        p.put("pg_status", status);
+        p.put("pg_description", description);
+        p.put("pg_salt", randomSalt());
+        String sig = script.contains("payout")
+                ? signatureService.signWithPayoutSecret(script, p)
+                : signatureService.signWithMerchantSecret(script, p);
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?><response>"
+                + "<pg_status>" + status + "</pg_status>"
+                + "<pg_description>" + description + "</pg_description>"
+                + "<pg_salt>" + p.get("pg_salt") + "</pg_salt>"
+                + "<pg_sig>" + sig + "</pg_sig></response>";
+    }
+
+    private static String scriptNameFromUrl(String url, String fallback) {
+        if (url == null || url.isBlank()) return fallback;
+        String path = url;
+        int q = path.indexOf('?');
+        if (q >= 0) path = path.substring(0, q);
+        while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        int slash = path.lastIndexOf('/');
+        String last = slash >= 0 ? path.substring(slash + 1) : path;
+        return last.isBlank() ? fallback : last;
     }
 
     private Map<String, String> baseParams(String script) {

@@ -1,4 +1,5 @@
 import { APIRequestContext, expect } from "@playwright/test";
+import crypto from "node:crypto";
 
 // Unique-but-valid test data. DB persists across runs, so every user/phone must be unique.
 let seq = 0;
@@ -162,12 +163,63 @@ export async function joinRoom(api: APIRequestContext, memberToken: string, room
   return res.json();
 }
 
-/** Pay for a membership via the mock gateway (dev). Returns the intent. */
+/** Freedom Pay sandbox secret (backend .env FREEDOMPAY_SECRET_KEY). */
+export const FREEDOMPAY_SECRET = process.env.FREEDOMPAY_SECRET_KEY ?? "vA6xhdLDfq3SVHf9";
+
+/** MD5 signature the way Freedom Pay computes it: "<script>;<values sorted by key>;<secret>". */
+export function fpSign(script: string, params: Record<string, string>, secret = FREEDOMPAY_SECRET) {
+  const values = Object.keys(params)
+    .filter((k) => k !== "pg_sig")
+    .sort()
+    .map((k) => params[k]);
+  return crypto
+    .createHash("md5")
+    .update([script, ...values, secret].join(";"))
+    .digest("hex");
+}
+
+/** Posts a signed Freedom Pay result callback to the backend webhook endpoint. */
+export function postFreedomWebhook(api: APIRequestContext, params: Record<string, string>) {
+  return api.post(`webhooks/freedompay/result`, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    data: new URLSearchParams(params).toString(),
+  });
+}
+
+/** Builds a signed success/failure result-callback payload for an intent. */
+export function freedomWebhookParams(intent: any, result: "1" | "0", salt?: string) {
+  const params: Record<string, string> = {
+    pg_order_id: String(intent.id),
+    pg_payment_id: String(intent.externalPaymentId),
+    pg_amount: Number(intent.amount).toFixed(2),
+    pg_currency: "KZT",
+    pg_result: result,
+    pg_can_reject: "1",
+    pg_salt: salt ?? crypto.randomBytes(8).toString("hex"),
+    pg_testing_mode: "1",
+  };
+  params.pg_sig = fpSign("result", params);
+  return params;
+}
+
+/** Pay for a membership. With the mock gateway the charge succeeds synchronously;
+ *  with the freedompay sandbox the intent comes back PENDING (hosted page redirect),
+ *  so we finalize it by delivering the signed result webhook the gateway would send
+ *  after the user completes the card form. Returns the terminal intent. */
 export async function pay(api: APIRequestContext, memberToken: string, membershipId: number) {
   const res = await api.post(`payments/members/${membershipId}/intent`, {
     ...auth(memberToken),
     data: { idempotencyKey: `e2e-${membershipId}-${Date.now()}` },
   });
   expect(res.status(), "create intent").toBe(201);
-  return res.json();
+  let intent = await res.json();
+
+  if (intent.status === "PENDING" && intent.providerName === "freedompay") {
+    const hook = await postFreedomWebhook(api, freedomWebhookParams(intent, "1"));
+    expect(await hook.text(), "webhook accepted").toContain("<pg_status>ok</pg_status>");
+    const refreshed = await api.get(`payments/intents/${intent.id}`, auth(memberToken));
+    expect(refreshed.status(), "re-read intent").toBe(200);
+    intent = await refreshed.json();
+  }
+  return intent;
 }
