@@ -46,3 +46,7 @@ Thumbs.db
 ### Logs ###
 *.log
 logs/
+
+### Graphify tooling artifacts ###
+graphify-out/
+**/graphify-out/
