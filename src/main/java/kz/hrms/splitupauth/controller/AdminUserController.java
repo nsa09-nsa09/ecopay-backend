@@ -79,7 +79,7 @@ public class AdminUserController {
         if (page < 0) page = 0;
         if (size <= 0 || size > 100) size = 20;
 
-        String sortField = SORT_FIELD_MAP.getOrDefault(sort, "createdAt");
+        String sortField = (sort == null) ? "createdAt" : SORT_FIELD_MAP.getOrDefault(sort, "createdAt");
         Sort.Direction sortDir = "asc".equalsIgnoreCase(direction)
                 ? Sort.Direction.ASC
                 : Sort.Direction.DESC;
