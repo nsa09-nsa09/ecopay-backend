@@ -470,6 +470,7 @@ public class SupportTicketService {
                 .priority(ticket.getPriority().name())
                 .escalatedToDispute(ticket.getEscalatedToDispute())
                 .assignedAdminId(ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getId() : null)
+                .assignedAdminDisplayName(ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getDisplayName() : null)
                 .createdAt(ticket.getCreatedAt())
                 .updatedAt(ticket.getUpdatedAt())
                 .closedAt(ticket.getClosedAt())
