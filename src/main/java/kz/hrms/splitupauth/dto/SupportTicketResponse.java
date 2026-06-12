@@ -18,6 +18,7 @@ public class SupportTicketResponse {
     private String status;
     private String priority;
     private Boolean escalatedToDispute;
+    private Long assignedAdminId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime closedAt;
