@@ -24,6 +24,7 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
     List<RoomMember> findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(Room room);
     Page<RoomMember> findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(Room room, Pageable pageable);
     long countByRoomAndStatusInAndDeletedAtIsNull(Room room, List<MemberStatus> statuses);
+    long countByUserAndDeletedAtIsNull(User user);
     Optional<RoomMember> findByRoomAndUserAndStatusIn(Room room, User user, List<MemberStatus> statuses);
 
     /** Batch occupied-seat counts for a set of rooms (avoids N+1 in listings). */

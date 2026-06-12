@@ -4,24 +4,36 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import kz.hrms.splitupauth.dto.AdminCreateUserRequest;
 import kz.hrms.splitupauth.dto.AdminDecisionRequest;
 import kz.hrms.splitupauth.dto.AdminUserDto;
+import kz.hrms.splitupauth.dto.ChangeUserRoleRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.SetOwnerVerifiedRequest;
 import kz.hrms.splitupauth.entity.AdminActionLog;
 import kz.hrms.splitupauth.entity.AdminActionType;
+import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
+import kz.hrms.splitupauth.exception.ForbiddenOperationException;
+import kz.hrms.splitupauth.exception.PhoneAlreadyExistsException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.exception.UserAlreadyExistsException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
+import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
+import kz.hrms.splitupauth.repository.SupportTicketRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,6 +47,11 @@ public class AdminUserController {
 
     private final UserRepository userRepository;
     private final AdminActionLogRepository adminActionLogRepository;
+    private final RoomRepository roomRepository;
+    private final RoomMemberRepository roomMemberRepository;
+    private final SupportTicketRepository supportTicketRepository;
+    private final DisputeRepository disputeRepository;
+    private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
 
     // Whitelist of API sort fields → entity property names.
@@ -90,6 +107,8 @@ public class AdminUserController {
         }
 
         Page<User> result = userRepository.findAll(spec, pageable);
+        // Counters are intentionally zeroed in the list to avoid N+1; the
+        // detail GET returns real values.
         var items = result.getContent().stream().map(AdminUserDto::from).toList();
         return ResponseEntity.ok(PagedResponse.<AdminUserDto>builder()
                 .items(items)
@@ -107,7 +126,106 @@ public class AdminUserController {
     public ResponseEntity<AdminUserDto> get(@PathVariable Long id) {
         User u = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return ResponseEntity.ok(AdminUserDto.from(u));
+        return ResponseEntity.ok(buildDetailDto(u));
+    }
+
+    @PostMapping
+    public ResponseEntity<AdminUserDto> create(
+            @AuthenticationPrincipal User admin,
+            @Valid @RequestBody AdminCreateUserRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        String email = request.getEmail().trim().toLowerCase();
+        if (userRepository.existsByEmail(email)) {
+            throw new UserAlreadyExistsException("User with this email already exists");
+        }
+
+        String phone = request.getPhone();
+        if (phone != null && !phone.isBlank()) {
+            if (userRepository.existsByPhone(phone)) {
+                throw new PhoneAlreadyExistsException("User with this phone already exists");
+            }
+        } else {
+            phone = null;
+        }
+
+        User newUser = User.builder()
+                .email(email)
+                .password(passwordEncoder.encode(request.getPassword()))
+                .displayName(request.getDisplayName())
+                .phone(phone)
+                .role(request.getRole())
+                .status(UserStatus.ACTIVE)
+                .reputation(0)
+                .emailVerified(true)   // created by admin → bypass email verification
+                .ownerVerified(false)
+                .build();
+
+        newUser = userRepository.save(newUser);
+
+        ObjectNode newState = objectMapper.createObjectNode();
+        newState.put("email", newUser.getEmail());
+        newState.put("role", newUser.getRole().name());
+        adminActionLogRepository.save(
+                AdminActionLog.builder()
+                        .eventId(UUID.randomUUID())
+                        .adminUser(admin)
+                        .actionType(AdminActionType.USER_CREATED)
+                        .entityType("USER")
+                        .entityId(newUser.getId())
+                        .reason(null)
+                        .oldState(null)
+                        .newState(newState)
+                        .ipAddress(httpRequest.getRemoteAddr())
+                        .userAgent(httpRequest.getHeader("User-Agent"))
+                        .build()
+        );
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(buildDetailDto(newUser));
+    }
+
+    @PatchMapping("/{id}/role")
+    public ResponseEntity<AdminUserDto> changeRole(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User admin,
+            @Valid @RequestBody ChangeUserRoleRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        // Self-demotion guard: an admin must not be able to drop their own
+        // ADMIN role and lock themselves out of the panel.
+        if (admin != null && admin.getId() != null && admin.getId().equals(id)) {
+            throw new ForbiddenOperationException("Admin cannot change their own role");
+        }
+
+        User target = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        Role prev = target.getRole();
+        Role next = request.getRole();
+
+        target.setRole(next);
+        target = userRepository.save(target);
+
+        ObjectNode oldState = objectMapper.createObjectNode();
+        oldState.put("role", prev == null ? null : prev.name());
+        ObjectNode newState = objectMapper.createObjectNode();
+        newState.put("role", next.name());
+        adminActionLogRepository.save(
+                AdminActionLog.builder()
+                        .eventId(UUID.randomUUID())
+                        .adminUser(admin)
+                        .actionType(AdminActionType.USER_ROLE_CHANGED)
+                        .entityType("USER")
+                        .entityId(target.getId())
+                        .reason(request.getReason())
+                        .oldState(oldState)
+                        .newState(newState)
+                        .ipAddress(httpRequest.getRemoteAddr())
+                        .userAgent(httpRequest.getHeader("User-Agent"))
+                        .build()
+        );
+
+        return ResponseEntity.ok(buildDetailDto(target));
     }
 
     @PostMapping("/{id}/ban")
@@ -126,7 +244,7 @@ public class AdminUserController {
         writeAuditLog(admin, AdminActionType.USER_BANNED, u.getId(), request.getReason(),
                 prev, UserStatus.BANNED, httpRequest);
 
-        return ResponseEntity.ok(AdminUserDto.from(u));
+        return ResponseEntity.ok(buildDetailDto(u));
     }
 
     @PostMapping("/{id}/unban")
@@ -145,7 +263,7 @@ public class AdminUserController {
         writeAuditLog(admin, AdminActionType.USER_UNBANNED, u.getId(), request.getReason(),
                 prev, UserStatus.ACTIVE, httpRequest);
 
-        return ResponseEntity.ok(AdminUserDto.from(u));
+        return ResponseEntity.ok(buildDetailDto(u));
     }
 
     @PatchMapping("/{id}/owner-verified")
@@ -180,7 +298,15 @@ public class AdminUserController {
                         .build()
         );
 
-        return ResponseEntity.ok(AdminUserDto.from(u));
+        return ResponseEntity.ok(buildDetailDto(u));
+    }
+
+    private AdminUserDto buildDetailDto(User u) {
+        long roomsOwned = roomRepository.countByOwnerAndDeletedAtIsNull(u);
+        long roomsJoined = roomMemberRepository.countByUserAndDeletedAtIsNull(u);
+        long tickets = supportTicketRepository.countByUser(u);
+        long disputes = disputeRepository.countByOpenedByUser(u);
+        return AdminUserDto.fromWithCounters(u, roomsOwned, roomsJoined, tickets, disputes);
     }
 
     private void writeAuditLog(
@@ -221,4 +347,5 @@ public class AdminUserController {
             return null;
         }
     }
+
 }
