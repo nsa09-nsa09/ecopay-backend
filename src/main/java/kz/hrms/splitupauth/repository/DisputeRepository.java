@@ -32,4 +32,6 @@ public interface DisputeRepository extends JpaRepository<Dispute, Long> {
     );
 
     Page<Dispute> findByStatusInOrderByCreatedAtAsc(List<DisputeStatus> statuses, Pageable pageable);
+
+    long countByOpenedByUser(User user);
 }

@@ -29,7 +29,33 @@ public class AdminUserDto {
     private Integer disputes;
     private LocalDateTime createdAt;
 
+    /** Cheap variant: zero counters. Used by the paginated list endpoint to avoid N+1. */
     public static AdminUserDto from(User u) {
+        return baseBuilder(u)
+                .roomsOwned(0)
+                .roomsJoined(0)
+                .tickets(0)
+                .disputes(0)
+                .build();
+    }
+
+    /** Detail variant: caller supplies the real counters. */
+    public static AdminUserDto fromWithCounters(
+            User u,
+            long roomsOwned,
+            long roomsJoined,
+            long tickets,
+            long disputes
+    ) {
+        return baseBuilder(u)
+                .roomsOwned(Math.toIntExact(roomsOwned))
+                .roomsJoined(Math.toIntExact(roomsJoined))
+                .tickets(Math.toIntExact(tickets))
+                .disputes(Math.toIntExact(disputes))
+                .build();
+    }
+
+    private static AdminUserDtoBuilder baseBuilder(User u) {
         return AdminUserDto.builder()
                 .id(u.getId())
                 .email(u.getEmail())
@@ -43,12 +69,7 @@ public class AdminUserDto {
                 .status(u.getStatus() == null ? null : u.getStatus().name())
                 .reputation(u.getReputation())
                 .riskScore(0)
-                .roomsOwned(0)
-                .roomsJoined(0)
-                .tickets(0)
-                .disputes(0)
-                .createdAt(u.getCreatedAt())
-                .build();
+                .createdAt(u.getCreatedAt());
     }
 
     private static String maskEmail(String email) {
