@@ -86,9 +86,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
     }
 
+    @ExceptionHandler(ResourceConflictException.class)
+    public ResponseEntity<ErrorResponse> handleResourceConflict(ResourceConflictException ex) {
+        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
     @ExceptionHandler(UserBannedException.class)
     public ResponseEntity<ErrorResponse> handleUserBanned(UserBannedException ex) {
         ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        error.setCode("ACCOUNT_BANNED");
+        error.setReason(ex.getReason());
+        error.setOccurredAt(ex.getBannedAt());
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
     }
 

@@ -52,4 +52,6 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
     List<Room> findByOwnerAndDeletedAtIsNullOrderByCreatedAtDesc(User owner);
     List<Room> findByStatusAndDeletedAtIsNullOrderByCreatedAtDesc(RoomStatus status);
     List<Room> findByStatusAndDeletedAtIsNullAndStartDateLessThanEqual(RoomStatus status, LocalDateTime startDate);
+
+    long countByOwnerAndDeletedAtIsNull(User owner);
 }

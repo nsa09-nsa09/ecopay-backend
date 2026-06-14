@@ -40,4 +40,6 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicket, Lo
     Page<SupportTicket> findByStatusInOrderByCreatedAtAsc(List<SupportTicketStatus> statuses, Pageable pageable);
 
     Page<SupportTicket> findByAssignedAdminOrderByUpdatedAtDescCreatedAtDesc(User assignedAdmin, Pageable pageable);
+
+    long countByUser(User user);
 }

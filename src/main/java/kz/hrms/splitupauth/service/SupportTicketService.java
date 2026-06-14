@@ -14,6 +14,7 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportMessageRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
+import kz.hrms.splitupauth.websocket.SupportTicketRealtimeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,7 @@ public class SupportTicketService {
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
     private final ModerationService moderationService;
+    private final SupportTicketRealtimeService supportTicketRealtimeService;
 
     @Transactional
     public SupportTicketResponse createTicket(User currentUser, CreateSupportTicketRequest request) {
@@ -109,7 +111,13 @@ public class SupportTicketService {
             );
         }
 
-        return mapTicket(ticket);
+        return publishAndReturn(ticket);
+    }
+
+    private SupportTicketResponse publishAndReturn(SupportTicket ticket) {
+        SupportTicketResponse response = mapTicket(ticket);
+        supportTicketRealtimeService.publishTicketUpdate(response);
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -155,7 +163,7 @@ public class SupportTicketService {
             supportTicketRepository.save(ticket);
         }
 
-        return mapTicket(ticket);
+        return publishAndReturn(ticket);
     }
 
     @Transactional(readOnly = true)
@@ -254,7 +262,7 @@ public class SupportTicketService {
         }
 
         supportTicketRepository.save(ticket);
-        return mapTicket(ticket);
+        return publishAndReturn(ticket);
     }
 
     @Transactional
@@ -289,7 +297,7 @@ public class SupportTicketService {
         }
 
         supportTicketRepository.save(ticket);
-        return mapTicket(ticket);
+        return publishAndReturn(ticket);
     }
 
     @Transactional
@@ -325,7 +333,7 @@ public class SupportTicketService {
         }
 
         supportTicketRepository.save(ticket);
-        return mapTicket(ticket);
+        return publishAndReturn(ticket);
     }
 
     @Transactional
@@ -370,7 +378,7 @@ public class SupportTicketService {
         supportMessageRepository.save(systemMessage);
         supportTicketRepository.save(ticket);
 
-        return mapTicket(ticket);
+        return publishAndReturn(ticket);
     }
 
     @Transactional
@@ -422,6 +430,7 @@ public class SupportTicketService {
                 BigDecimal.ZERO
         );
 
+        publishAndReturn(ticket);
         return ticket;
     }
 
@@ -460,6 +469,8 @@ public class SupportTicketService {
                 .status(ticket.getStatus().name())
                 .priority(ticket.getPriority().name())
                 .escalatedToDispute(ticket.getEscalatedToDispute())
+                .assignedAdminId(ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getId() : null)
+                .assignedAdminDisplayName(ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getDisplayName() : null)
                 .createdAt(ticket.getCreatedAt())
                 .updatedAt(ticket.getUpdatedAt())
                 .closedAt(ticket.getClosedAt())

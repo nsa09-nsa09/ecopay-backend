@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 @Builder
@@ -23,4 +24,5 @@ public class TariffPlanDto {
     private String currency;
     private ConnectionType connectionType;
     private String operatorRules;
+    private List<String> features;
 }

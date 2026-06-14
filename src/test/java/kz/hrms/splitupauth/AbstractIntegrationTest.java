@@ -4,8 +4,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Base for integration tests: boots the full Spring context against a real
@@ -13,14 +11,24 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * append-only triggers), real transactions and SQL constraints are exercised —
  * unlike the Mockito unit tests. The dev mock payment gateway and the phone
  * dev-bypass code are enabled so the chain can run without external services.
+ *
+ * <p>The PostgreSQL container uses the "singleton container" pattern (started
+ * once in a static initializer, never stopped) so several @SpringBootTest
+ * classes can share the same DB without the JVM tearing it down between them.
+ * Spring caches contexts across classes — if the container were stopped via
+ * JUnit lifecycle, a reused context would point at a dead connection pool.
  */
 @SpringBootTest
-@Testcontainers
 public abstract class AbstractIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES;
+
+    static {
+        POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+        POSTGRES.start();
+        // No corresponding stop(): Ryuk reaps the container at JVM exit, and
+        // killing it between classes would invalidate any cached Spring DataSource.
+    }
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {

@@ -100,7 +100,10 @@ public class AuthService {
                 });
 
         if (user.getStatus() == UserStatus.BANNED) {
-            throw new UserBannedException("Your account has been banned");
+            throw new UserBannedException(
+                    "Your account has been banned",
+                    user.getBanReason(),
+                    user.getBannedAt());
         }
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
@@ -139,7 +142,10 @@ public class AuthService {
                 request.getChallengeId(), request.getCode());
 
         if (user.getStatus() == UserStatus.BANNED) {
-            throw new UserBannedException("Your account has been banned");
+            throw new UserBannedException(
+                    "Your account has been banned",
+                    user.getBanReason(),
+                    user.getBannedAt());
         }
 
         return issueTokens(user);
@@ -158,6 +164,12 @@ public class AuthService {
         String accessToken = jwtUtil.generateAccessToken(user.getEmail());
         String refreshToken = refreshTokenService.createRefreshToken(user);
 
+        // Track the moment tokens were last issued so the admin panel can show
+        // "online presence". Refresh-token rotation does NOT touch this field —
+        // refreshToken() does not call issueTokens, only authenticated sessions.
+        user.setLastLoginAt(LocalDateTime.now());
+        userRepository.save(user);
+
         return AuthResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
@@ -171,7 +183,10 @@ public class AuthService {
         User user = refreshToken.getUser();
 
         if (user.getStatus() == UserStatus.BANNED) {
-            throw new UserBannedException("Your account has been banned");
+            throw new UserBannedException(
+                    "Your account has been banned",
+                    user.getBanReason(),
+                    user.getBannedAt());
         }
 
         // Rotate: revoke the presented token first, then issue a fresh one.

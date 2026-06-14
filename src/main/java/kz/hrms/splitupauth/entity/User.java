@@ -1,10 +1,13 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import kz.hrms.splitupauth.util.PublicIdGenerator;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 import java.time.LocalDateTime;
 
@@ -13,6 +16,8 @@ import java.time.LocalDateTime;
         @Index(name = "idx_email", columnList = "email")
 })
 @Data
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+@ToString(exclude = "password")
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -20,6 +25,7 @@ public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(nullable = false, unique = true)
@@ -59,6 +65,21 @@ public class User {
     @Builder.Default
     private Boolean ownerVerified = false;
 
+    @Column(name = "public_id", nullable = false, unique = true, length = 16)
+    private String publicId;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
+
+    @Column(name = "ban_reason", columnDefinition = "TEXT")
+    private String banReason;
+
+    @Column(name = "banned_at")
+    private LocalDateTime bannedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -87,6 +108,10 @@ public class User {
 
         if (ownerVerified == null) {
             ownerVerified = false;
+        }
+
+        if (publicId == null || publicId.isBlank()) {
+            publicId = PublicIdGenerator.generate();
         }
     }
 

@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,4 +19,10 @@ public class ServiceDto {
     private String name;
     private String slug;
     private ProviderType providerType;
+    /** Cheapest per-member price across active tariffs; null when no active tariffs. */
+    private BigDecimal minPricePerMember;
+    /** Currency of the cheapest tariff; null when no active tariffs. */
+    private String currency;
+    /** Count of active tariffs. */
+    private Integer tariffCount;
 }
