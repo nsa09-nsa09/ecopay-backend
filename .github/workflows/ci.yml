@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 env:
   IMAGE: ghcr.io/nsa09-nsa09/ecopay-backend
@@ -26,7 +26,7 @@ jobs:
 
   build-push:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,18 +40,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # main -> :latest (prod),  dev -> :dev (dev environment)
+      - name: Compute moving tag
+        id: tag
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "moving=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "moving=dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.moving }}
             ${{ env.IMAGE }}:${{ github.sha }}
 
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
     steps:
+      # main -> "backend" (prod service),  dev -> "backend-dev"
+      - name: Compute target service
+        id: svc
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "name=backend" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=backend-dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1
         with:
@@ -60,6 +80,6 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /opt/ecopay
-            docker compose pull backend
-            docker compose up -d backend
+            docker compose pull ${{ steps.svc.outputs.name }}
+            docker compose up -d ${{ steps.svc.outputs.name }}
             docker image prune -f
