@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import kz.hrms.splitupauth.util.PublicIdGenerator;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -64,6 +65,12 @@ public class User {
     @Builder.Default
     private Boolean ownerVerified = false;
 
+    @Column(name = "public_id", nullable = false, unique = true, length = 16)
+    private String publicId;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -92,6 +99,10 @@ public class User {
 
         if (ownerVerified == null) {
             ownerVerified = false;
+        }
+
+        if (publicId == null || publicId.isBlank()) {
+            publicId = PublicIdGenerator.generate();
         }
     }
 

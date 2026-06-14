@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.controller;
 
 import jakarta.validation.Valid;
+import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
 import kz.hrms.splitupauth.entity.User;
@@ -28,5 +29,16 @@ public class UserController {
             @Valid @RequestBody UpdateProfileRequest request
     ) {
         return ResponseEntity.ok(userService.updateProfile(user, request));
+    }
+
+    @DeleteMapping("/me")
+    public ResponseEntity<Void> deleteAccount(@AuthenticationPrincipal User user) {
+        userService.deleteAccount(user);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/public/{publicId}")
+    public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String publicId) {
+        return ResponseEntity.ok(userService.getPublicProfile(publicId));
     }
 }

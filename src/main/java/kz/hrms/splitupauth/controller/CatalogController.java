@@ -24,9 +24,10 @@ public class CatalogController {
 
     @GetMapping("/services")
     public ResponseEntity<List<ServiceDto>> getServices(
-            @RequestParam(required = false) Long categoryId
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false, defaultValue = "name_asc") String sort
     ) {
-        return ResponseEntity.ok(catalogService.getServices(categoryId));
+        return ResponseEntity.ok(catalogService.getServices(categoryId, sort));
     }
 
     @GetMapping("/services/{id}")

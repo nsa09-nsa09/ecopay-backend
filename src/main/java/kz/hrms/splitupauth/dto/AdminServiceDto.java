@@ -6,23 +6,21 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ServiceDto {
+public class AdminServiceDto {
     private Long id;
     private Long categoryId;
     private String categoryName;
     private String name;
     private String slug;
     private ProviderType providerType;
-    /** Cheapest per-member price across active tariffs; null when no active tariffs. */
-    private BigDecimal minPricePerMember;
-    /** Currency of the cheapest tariff; null when no active tariffs. */
-    private String currency;
-    /** Count of active tariffs. */
-    private Integer tariffCount;
+    private Boolean isActive;
+    private Long tariffsCount;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 }

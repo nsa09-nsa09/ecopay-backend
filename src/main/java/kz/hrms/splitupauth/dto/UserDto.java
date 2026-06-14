@@ -13,6 +13,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UserDto {
     private Long id;
+    private String publicId;
     private String email;
     private String displayName;
     private String phone;

@@ -8,6 +8,8 @@ import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+
 @Component
 public class CatalogMapper {
 
@@ -21,6 +23,13 @@ public class CatalogMapper {
     }
 
     public ServiceDto toDto(ServiceEntity service) {
+        return toDto(service, null, null, 0);
+    }
+
+    public ServiceDto toDto(ServiceEntity service,
+                            BigDecimal minPricePerMember,
+                            String currency,
+                            int tariffCount) {
         return ServiceDto.builder()
                 .id(service.getId())
                 .categoryId(service.getCategory().getId())
@@ -28,6 +37,9 @@ public class CatalogMapper {
                 .name(service.getName())
                 .slug(service.getSlug())
                 .providerType(service.getProviderType())
+                .minPricePerMember(minPricePerMember)
+                .currency(currency)
+                .tariffCount(tariffCount)
                 .build();
     }
 
