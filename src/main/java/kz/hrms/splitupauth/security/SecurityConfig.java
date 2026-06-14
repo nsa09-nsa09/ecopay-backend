@@ -71,6 +71,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/service-reviews/featured").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/site/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/public/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/avatars/**").permitAll()
                         // Public room browsing only: the catalog list and a single room by id.

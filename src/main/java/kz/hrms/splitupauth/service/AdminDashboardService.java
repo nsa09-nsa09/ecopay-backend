@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -102,10 +103,13 @@ public class AdminDashboardService {
      * instead of pulling all rows into Java.
      */
     @Transactional(readOnly = true)
-    public DashboardMetricsDto getMetrics(String granularity, LocalDateTime from, LocalDateTime to) {
+    public DashboardMetricsDto getMetrics(String granularity, LocalDate from, LocalDate to) {
         String unit = normalizeGranularity(granularity);
-        LocalDateTime resolvedTo = (to != null) ? to : LocalDateTime.now();
-        LocalDateTime resolvedFrom = (from != null) ? from
+        // The controller binds calendar dates (yyyy-MM-dd). Widen `from` to the
+        // start of the day and `to` to the end of the day so a single-day filter
+        // ("from=to") still includes rows recorded later that same day.
+        LocalDateTime resolvedTo = (to != null) ? to.atTime(LocalTime.MAX) : LocalDateTime.now();
+        LocalDateTime resolvedFrom = (from != null) ? from.atStartOfDay()
                 : ("day".equals(unit) ? resolvedTo.minusDays(30) : resolvedTo.minusMonths(12));
 
         if (resolvedFrom.isAfter(resolvedTo)) {

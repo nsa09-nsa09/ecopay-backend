@@ -9,6 +9,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -129,6 +130,33 @@ public class GlobalExceptionHandler {
             errors
         );
         return ResponseEntity.badRequest().body(errorResponse);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        // A query/path parameter could not be parsed into the controller's
+        // declared type (e.g. "abc" sent for a Long, or "2026-06-14T00:00:00Z"
+        // sent for a LocalDate). Surface a clean 400 with the offending field
+        // instead of letting it bubble up as a generic 500.
+        String name = ex.getName();
+        String required = ex.getRequiredType() != null
+                ? ex.getRequiredType().getSimpleName()
+                : "expected type";
+        Object value = ex.getValue();
+        String message = String.format(
+                "Parameter '%s' has invalid value '%s'; expected %s",
+                name, value, required);
+
+        Map<String, String> errors = new HashMap<>();
+        errors.put(name, message);
+
+        ErrorResponse error = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                message,
+                LocalDateTime.now(),
+                errors
+        );
+        return ResponseEntity.badRequest().body(error);
     }
 
     @ExceptionHandler(AccessDeniedException.class)
