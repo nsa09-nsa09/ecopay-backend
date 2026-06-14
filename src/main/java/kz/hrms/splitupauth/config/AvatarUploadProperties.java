@@ -5,13 +5,11 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Configures the avatar upload subsystem. All values have safe defaults — no
- * changes to application*.properties are required to enable uploads.
+ * Configures avatar validation/normalisation limits. The bytes themselves are
+ * stored in S3 (see {@link S3Properties}); these are the input-side guards. All
+ * values have safe defaults — no changes to application*.properties are required.
  *
  * <ul>
- *   <li><code>app.uploads.dir</code> — root directory for upload subfolders
- *   (defaults to <code>./uploads</code>, resolved relative to the working
- *   directory of the JVM process).</li>
  *   <li><code>app.uploads.avatar.max-size-bytes</code> — hard cap for the
  *   raw multipart file in bytes (default 5&nbsp;MiB).</li>
  *   <li><code>app.uploads.avatar.target-size</code> — square edge length the
@@ -22,8 +20,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Setter
 @ConfigurationProperties(prefix = "app.uploads")
 public class AvatarUploadProperties {
-
-    private String dir = "./uploads";
 
     private Avatar avatar = new Avatar();
 

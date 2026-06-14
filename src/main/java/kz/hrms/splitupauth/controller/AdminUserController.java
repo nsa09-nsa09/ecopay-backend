@@ -25,6 +25,7 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.service.AvatarStorageService;
 import kz.hrms.splitupauth.service.TokenRevocationService;
 import kz.hrms.splitupauth.websocket.AccountRealtimeService;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +58,7 @@ public class AdminUserController {
     private final ObjectMapper objectMapper;
     private final TokenRevocationService tokenRevocationService;
     private final AccountRealtimeService accountRealtimeService;
+    private final AvatarStorageService avatarStorageService;
 
     // Whitelist of API sort fields → entity property names.
     // Note: User entity does not currently have a dedicated riskScore column,
@@ -113,7 +115,10 @@ public class AdminUserController {
         Page<User> result = userRepository.findAll(spec, pageable);
         // Counters are intentionally zeroed in the list to avoid N+1; the
         // detail GET returns real values.
-        var items = result.getContent().stream().map(AdminUserDto::from).toList();
+        var items = result.getContent().stream()
+                .map(AdminUserDto::from)
+                .map(this::withPresignedAvatar)
+                .toList();
         return ResponseEntity.ok(PagedResponse.<AdminUserDto>builder()
                 .items(items)
                 .page(result.getNumber())
@@ -323,7 +328,17 @@ public class AdminUserController {
         long roomsJoined = roomMemberRepository.countByUserAndDeletedAtIsNull(u);
         long tickets = supportTicketRepository.countByUser(u);
         long disputes = disputeRepository.countByOpenedByUser(u);
-        return AdminUserDto.fromWithCounters(u, roomsOwned, roomsJoined, tickets, disputes);
+        return withPresignedAvatar(
+                AdminUserDto.fromWithCounters(u, roomsOwned, roomsJoined, tickets, disputes));
+    }
+
+    /**
+     * Replaces the stored S3 object key on the DTO with a backend-served avatar
+     * URL. {@code avatar} stays null when the user has no avatar.
+     */
+    private AdminUserDto withPresignedAvatar(AdminUserDto dto) {
+        dto.setAvatar(avatarStorageService.publicUrl(dto.getAvatar()));
+        return dto;
     }
 
     private void writeAuditLog(
