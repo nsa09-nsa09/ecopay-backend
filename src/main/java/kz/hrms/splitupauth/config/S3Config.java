@@ -38,8 +38,16 @@ public class S3Config {
     }
 
     private static StaticCredentialsProvider credentials(S3Properties props) {
-        String accessKey = props.getAccessKey() == null ? "" : props.getAccessKey();
-        String secretKey = props.getSecretKey() == null ? "" : props.getSecretKey();
+        String accessKey = props.getAccessKey() == null ? "" : props.getAccessKey().trim();
+        String secretKey = props.getSecretKey() == null ? "" : props.getSecretKey().trim();
+        // AwsBasicCredentials rejects blank keys, which would fail bean creation
+        // (and the whole context) wherever S3 isn't configured — CI tests, local
+        // dev without R2. Fall back to placeholders so the client still builds;
+        // real S3 calls then fail loudly only when actually attempted.
+        if (accessKey.isBlank() || secretKey.isBlank()) {
+            accessKey = "unset";
+            secretKey = "unset";
+        }
         return StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(accessKey, secretKey));
     }
