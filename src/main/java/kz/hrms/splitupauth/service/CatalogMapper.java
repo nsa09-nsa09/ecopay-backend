@@ -54,6 +54,8 @@ public class CatalogMapper {
                 .currency(tariffPlan.getCurrency())
                 .connectionType(tariffPlan.getConnectionType())
                 .operatorRules(tariffPlan.getOperatorRules())
+                .features(tariffPlan.getFeatures() == null
+                        ? java.util.List.of() : java.util.List.copyOf(tariffPlan.getFeatures()))
                 .build();
     }
 }

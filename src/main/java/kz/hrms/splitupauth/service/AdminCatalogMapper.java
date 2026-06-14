@@ -50,6 +50,8 @@ public class AdminCatalogMapper {
                 .currency(tariff.getCurrency())
                 .connectionType(tariff.getConnectionType())
                 .operatorRules(tariff.getOperatorRules())
+                .features(tariff.getFeatures() == null
+                        ? java.util.List.of() : java.util.List.copyOf(tariff.getFeatures()))
                 .isActive(tariff.getIsActive())
                 .createdAt(tariff.getCreatedAt())
                 .updatedAt(tariff.getUpdatedAt())

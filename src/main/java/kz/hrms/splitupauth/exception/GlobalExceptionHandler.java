@@ -95,6 +95,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UserBannedException.class)
     public ResponseEntity<ErrorResponse> handleUserBanned(UserBannedException ex) {
         ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        error.setCode("ACCOUNT_BANNED");
+        error.setReason(ex.getReason());
+        error.setOccurredAt(ex.getBannedAt());
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
     }
 

@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 @Builder
 public class AdminUserDto {
     private Long id;
+    private String publicId;
     private String email;
     private String emailMasked;
     private String displayName;
@@ -28,6 +29,7 @@ public class AdminUserDto {
     private Integer tickets;
     private Integer disputes;
     private LocalDateTime createdAt;
+    private LocalDateTime lastLoginAt;
 
     /** Cheap variant: zero counters. Used by the paginated list endpoint to avoid N+1. */
     public static AdminUserDto from(User u) {
@@ -58,6 +60,7 @@ public class AdminUserDto {
     private static AdminUserDtoBuilder baseBuilder(User u) {
         return AdminUserDto.builder()
                 .id(u.getId())
+                .publicId(u.getPublicId())
                 .email(u.getEmail())
                 .emailMasked(maskEmail(u.getEmail()))
                 .displayName(u.getDisplayName())
@@ -69,7 +72,8 @@ public class AdminUserDto {
                 .status(u.getStatus() == null ? null : u.getStatus().name())
                 .reputation(u.getReputation())
                 .riskScore(0)
-                .createdAt(u.getCreatedAt());
+                .createdAt(u.getCreatedAt())
+                .lastLoginAt(u.getLastLoginAt());
     }
 
     private static String maskEmail(String email) {

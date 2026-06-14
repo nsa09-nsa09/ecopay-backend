@@ -25,6 +25,8 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.service.TokenRevocationService;
+import kz.hrms.splitupauth.websocket.AccountRealtimeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -53,6 +55,8 @@ public class AdminUserController {
     private final DisputeRepository disputeRepository;
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
+    private final TokenRevocationService tokenRevocationService;
+    private final AccountRealtimeService accountRealtimeService;
 
     // Whitelist of API sort fields → entity property names.
     // Note: User entity does not currently have a dedicated riskScore column,
@@ -238,11 +242,20 @@ public class AdminUserController {
         User u = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         UserStatus prev = u.getStatus();
+        java.time.LocalDateTime bannedAt = java.time.LocalDateTime.now();
         u.setStatus(UserStatus.BANNED);
+        u.setBanReason(request.getReason());
+        u.setBannedAt(bannedAt);
         userRepository.save(u);
 
         writeAuditLog(admin, AdminActionType.USER_BANNED, u.getId(), request.getReason(),
                 prev, UserStatus.BANNED, httpRequest);
+
+        // Invalidate the active session immediately so refresh-token rotation
+        // can't keep the user signed in after the ban.
+        tokenRevocationService.revokeAllUserTokens(u);
+        // Push the live-ban notification to the user's personal account topic.
+        accountRealtimeService.publishBanned(u.getId(), u.getBanReason(), u.getBannedAt());
 
         return ResponseEntity.ok(buildDetailDto(u));
     }
@@ -258,10 +271,14 @@ public class AdminUserController {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         UserStatus prev = u.getStatus();
         u.setStatus(UserStatus.ACTIVE);
+        u.setBanReason(null);
+        u.setBannedAt(null);
         userRepository.save(u);
 
         writeAuditLog(admin, AdminActionType.USER_UNBANNED, u.getId(), request.getReason(),
                 prev, UserStatus.ACTIVE, httpRequest);
+
+        accountRealtimeService.publishUnbanned(u.getId());
 
         return ResponseEntity.ok(buildDetailDto(u));
     }

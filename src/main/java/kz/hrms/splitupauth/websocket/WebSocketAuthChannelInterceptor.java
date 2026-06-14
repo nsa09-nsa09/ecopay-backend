@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
 public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
 
     private static final Pattern TICKET_TOPIC = Pattern.compile("^/topic/support-tickets/(\\d+)$");
+    private static final Pattern ACCOUNT_TOPIC = Pattern.compile("^/topic/users/(\\d+)/account$");
 
     private final SupportTicketRepository supportTicketRepository;
 
@@ -82,6 +83,12 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             return;
         }
 
+        Matcher accountMatcher = ACCOUNT_TOPIC.matcher(destination);
+        if (accountMatcher.matches()) {
+            validateAccountTopic(user, Long.parseLong(accountMatcher.group(1)));
+            return;
+        }
+
         Matcher matcher = TICKET_TOPIC.matcher(destination);
         if (matcher.matches()) {
             Long ticketId = Long.parseLong(matcher.group(1));
@@ -96,6 +103,17 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         }
 
         throw new ForbiddenOperationException("Unknown subscription destination");
+    }
+
+    /**
+     * Only the owning user may subscribe to {@code /topic/users/{id}/account}.
+     * Staff/admin explicitly do NOT get a backdoor here — the topic is the
+     * personal channel used for forced-logout signals, not for moderation.
+     */
+    private void validateAccountTopic(User user, Long ownerId) {
+        if (user.getId() == null || !user.getId().equals(ownerId)) {
+            throw new ForbiddenOperationException("Not allowed to subscribe to another user's account topic");
+        }
     }
 
     private boolean isStaff(User user) {

@@ -13,6 +13,7 @@ import kz.hrms.splitupauth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,6 +27,7 @@ public class UserService {
     private final ReviewRepository reviewRepository;
     private final ServiceReviewRepository serviceReviewRepository;
     private final TokenRevocationService tokenRevocationService;
+    private final AvatarStorageService avatarStorageService;
 
     @Transactional(readOnly = true)
     public UserDto getCurrentUser(User user) {
@@ -38,11 +40,36 @@ public class UserService {
         user.setDisplayName(request.getDisplayName());
 
         if (request.getAvatar() != null) {
+            // Profile PATCH carries only the pool selector. Switching to a pool
+            // avatar releases any previously uploaded file so disk usage stays bounded.
+            if (request.getAvatar().startsWith(AvatarStorageService.AVATAR_URL_PREFIX)) {
+                // Reject attempts to set an uploaded URL via PATCH — uploads go through /me/avatar.
+                throw new kz.hrms.splitupauth.exception.InvalidRequestException(
+                        "Использовать /me/avatar для загрузки файла");
+            }
+            avatarStorageService.deleteIfManaged(user.getAvatar());
             user.setAvatar(request.getAvatar());
         }
 
         userRepository.save(user);
 
+        return userMapper.toDto(user);
+    }
+
+    @Transactional
+    public UserDto uploadAvatar(User user, MultipartFile file) {
+        String url = avatarStorageService.store(file);
+        avatarStorageService.deleteIfManaged(user.getAvatar());
+        user.setAvatar(url);
+        userRepository.save(user);
+        return userMapper.toDto(user);
+    }
+
+    @Transactional
+    public UserDto deleteAvatar(User user) {
+        avatarStorageService.deleteIfManaged(user.getAvatar());
+        user.setAvatar(null);
+        userRepository.save(user);
         return userMapper.toDto(user);
     }
 
@@ -82,6 +109,9 @@ public class UserService {
         // Remove their service-review (testimonial) so the carousel doesn't
         // display anonymized data.
         serviceReviewRepository.findByAuthor(user).ifPresent(serviceReviewRepository::delete);
+
+        // Free disk for any uploaded avatar before the row is anonymized.
+        avatarStorageService.deleteIfManaged(user.getAvatar());
 
         Long id = user.getId();
         user.setStatus(UserStatus.DELETED);

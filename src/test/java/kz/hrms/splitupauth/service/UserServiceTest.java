@@ -35,6 +35,7 @@ class UserServiceTest {
     @Mock private ReviewRepository reviewRepository;
     @Mock private ServiceReviewRepository serviceReviewRepository;
     @Mock private TokenRevocationService tokenRevocationService;
+    @Mock private AvatarStorageService avatarStorageService;
 
     private UserService service;
 
@@ -42,7 +43,8 @@ class UserServiceTest {
     void setUp() {
         service = new UserService(
                 userRepository, new UserMapper(),
-                reviewRepository, serviceReviewRepository, tokenRevocationService);
+                reviewRepository, serviceReviewRepository, tokenRevocationService,
+                avatarStorageService);
     }
 
     private User activeUser(long id) {

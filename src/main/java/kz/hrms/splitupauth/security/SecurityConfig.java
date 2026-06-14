@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.security;
 
+import kz.hrms.splitupauth.config.AvatarUploadProperties;
 import kz.hrms.splitupauth.config.CorsProperties;
 import kz.hrms.splitupauth.sms.SmsProperties;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +25,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties({CorsProperties.class, SmsProperties.class})
+@EnableConfigurationProperties({CorsProperties.class, SmsProperties.class, AvatarUploadProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -71,6 +72,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/service-reviews/featured").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/public/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/users/avatars/**").permitAll()
                         // Public room browsing only: the catalog list and a single room by id.
                         // Everything deeper under a room (members, membership) requires auth,
                         // and falls through to anyRequest().authenticated() below.

@@ -10,6 +10,8 @@ import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "tariff_plans", indexes = {
@@ -54,6 +56,16 @@ public class TariffPlan {
     @Column(name = "operator_rules", columnDefinition = "jsonb")
     private String operatorRules;
 
+    /**
+     * "Плюшки" — list of human-readable perks shown next to the price
+     * (e.g., "4K", "без рекламы"). Stored as a JSONB array of strings so the
+     * admin can edit a free-form list without a side table.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "features", nullable = false, columnDefinition = "jsonb")
+    @Builder.Default
+    private List<String> features = new ArrayList<>();
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
@@ -73,10 +85,16 @@ public class TariffPlan {
         if (isActive == null) {
             isActive = true;
         }
+        if (features == null) {
+            features = new ArrayList<>();
+        }
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+        if (features == null) {
+            features = new ArrayList<>();
+        }
     }
 }

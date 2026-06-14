@@ -287,6 +287,7 @@ public class AdminCatalogService {
                         ? req.getCurrency() : "KZT")
                 .connectionType(req.getConnectionType())
                 .operatorRules(req.getOperatorRules())
+                .features(sanitizeFeatures(req.getFeatures()))
                 .isActive(true)
                 .build();
         tariff = tariffPlanRepository.save(tariff);
@@ -342,6 +343,9 @@ public class AdminCatalogService {
         if (req.getOperatorRules() != null) {
             tariff.setOperatorRules(req.getOperatorRules());
         }
+        if (req.getFeatures() != null) {
+            tariff.setFeatures(sanitizeFeatures(req.getFeatures()));
+        }
         if (req.getIsActive() != null) {
             tariff.setIsActive(req.getIsActive());
         }
@@ -382,6 +386,21 @@ public class AdminCatalogService {
     }
 
     // ===================== Helpers =====================
+
+    private java.util.List<String> sanitizeFeatures(java.util.List<String> features) {
+        if (features == null) {
+            return new java.util.ArrayList<>();
+        }
+        java.util.List<String> out = new java.util.ArrayList<>(features.size());
+        for (String f : features) {
+            if (f == null) continue;
+            String clean = kz.hrms.splitupauth.util.TextSanitizer.sanitize(f);
+            if (clean != null && !clean.isBlank()) {
+                out.add(clean);
+            }
+        }
+        return out;
+    }
 
     private String resolveCategorySlug(String requested, String name, Long ignoreId) {
         String base = requested != null && !requested.isBlank()

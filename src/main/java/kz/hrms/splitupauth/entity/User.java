@@ -71,6 +71,15 @@ public class User {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
+
+    @Column(name = "ban_reason", columnDefinition = "TEXT")
+    private String banReason;
+
+    @Column(name = "banned_at")
+    private LocalDateTime bannedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
