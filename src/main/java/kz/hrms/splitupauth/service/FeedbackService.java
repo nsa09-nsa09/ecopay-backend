@@ -57,15 +57,33 @@ public class FeedbackService {
     private final FeedbackRepository feedbackRepository;
     private final AdminActionLogRepository adminActionLogRepository;
     private final ObjectMapper objectMapper;
+    private final InMemoryRateLimiter rateLimiter;
 
     @Value("${app.rate-limit.feedback.max-per-hour:5}")
     private int maxPerHour;
 
+    @Value("${app.rate-limit.feedback.ip-max-per-hour:20}")
+    private int ipMaxPerHour;
+
     // ===================== user surface =====================
 
+    /**
+     * Back-compat overload (kept for tests + any code that doesn't have an
+     * HttpServletRequest handy). The IP-layer limiter only fires when an
+     * {@link HttpServletRequest} is supplied — see
+     * {@link #submit(User, CreateFeedbackRequest, HttpServletRequest)}.
+     */
     @Transactional
     public FeedbackDto submit(User user, CreateFeedbackRequest req) {
-        checkRateLimit(user);
+        return submit(user, req, null);
+    }
+
+    @Transactional
+    public FeedbackDto submit(User user, CreateFeedbackRequest req, HttpServletRequest http) {
+        if (http != null) {
+            checkIpRateLimit(http);
+        }
+        checkUserRateLimit(user);
 
         Feedback fb = Feedback.builder()
                 .user(user)
@@ -85,9 +103,9 @@ public class FeedbackService {
         return toPagedResponse(result.map(FeedbackDto::from));
     }
 
-    private void checkRateLimit(User user) {
-        // Bypass-able for development by leaving the property at 0 — admins
-        // can dial it down to a sane number per env without code changes.
+    private void checkUserRateLimit(User user) {
+        // Bypass only when the property is set to 0/negative — production envs
+        // must keep a positive cap; the application.properties default is 5.
         if (maxPerHour <= 0) return;
         LocalDateTime hourAgo = LocalDateTime.now().minusHours(1);
         long submittedInWindow = feedbackRepository.countByUserAndCreatedAtAfter(user, hourAgo);
@@ -97,6 +115,32 @@ public class FeedbackService {
             throw new TooManyLoginAttemptsException(
                     "Too many feedback submissions. Please try again later.");
         }
+    }
+
+    /**
+     * Per-IP layer on top of the per-user limit. One actor cycling through
+     * disposable accounts gets stopped here even if each individual account
+     * stays under the per-user cap. Uses the in-process limiter (sliding
+     * window) — the same component {@code SiteVisitService} uses for visit
+     * pings, so the operational story stays consistent.
+     */
+    private void checkIpRateLimit(HttpServletRequest http) {
+        if (ipMaxPerHour <= 0) return;
+        String ip = clientIp(http);
+        rateLimiter.check(
+                "feedback:ip:" + ip,
+                ipMaxPerHour,
+                3600,
+                "Too many feedback submissions from this address. Please try again later.");
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            int comma = forwarded.indexOf(',');
+            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
+        }
+        return request.getRemoteAddr();
     }
 
     // ===================== admin surface =====================

@@ -4,23 +4,28 @@ import kz.hrms.splitupauth.dto.DashboardLabelValueDto;
 import kz.hrms.splitupauth.dto.OperatorDistributionDto;
 import kz.hrms.splitupauth.dto.PopularServiceDto;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * Read-only aggregates that power the admin dashboard's distribution charts
  * (popular services / operators / currencies / categories / room statuses).
  *
- * <p>Kept separate from {@link AdminDashboardService} so the KPI block doesn't
- * grow further. Every query groups + counts in SQL so the heavy lifting stays
- * in Postgres, not the JVM.
+ * <p>Each chart is exposed as its own endpoint and each runs its own SQL — so
+ * one failing query (e.g. an upstream schema drift) cannot black out the whole
+ * dashboard. The service wraps every query in {@link #safeChart(String, Supplier)}
+ * which logs the exception and returns an empty list to the caller.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminDashboardChartsService {
@@ -34,6 +39,7 @@ public class AdminDashboardChartsService {
 
     private static final String OTHER_OPERATOR_CODE = "OTHER";
     private static final String OTHER_OPERATOR_NAME = "Другое";
+    private static final String UNCATEGORISED_LABEL = "Без категории";
 
     private static final int DEFAULT_POPULAR_LIMIT = 10;
     private static final int MAX_POPULAR_LIMIT = 100;
@@ -64,12 +70,13 @@ public class AdminDashboardChartsService {
                         + "ORDER BY rooms_count DESC, active_members DESC, s.name ASC "
                         + "LIMIT ?";
 
-        return jdbc.query(sql, (rs, rowNum) -> PopularServiceDto.builder()
-                .serviceId(rs.getLong("service_id"))
-                .serviceName(rs.getString("service_name"))
-                .roomsCount(rs.getLong("rooms_count"))
-                .activeMembersCount(rs.getLong("active_members"))
-                .build(), capped);
+        return safeChart("popular-services", () ->
+                jdbc.query(sql, (rs, rowNum) -> PopularServiceDto.builder()
+                        .serviceId(rs.getLong("service_id"))
+                        .serviceName(rs.getString("service_name"))
+                        .roomsCount(rs.getLong("rooms_count"))
+                        .activeMembersCount(rs.getLong("active_members"))
+                        .build(), capped));
     }
 
     private int clampLimit(Integer requested) {
@@ -83,17 +90,19 @@ public class AdminDashboardChartsService {
 
     @Transactional(readOnly = true)
     public List<OperatorDistributionDto> operatorDistribution() {
-        // Normalise the phone to digits in SQL: strip non-digits, then look at
-        // the slice immediately after the +7 country code. For +7 7XX numbers
-        // the DEF-code is the 3 digits after the leading "7" (i.e. positions
-        // 2..4 in the digits-only string). Foreign numbers / missing phones
-        // fall into the OTHER bucket.
+        // Normalise the phone to digits in SQL, then look at the 3 digits
+        // immediately after the leading "7" country code. Foreign numbers /
+        // missing phones land in the OTHER bucket.
+        //
+        // The OTHER literal is inlined (rather than a bind parameter) because
+        // Postgres can't infer the type of an unparameterised "?" branch in a
+        // CASE / GROUP BY and rejects the query with a BadSqlGrammarException.
         String sql =
                 "SELECT def_code, COUNT(*) AS cnt FROM ( "
                         + "  SELECT CASE "
-                        + "    WHEN u.phone IS NULL OR u.phone = '' THEN ? "
-                        + "    WHEN LENGTH(REGEXP_REPLACE(u.phone, '[^0-9]', '', 'g')) <> 11 THEN ? "
-                        + "    WHEN SUBSTRING(REGEXP_REPLACE(u.phone, '[^0-9]', '', 'g') FROM 1 FOR 1) <> '7' THEN ? "
+                        + "    WHEN u.phone IS NULL OR u.phone = '' THEN 'OTHER' "
+                        + "    WHEN LENGTH(REGEXP_REPLACE(u.phone, '[^0-9]', '', 'g')) <> 11 THEN 'OTHER' "
+                        + "    WHEN SUBSTRING(REGEXP_REPLACE(u.phone, '[^0-9]', '', 'g') FROM 1 FOR 1) <> '7' THEN 'OTHER' "
                         + "    ELSE SUBSTRING(REGEXP_REPLACE(u.phone, '[^0-9]', '', 'g') FROM 2 FOR 3) "
                         + "  END AS def_code "
                         + "  FROM users u "
@@ -102,38 +111,42 @@ public class AdminDashboardChartsService {
                         + "GROUP BY def_code "
                         + "ORDER BY cnt DESC";
 
-        Map<String, Long> raw = new LinkedHashMap<>();
-        jdbc.query(sql, rs -> {
-            raw.put(rs.getString("def_code"), rs.getLong("cnt"));
-        }, OTHER_OPERATOR_CODE, OTHER_OPERATOR_CODE, OTHER_OPERATOR_CODE);
+        return safeChart("operator-distribution", () -> {
+            Map<String, Long> raw = new LinkedHashMap<>();
+            // Explicit RowCallbackHandler — without it the lambda is ambiguous
+            // with ResultSetExtractor on Spring 7's overloaded JdbcTemplate.
+            org.springframework.jdbc.core.RowCallbackHandler handler =
+                    rs -> raw.put(rs.getString("def_code"), rs.getLong("cnt"));
+            jdbc.query(sql, handler);
 
-        // Re-bucket DEF codes we don't recognize into OTHER so the FE doesn't
-        // have to render dozens of one-off codes that don't map to operators.
-        long otherCount = raw.getOrDefault(OTHER_OPERATOR_CODE, 0L);
-        List<OperatorDistributionDto> result = new ArrayList<>();
-        for (Map.Entry<String, Long> e : raw.entrySet()) {
-            String code = e.getKey();
-            if (OTHER_OPERATOR_CODE.equals(code)) continue;
-            String name = OPERATOR_BY_DEF_CODE.get(code);
-            if (name == null) {
-                otherCount += e.getValue();
-                continue;
+            // Re-bucket DEF codes we don't recognize into OTHER so the FE
+            // doesn't have to render dozens of one-off codes that don't map.
+            long otherCount = raw.getOrDefault(OTHER_OPERATOR_CODE, 0L);
+            List<OperatorDistributionDto> result = new ArrayList<>();
+            for (Map.Entry<String, Long> e : raw.entrySet()) {
+                String code = e.getKey();
+                if (OTHER_OPERATOR_CODE.equals(code)) continue;
+                String name = OPERATOR_BY_DEF_CODE.get(code);
+                if (name == null) {
+                    otherCount += e.getValue();
+                    continue;
+                }
+                result.add(OperatorDistributionDto.builder()
+                        .code(code)
+                        .operatorName(name)
+                        .count(e.getValue())
+                        .build());
             }
-            result.add(OperatorDistributionDto.builder()
-                    .code(code)
-                    .operatorName(name)
-                    .count(e.getValue())
-                    .build());
-        }
-        if (otherCount > 0) {
-            result.add(OperatorDistributionDto.builder()
-                    .code(OTHER_OPERATOR_CODE)
-                    .operatorName(OTHER_OPERATOR_NAME)
-                    .count(otherCount)
-                    .build());
-        }
-        result.sort((a, b) -> Long.compare(b.getCount(), a.getCount()));
-        return result;
+            if (otherCount > 0) {
+                result.add(OperatorDistributionDto.builder()
+                        .code(OTHER_OPERATOR_CODE)
+                        .operatorName(OTHER_OPERATOR_NAME)
+                        .count(otherCount)
+                        .build());
+            }
+            result.sort((a, b) -> Long.compare(b.getCount(), a.getCount()));
+            return result;
+        });
     }
 
     // ===================== currency distribution =====================
@@ -144,27 +157,31 @@ public class AdminDashboardChartsService {
                 + "FROM rooms WHERE deleted_at IS NULL AND status = 'ACTIVE' "
                 + "GROUP BY COALESCE(currency, 'KZT') "
                 + "ORDER BY cnt DESC, code ASC";
-        return jdbc.query(sql, (rs, n) -> DashboardLabelValueDto.builder()
-                .label(rs.getString("code"))
-                .value(rs.getLong("cnt"))
-                .build());
+        return safeChart("currency-distribution", () ->
+                jdbc.query(sql, (rs, n) -> DashboardLabelValueDto.builder()
+                        .label(rs.getString("code"))
+                        .value(rs.getLong("cnt"))
+                        .build()));
     }
 
     // ===================== category distribution =====================
 
     @Transactional(readOnly = true)
     public List<DashboardLabelValueDto> categoryDistribution() {
-        // LEFT JOIN keeps rooms without a category (those land under "Без категории").
-        String sql = "SELECT COALESCE(c.name, ?) AS label, COUNT(*) AS cnt "
+        // Group on the raw column (NULLs collapse into one group naturally) so
+        // we don't need a bind parameter inside GROUP BY — Postgres rejects
+        // those with "could not determine data type of parameter". The
+        // user-visible label is substituted in the SELECT only.
+        String sql = "SELECT COALESCE(c.name, '" + escapeLiteral(UNCATEGORISED_LABEL) + "') AS label, COUNT(*) AS cnt "
                 + "FROM rooms r LEFT JOIN categories c ON c.id = r.category_id "
                 + "WHERE r.deleted_at IS NULL "
-                + "GROUP BY COALESCE(c.name, ?) "
+                + "GROUP BY c.name "
                 + "ORDER BY cnt DESC, label ASC";
-        String uncategorised = "Без категории";
-        return jdbc.query(sql, (rs, n) -> DashboardLabelValueDto.builder()
-                .label(rs.getString("label"))
-                .value(rs.getLong("cnt"))
-                .build(), uncategorised, uncategorised);
+        return safeChart("category-distribution", () ->
+                jdbc.query(sql, (rs, n) -> DashboardLabelValueDto.builder()
+                        .label(rs.getString("label"))
+                        .value(rs.getLong("cnt"))
+                        .build()));
     }
 
     // ===================== room status distribution =====================
@@ -175,13 +192,36 @@ public class AdminDashboardChartsService {
                 + "FROM rooms WHERE deleted_at IS NULL "
                 + "GROUP BY status "
                 + "ORDER BY cnt DESC, status ASC";
-        return jdbc.query(sql, (rs, n) -> DashboardLabelValueDto.builder()
-                .label(rs.getString("label"))
-                .value(rs.getLong("cnt"))
-                .build());
+        return safeChart("room-status-distribution", () ->
+                jdbc.query(sql, (rs, n) -> DashboardLabelValueDto.builder()
+                        .label(rs.getString("label"))
+                        .value(rs.getLong("cnt"))
+                        .build()));
     }
 
-    // ===================== operator map =====================
+    // ===================== helpers =====================
+
+    /**
+     * Isolate one chart from another. A schema drift in (say) the operator
+     * SQL must not blank out the popular-services chart that the FE renders
+     * in the same row. The caller still sees a 200 with an empty list; the
+     * cause is in the server log so it can be diagnosed without paging the
+     * admin user.
+     */
+    private <T> List<T> safeChart(String chartName, Supplier<List<T>> query) {
+        try {
+            List<T> rows = query.get();
+            return rows != null ? rows : Collections.emptyList();
+        } catch (RuntimeException ex) {
+            log.warn("dashboard chart '{}' failed: {}", chartName, ex.toString());
+            return Collections.emptyList();
+        }
+    }
+
+    /** Escape single quotes for a SQL string literal. UNCATEGORISED_LABEL has none, but guard anyway. */
+    private String escapeLiteral(String value) {
+        return value.replace("'", "''");
+    }
 
     private static Map<String, String> buildOperatorMap() {
         Map<String, String> m = new LinkedHashMap<>();

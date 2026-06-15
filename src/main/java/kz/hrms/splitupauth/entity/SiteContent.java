@@ -51,6 +51,37 @@ public class SiteContent {
     @Column(name = "contact_phone")
     private String contactPhone;
 
+    // ----- Tri-lingual copy (V30). The legacy {title,mission,description}
+    // columns above stay populated (mirrored from *_ru) for backward compat
+    // with anything still reading them. -----
+
+    @Column(name = "title_kz", columnDefinition = "TEXT")
+    private String titleKz;
+
+    @Column(name = "title_ru", columnDefinition = "TEXT")
+    private String titleRu;
+
+    @Column(name = "title_en", columnDefinition = "TEXT")
+    private String titleEn;
+
+    @Column(name = "mission_kz", columnDefinition = "TEXT")
+    private String missionKz;
+
+    @Column(name = "mission_ru", columnDefinition = "TEXT")
+    private String missionRu;
+
+    @Column(name = "mission_en", columnDefinition = "TEXT")
+    private String missionEn;
+
+    @Column(name = "description_kz", columnDefinition = "TEXT")
+    private String descriptionKz;
+
+    @Column(name = "description_ru", columnDefinition = "TEXT")
+    private String descriptionRu;
+
+    @Column(name = "description_en", columnDefinition = "TEXT")
+    private String descriptionEn;
+
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 

@@ -45,13 +45,39 @@ public class SiteContentService {
         // renders these fields as plain text via React, but defense-in-depth
         // matches the rest of the app's text fields (CLAUDE.md "Sanitize user
         // text fields on backend").
+        String legacyTitle = TextSanitizer.sanitize(req.getTitle());
+        String legacyMission = TextSanitizer.sanitize(req.getMission());
+        String legacyDescription = TextSanitizer.sanitize(req.getDescription());
+
         content.setCompanyName(TextSanitizer.sanitize(req.getCompanyName()));
-        content.setTitle(TextSanitizer.sanitize(req.getTitle()));
-        content.setMission(TextSanitizer.sanitize(req.getMission()));
-        content.setDescription(TextSanitizer.sanitize(req.getDescription()));
+        content.setTitle(legacyTitle);
+        content.setMission(legacyMission);
+        content.setDescription(legacyDescription);
         content.setContactEmail(TextSanitizer.sanitize(req.getContactEmail()));
         content.setContactPhone(TextSanitizer.sanitize(req.getContactPhone()));
         content.setUpdatedBy(admin);
+
+        // Per-language fields: when present, sanitize + assign; when absent,
+        // leave the existing value alone (so partial updates don't blank out
+        // languages the admin didn't touch in this submission).
+        if (req.getTitleKz() != null)   content.setTitleKz(TextSanitizer.sanitize(req.getTitleKz()));
+        if (req.getTitleRu() != null)   content.setTitleRu(TextSanitizer.sanitize(req.getTitleRu()));
+        if (req.getTitleEn() != null)   content.setTitleEn(TextSanitizer.sanitize(req.getTitleEn()));
+
+        if (req.getMissionKz() != null) content.setMissionKz(TextSanitizer.sanitize(req.getMissionKz()));
+        if (req.getMissionRu() != null) content.setMissionRu(TextSanitizer.sanitize(req.getMissionRu()));
+        if (req.getMissionEn() != null) content.setMissionEn(TextSanitizer.sanitize(req.getMissionEn()));
+
+        if (req.getDescriptionKz() != null) content.setDescriptionKz(TextSanitizer.sanitize(req.getDescriptionKz()));
+        if (req.getDescriptionRu() != null) content.setDescriptionRu(TextSanitizer.sanitize(req.getDescriptionRu()));
+        if (req.getDescriptionEn() != null) content.setDescriptionEn(TextSanitizer.sanitize(req.getDescriptionEn()));
+
+        // If the admin only edited the legacy fields (old UI), mirror them to
+        // *_ru so the default-locale view doesn't go stale. We only do this
+        // when the *_ru slot isn't explicitly being set in this request.
+        if (req.getTitleRu() == null)       content.setTitleRu(legacyTitle);
+        if (req.getMissionRu() == null)     content.setMissionRu(legacyMission);
+        if (req.getDescriptionRu() == null) content.setDescriptionRu(legacyDescription);
 
         content = repository.save(content);
 
@@ -82,6 +108,15 @@ public class SiteContentService {
         node.put("description", c.getDescription());
         node.put("contactEmail", c.getContactEmail());
         node.put("contactPhone", c.getContactPhone());
+        node.put("titleKz", c.getTitleKz());
+        node.put("titleRu", c.getTitleRu());
+        node.put("titleEn", c.getTitleEn());
+        node.put("missionKz", c.getMissionKz());
+        node.put("missionRu", c.getMissionRu());
+        node.put("missionEn", c.getMissionEn());
+        node.put("descriptionKz", c.getDescriptionKz());
+        node.put("descriptionRu", c.getDescriptionRu());
+        node.put("descriptionEn", c.getDescriptionEn());
         return node;
     }
 }

@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import kz.hrms.splitupauth.dto.CreateFeedbackRequest;
 import kz.hrms.splitupauth.dto.FeedbackDto;
@@ -28,9 +29,10 @@ public class FeedbackController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<FeedbackDto> submit(
             @AuthenticationPrincipal User user,
-            @Valid @RequestBody CreateFeedbackRequest request
+            @Valid @RequestBody CreateFeedbackRequest request,
+            HttpServletRequest http
     ) {
-        return ResponseEntity.ok(feedbackService.submit(user, request));
+        return ResponseEntity.ok(feedbackService.submit(user, request, http));
     }
 
     @GetMapping("/me")
