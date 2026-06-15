@@ -39,6 +39,12 @@ public class RoomResponse {
     private BigDecimal priceTotal;
     private BigDecimal pricePerMember;
     private String currency;
+    /** Snapshot of the price→KZT rate used at room creation (1 for KZT). */
+    private BigDecimal fxRateToKzt;
+    /** Snapshot of price_total expressed in KZT at creation. */
+    private BigDecimal priceTotalKzt;
+    /** Snapshot of price_per_member expressed in KZT at creation. */
+    private BigDecimal pricePerMemberKzt;
     private PeriodType periodType;
     private LocalDateTime startDate;
     private String cancellationPolicy;

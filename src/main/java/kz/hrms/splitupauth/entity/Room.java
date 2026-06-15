@@ -71,6 +71,18 @@ public class Room {
     @Column(nullable = false, length = 10)
     private String currency;
 
+    /** Snapshot of the source-currency → KZT rate at room creation (1 for KZT). */
+    @Column(name = "fx_rate_to_kzt", precision = 18, scale = 6)
+    private BigDecimal fxRateToKzt;
+
+    /** Snapshot of price_total expressed in KZT at creation time. */
+    @Column(name = "price_total_kzt", precision = 14, scale = 2)
+    private BigDecimal priceTotalKzt;
+
+    /** Snapshot of price_per_member expressed in KZT at creation time. */
+    @Column(name = "price_per_member_kzt", precision = 14, scale = 2)
+    private BigDecimal pricePerMemberKzt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "period_type", nullable = false, length = 20)
     private PeriodType periodType;

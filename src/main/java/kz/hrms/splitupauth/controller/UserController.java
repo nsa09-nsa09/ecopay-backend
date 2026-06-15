@@ -1,14 +1,17 @@
 package kz.hrms.splitupauth.controller;
 
 import jakarta.validation.Valid;
+import kz.hrms.splitupauth.dto.MemberDashboardDto;
 import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.service.MemberDashboardService;
 import kz.hrms.splitupauth.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,6 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class UserController {
 
     private final UserService userService;
+    private final MemberDashboardService memberDashboardService;
 
     @GetMapping("/me")
     public ResponseEntity<UserDto> getCurrentUser(@AuthenticationPrincipal User user) {
@@ -55,5 +59,12 @@ public class UserController {
     @GetMapping("/public/{publicId}")
     public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String publicId) {
         return ResponseEntity.ok(userService.getPublicProfile(publicId));
+    }
+
+    /** Personal analytics surface: memberships, spend, savings, reputation, recent activity. */
+    @GetMapping("/me/dashboard")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<MemberDashboardDto> getMyDashboard(@AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(memberDashboardService.getMyDashboard(user));
     }
 }

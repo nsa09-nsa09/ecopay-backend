@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -25,6 +26,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 @EnableConfigurationProperties({CorsProperties.class, SmsProperties.class, AvatarUploadProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
@@ -68,6 +70,10 @@ public class SecurityConfig {
                                 "/actuator/health/**"
                         ).permitAll()
                         .requestMatchers("/ws", "/ws/**").permitAll()
+                        // Anonymous visit ping (deduped server-side via the "vid" cookie).
+                        .requestMatchers(HttpMethod.POST, "/api/v1/analytics/visit").permitAll()
+                        // Live FX rates for the public landing-page converter.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/fx/rates").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/service-reviews/featured").permitAll()
