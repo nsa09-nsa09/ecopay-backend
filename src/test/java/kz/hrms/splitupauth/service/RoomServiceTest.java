@@ -68,7 +68,8 @@ class RoomServiceTest {
                 roomEventLogger,
                 new ObjectMapper(),
                 reviewRepository,
-                roomMemberRepository
+                roomMemberRepository,
+                new ExchangeRateService(new ObjectMapper())
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));

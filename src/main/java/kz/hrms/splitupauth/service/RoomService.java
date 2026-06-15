@@ -14,6 +14,7 @@ import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
 import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
+import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
@@ -64,6 +65,7 @@ public class RoomService {
     private final ObjectMapper objectMapper;
     private final ReviewRepository reviewRepository;
     private final RoomMemberRepository roomMemberRepository;
+    private final ExchangeRateService exchangeRateService;
 
     /** Member statuses that occupy a seat (see CLAUDE.md). */
     private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
@@ -138,6 +140,12 @@ public class RoomService {
                 ? request.getOperatorRestrictions()
                 : textRule(rules, "sharingWarning");
 
+        // Resolve currency (whitelist check) + freeze the FX snapshot at creation.
+        String currency = Currency.normalize(request.getCurrency()).name();
+        java.math.BigDecimal fxRate = exchangeRateService.rateOf(currency);
+        java.math.BigDecimal priceTotalKzt = exchangeRateService.toKzt(request.getPriceTotal(), currency);
+        java.math.BigDecimal pricePerMemberKzt = exchangeRateService.toKzt(request.getPricePerMember(), currency);
+
         Room room = Room.builder()
                 .owner(currentUser)
                 .category(category)
@@ -151,7 +159,10 @@ public class RoomService {
                 .maxMembers(request.getMaxMembers())
                 .priceTotal(request.getPriceTotal())
                 .pricePerMember(request.getPricePerMember())
-                .currency(request.getCurrency() != null ? request.getCurrency() : "KZT")
+                .currency(currency)
+                .fxRateToKzt(fxRate)
+                .priceTotalKzt(priceTotalKzt)
+                .pricePerMemberKzt(pricePerMemberKzt)
                 .periodType(request.getPeriodType())
                 .startDate(request.getStartDate())
                 .cancellationPolicy(request.getCancellationPolicy())
@@ -548,6 +559,10 @@ public class RoomService {
                 hasPositiveAmount(request.getPriceTotal()) || hasPositiveAmount(request.getPricePerMember());
         if (!hasAnyPositiveAmount) {
             throw new InvalidRequestException("Either positive priceTotal or positive pricePerMember must be provided");
+        }
+
+        if (request.getCurrency() != null && !Currency.isSupported(request.getCurrency())) {
+            throw new InvalidRequestException("Unsupported currency: " + request.getCurrency());
         }
 
         if (request.getStartDate().isBefore(LocalDateTime.now())) {

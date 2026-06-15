@@ -27,6 +27,9 @@ public class RoomSummaryDto {
     private BigDecimal priceTotal;
     private BigDecimal pricePerMember;
     private String currency;
+    private BigDecimal fxRateToKzt;
+    private BigDecimal priceTotalKzt;
+    private BigDecimal pricePerMemberKzt;
     private LocalDateTime startDate;
     private Long ownerUserId;
     private String ownerDisplayName;
