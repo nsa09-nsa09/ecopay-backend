@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/v1/admin/dashboard")
@@ -25,13 +25,18 @@ public class AdminDashboardController {
         return ResponseEntity.ok(service.getKpis());
     }
 
+    // The frontend admin dashboard sends dates as yyyy-MM-dd (no time / no Z), so
+    // accept LocalDate here. The service widens `from` to start-of-day and `to`
+    // to end-of-day before querying. Trying to bind these as LocalDateTime with
+    // ISO.DATE_TIME caused MethodArgumentTypeMismatchException → 400 and blew up
+    // the dashboard charts.
     @GetMapping("/metrics")
     public ResponseEntity<DashboardMetricsDto> metrics(
             @RequestParam(required = false, defaultValue = "month") String granularity,
             @RequestParam(required = false)
-                @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+                @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false)
-                @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to
+                @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
     ) {
         return ResponseEntity.ok(service.getMetrics(granularity, from, to));
     }

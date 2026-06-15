@@ -42,7 +42,7 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         service = new UserService(
-                userRepository, new UserMapper(),
+                userRepository, new UserMapper(avatarStorageService),
                 reviewRepository, serviceReviewRepository, tokenRevocationService,
                 avatarStorageService);
     }

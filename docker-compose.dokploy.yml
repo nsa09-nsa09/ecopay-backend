@@ -15,12 +15,22 @@ services:
       JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-604800000}
       APP_SECURITY_FIELD_ENCRYPTION_KEY: ${APP_SECURITY_FIELD_ENCRYPTION_KEY:?APP_SECURITY_FIELD_ENCRYPTION_KEY must be set in Dokploy Environment}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:?APP_CORS_ALLOWED_ORIGINS must be set in Dokploy Environment}
+      # APP_BASE_URL is optional: avatar URLs auto-derive from the request host
+      # (X-Forwarded-* honoured). Set it in the Dokploy Environment only if you want
+      # email-verification links to use the public backend URL instead of the default.
       APP_RATE_LIMIT_LOGIN_ATTEMPTS: ${APP_RATE_LIMIT_LOGIN_ATTEMPTS:-5}
       APP_RATE_LIMIT_LOGIN_DURATION_MINUTES: ${APP_RATE_LIMIT_LOGIN_DURATION_MINUTES:-15}
       MAIL_HOST: ${MAIL_HOST:-}
       MAIL_PORT: ${MAIL_PORT:-587}
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      # S3-compatible object storage for avatars (Cloudflare R2)
+      S3_REGION: ${S3_REGION:-auto}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET must be set in Dokploy Environment}
+      S3_ENDPOINT: ${S3_ENDPOINT:?S3_ENDPOINT must be set in Dokploy Environment}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set in Dokploy Environment}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY must be set in Dokploy Environment}
+      S3_PATH_STYLE_ACCESS: ${S3_PATH_STYLE_ACCESS:-true}
     restart: unless-stopped
     expose:
       - "8080"

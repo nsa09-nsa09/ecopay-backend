@@ -32,6 +32,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -158,8 +159,8 @@ class Round2IntegrationTest extends AbstractIntegrationTest {
 
         DashboardMetricsDto metrics = dashboardService.getMetrics(
                 "month",
-                LocalDateTime.now().minusMonths(2).withDayOfMonth(1),
-                LocalDateTime.now());
+                LocalDate.now().minusMonths(2).withDayOfMonth(1),
+                LocalDate.now());
 
         assertFalse(metrics.getSeries().isEmpty());
         assertEquals("month", metrics.getGranularity());

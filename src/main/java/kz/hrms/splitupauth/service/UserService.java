@@ -36,20 +36,10 @@ public class UserService {
 
     @Transactional
     public UserDto updateProfile(User user, UpdateProfileRequest request) {
-
+        // Avatars are managed exclusively through /me/avatar (S3 upload) and
+        // /me/avatar DELETE — the profile PATCH only carries the display name.
+        // Setting an arbitrary public URL is no longer supported.
         user.setDisplayName(request.getDisplayName());
-
-        if (request.getAvatar() != null) {
-            // Profile PATCH carries only the pool selector. Switching to a pool
-            // avatar releases any previously uploaded file so disk usage stays bounded.
-            if (request.getAvatar().startsWith(AvatarStorageService.AVATAR_URL_PREFIX)) {
-                // Reject attempts to set an uploaded URL via PATCH — uploads go through /me/avatar.
-                throw new kz.hrms.splitupauth.exception.InvalidRequestException(
-                        "Использовать /me/avatar для загрузки файла");
-            }
-            avatarStorageService.deleteIfManaged(user.getAvatar());
-            user.setAvatar(request.getAvatar());
-        }
 
         userRepository.save(user);
 
@@ -88,7 +78,7 @@ public class UserService {
                 .id(user.getId())
                 .publicId(user.getPublicId())
                 .displayName(user.getDisplayName())
-                .avatar(user.getAvatar())
+                .avatar(avatarStorageService.publicUrl(user.getAvatar()))
                 .reputation(user.getReputation())
                 .status(user.getStatus())
                 .averageRating(Math.round(avg * 10.0) / 10.0)
