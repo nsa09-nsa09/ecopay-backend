@@ -2,12 +2,17 @@ package kz.hrms.splitupauth.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -58,5 +63,42 @@ class ExchangeRateServiceTest {
 
         assertNotNull(svc.getUpdatedAt(), "updatedAt should advance after a successful apply");
         assertTrue(svc.getRatesToKzt().containsKey("CNY"));
+    }
+
+    @Test
+    void refreshOverridesFallbackUsdRate() throws Exception {
+        ExchangeRateService svc = new ExchangeRateService(new ObjectMapper());
+
+        BigDecimal fallbackUsd = svc.rateOf("USD");
+        String body = "{\"rates\":{\"USD\":1,\"KZT\":600,\"EUR\":0.9}}";
+        svc.applyFromUsdBase(body);
+
+        BigDecimal refreshedUsd = svc.rateOf("USD");
+        assertEquals(new BigDecimal("600.000000"), refreshedUsd,
+                "live USD/KZT must replace the fallback after refresh");
+        assertNotEquals(0, fallbackUsd.compareTo(refreshedUsd),
+                "refresh should change USD rate away from the static fallback");
+    }
+
+    @Test
+    void networkFailure_keepsExistingSnapshot() throws Exception {
+        ExchangeRateService svc = new ExchangeRateService(new ObjectMapper());
+        // Establish a known snapshot first.
+        svc.applyFromUsdBase("{\"rates\":{\"USD\":1,\"KZT\":700,\"EUR\":1.0}}");
+        Map<String, BigDecimal> snapshotBefore = svc.getRatesToKzt();
+        LocalDateTime updatedBefore = svc.getUpdatedAt();
+
+        // Point at an unroutable URL and trigger refresh — it should swallow the
+        // exception and leave the snapshot intact, matching the contract that
+        // production never goes "ratesless" on a transient upstream blip.
+        ReflectionTestUtils.setField(svc, "sourceUrl", "http://127.0.0.1:1/never");
+        ReflectionTestUtils.setField(svc, "timeoutSeconds", 1L);
+        svc.refresh();
+
+        assertSame(snapshotBefore, svc.getRatesToKzt(),
+                "failed refresh must NOT replace the cached rate map");
+        assertEquals(updatedBefore, svc.getUpdatedAt(),
+                "updatedAt may only advance on a successful upstream apply");
+        assertEquals(new BigDecimal("700.000000"), svc.rateOf("USD"));
     }
 }
