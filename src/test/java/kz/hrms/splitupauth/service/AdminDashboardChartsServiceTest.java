@@ -83,7 +83,10 @@ class AdminDashboardChartsServiceTest extends AbstractIntegrationTest {
         saveMember(a2, saveUser("m3"), MemberStatus.ACTIVE);
         saveMember(b1, saveUser("m4"), MemberStatus.PENDING); // not counted (status != ACTIVE)
 
-        List<PopularServiceDto> ranked = chartsService.popularServices(5);
+        // Use the max page size — limit=5 is fragile because sibling tests may
+        // have created services with higher room counts that bump svcB out of
+        // the top window.
+        List<PopularServiceDto> ranked = chartsService.popularServices(100);
 
         // svcA has 2 rooms (vs 1 for svcB) → comes first regardless of where
         // svcB sits among any pre-existing fixtures.
@@ -116,6 +119,15 @@ class AdminDashboardChartsServiceTest extends AbstractIntegrationTest {
 
     @Test
     void operatorDistribution_groupsKzDefCodesAndOtherBucket() {
+        // The aggregate scans the whole `users` table, so sibling tests (and
+        // V7/V10 seed data) may have already contributed rows to each bucket.
+        // Snapshot the baseline first, then assert the *delta* this test
+        // produced — that keeps the assertion independent of unrelated data.
+        List<OperatorDistributionDto> before = chartsService.operatorDistribution();
+        long before701 = countFor(before, "701");
+        long before707 = countFor(before, "707");
+        long beforeOther = countFor(before, "OTHER");
+
         // +7 701 → Kcell-Activ; +7 707 → Tele2-Altel; +7 999 (unknown) → OTHER;
         // foreign-format number → OTHER.
         saveUserWithPhone("oi1", "+77011112233");
@@ -130,15 +142,23 @@ class AdminDashboardChartsServiceTest extends AbstractIntegrationTest {
         long tele2 = countFor(dist, "707");
         long other = countFor(dist, "OTHER");
 
-        assertEquals(1, kcell, "+7 701 must map to its own bucket");
-        assertEquals(1, tele2, "+7 707 must map to its own bucket");
-        assertTrue(other >= 2, "unknown KZ code + foreign number both land in OTHER");
+        assertEquals(1, kcell - before701, "+7 701 must map to its own bucket (delta)");
+        assertEquals(1, tele2 - before707, "+7 707 must map to its own bucket (delta)");
+        assertTrue(other - beforeOther >= 2,
+                "unknown KZ code + foreign number both land in OTHER (delta)");
     }
 
     // ===================== currency distribution =====================
 
     @Test
     void currencyDistribution_countsActiveRoomsByCurrency() {
+        // Same baseline-delta pattern as operatorDistribution: this query
+        // aggregates the global `rooms` table, so sibling-test rows leak in
+        // and absolute counts cannot be asserted deterministically.
+        List<DashboardLabelValueDto> before = chartsService.currencyDistribution();
+        long beforeKzt = valueFor(before, "KZT");
+        long beforeUsd = valueFor(before, "USD");
+
         User owner = saveUser("curOwner");
         Category cat = saveCategory("curCat");
         ServiceEntity svc = saveService(cat, "curSvc");
@@ -151,14 +171,20 @@ class AdminDashboardChartsServiceTest extends AbstractIntegrationTest {
         List<DashboardLabelValueDto> dist = chartsService.currencyDistribution();
         long kzt = valueFor(dist, "KZT");
         long usd = valueFor(dist, "USD");
-        assertTrue(kzt >= 2);
-        assertTrue(usd >= 1);
+        assertEquals(2, kzt - beforeKzt, "two ACTIVE KZT rooms added in this test");
+        assertEquals(1, usd - beforeUsd, "one ACTIVE USD room added (COMPLETED excluded)");
     }
 
     // ===================== category distribution =====================
 
     @Test
     void categoryDistribution_putsRoomsWithoutCategoryUnderFallbackLabel() {
+        // The "Без категории" bucket aggregates *all* category-less rooms across
+        // the whole `rooms` table — sibling tests may have left some behind.
+        // Snapshot before insert so we can assert our own contribution exactly.
+        List<DashboardLabelValueDto> before = chartsService.categoryDistribution();
+        long beforeWithoutCat = valueFor(before, "Без категории");
+
         User owner = saveUser("catOwner");
         Category cat = saveCategory("catA");
         ServiceEntity svc = saveService(cat, "catSvc");
@@ -171,14 +197,23 @@ class AdminDashboardChartsServiceTest extends AbstractIntegrationTest {
         List<DashboardLabelValueDto> dist = chartsService.categoryDistribution();
         long withCat = valueFor(dist, cat.getName());
         long withoutCat = valueFor(dist, "Без категории");
-        assertTrue(withCat >= 1, "category-attached rooms are listed by category name");
-        assertTrue(withoutCat >= 2, "category-less rooms collapse into the fallback label");
+        // The category was just created in this test, so its name is unique —
+        // no baseline needed there.
+        assertEquals(1, withCat, "category-attached rooms are listed by category name");
+        assertEquals(2, withoutCat - beforeWithoutCat,
+                "two category-less rooms collapsed into the fallback label (delta)");
     }
 
     // ===================== room status distribution =====================
 
     @Test
     void roomStatusDistribution_countsByStatus() {
+        // status-by-status counts span the whole `rooms` table, so once again
+        // we compare a delta against a pre-insert baseline.
+        List<DashboardLabelValueDto> before = chartsService.roomStatusDistribution();
+        long beforeOpen = valueFor(before, RoomStatus.OPEN.name());
+        long beforeActive = valueFor(before, RoomStatus.ACTIVE.name());
+
         User owner = saveUser("statOwner");
         Category cat = saveCategory("statCat");
         ServiceEntity svc = saveService(cat, "statSvc");
@@ -189,8 +224,8 @@ class AdminDashboardChartsServiceTest extends AbstractIntegrationTest {
         List<DashboardLabelValueDto> dist = chartsService.roomStatusDistribution();
         long open = valueFor(dist, RoomStatus.OPEN.name());
         long active = valueFor(dist, RoomStatus.ACTIVE.name());
-        assertTrue(open >= 2);
-        assertTrue(active >= 1);
+        assertEquals(2, open - beforeOpen);
+        assertEquals(1, active - beforeActive);
     }
 
     // ===================== fixtures =====================

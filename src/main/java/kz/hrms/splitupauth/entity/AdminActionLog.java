@@ -39,7 +39,13 @@ public class AdminActionLog {
     @JoinColumn(name = "admin_user_id", nullable = false)
     private User adminUser;
 
-    @Enumerated(EnumType.STRING)
+    // Read uses AdminActionTypeConverter: a row carrying an action_type the
+    // current build doesn't know about (forward/backward deploy skew) maps to
+    // AdminActionType.UNKNOWN instead of throwing — so /admin/logs never goes
+    // 500 wholesale because of a single stray enum value. Writes stay strict
+    // (enum.name()), and the append-only CHECK constraint catches anything
+    // that slips through.
+    @Convert(converter = AdminActionTypeConverter.class)
     @Column(name = "action_type", nullable = false)
     private AdminActionType actionType;
 
