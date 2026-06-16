@@ -23,6 +23,7 @@ public class PublicProfileDto {
     private String displayName;
     private String avatar;
     private Integer reputation;
+    private String reputationLevel;
     private UserStatus status;
     private Double averageRating;
     private Long reviewsCount;

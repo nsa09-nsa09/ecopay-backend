@@ -66,6 +66,7 @@ public class RoomService {
     private final ReviewRepository reviewRepository;
     private final RoomMemberRepository roomMemberRepository;
     private final ExchangeRateService exchangeRateService;
+    private final ReputationService reputationService;
 
     /** Member statuses that occupy a seat (see CLAUDE.md). */
     private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
@@ -714,6 +715,14 @@ public class RoomService {
         room = roomRepository.save(room);
 
         roomEventLogger.log(room, null, currentUser, "OWNER", "room_completed", java.util.Map.of());
+
+        // A completed room counts toward activity-based reputation for the owner and everyone
+        // who actively participated, so refresh their scores now.
+        reputationService.recompute(room.getOwner());
+        roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room).stream()
+                .filter(m -> m.getStatus() == MemberStatus.ACTIVE)
+                .map(RoomMember::getUser)
+                .forEach(reputationService::recompute);
 
         return roomMapper.toResponse(room);
     }

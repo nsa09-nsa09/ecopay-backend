@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.MyRoomMembershipDto;
 import kz.hrms.splitupauth.dto.RoomMemberDto;
+import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomMemberIdentifier;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,8 @@ public class RoomMemberMapper {
                 .userId(roomMember.getUser().getId())
                 .userDisplayName(roomMember.getUser().getDisplayName())
                 .userEmail(roomMember.getUser().getEmail())
+                .userReputation(roomMember.getUser().getReputation())
+                .userReputationLevel(ReputationLevel.fromScore(roomMember.getUser().getReputation()).name())
                 .status(roomMember.getStatus())
                 .requiresAdminReview(roomMember.getRequiresAdminReview())
                 .accessMethod(roomMember.getAccessMethod())

@@ -18,6 +18,8 @@ public class RoomMemberDto {
     private Long userId;
     private String userDisplayName;
     private String userEmail;
+    private Integer userReputation;
+    private String userReputationLevel;
     private MemberStatus status;
     private Boolean requiresAdminReview;
     private String accessMethod;

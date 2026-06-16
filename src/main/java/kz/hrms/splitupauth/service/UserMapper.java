@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.UserDto;
+import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,7 @@ public class UserMapper {
                 .status(user.getStatus())
                 .role(user.getRole())
                 .reputation(user.getReputation())
+                .reputationLevel(ReputationLevel.fromScore(user.getReputation()).name())
                 .emailVerified(user.getEmailVerified())
                 .build();
     }

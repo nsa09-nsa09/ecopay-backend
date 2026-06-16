@@ -23,6 +23,8 @@ public class RoomResponse {
     private Long ownerUserId;
     private String ownerDisplayName;
     private Boolean ownerVerified;
+    private Integer ownerReputation;
+    private String ownerReputationLevel;
     private Double ownerRating;
     private Integer ownerReviewCount;
     private Long categoryId;

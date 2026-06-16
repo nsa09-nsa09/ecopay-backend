@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.PublicProfileDto;
+import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.ServiceReview;
 import kz.hrms.splitupauth.entity.User;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +38,7 @@ class UserServiceTest {
     @Mock private ServiceReviewRepository serviceReviewRepository;
     @Mock private TokenRevocationService tokenRevocationService;
     @Mock private AvatarStorageService avatarStorageService;
+    @Mock private ReputationService reputationService;
 
     private UserService service;
 
@@ -44,7 +47,10 @@ class UserServiceTest {
         service = new UserService(
                 userRepository, new UserMapper(avatarStorageService),
                 reviewRepository, serviceReviewRepository, tokenRevocationService,
-                avatarStorageService);
+                avatarStorageService, reputationService);
+        // Real impl never returns null; the mock would, so give it a sane default.
+        lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.NEWCOMER);
+        lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);
     }
 
     private User activeUser(long id) {

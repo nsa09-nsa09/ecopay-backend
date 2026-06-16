@@ -54,6 +54,8 @@ class RoomServiceTest {
     private ReviewRepository reviewRepository;
     @Mock
     private RoomMemberRepository roomMemberRepository;
+    @Mock
+    private ReputationService reputationService;
 
     private RoomService roomService;
 
@@ -69,7 +71,8 @@ class RoomServiceTest {
                 new ObjectMapper(),
                 reviewRepository,
                 roomMemberRepository,
-                new ExchangeRateService(new ObjectMapper())
+                new ExchangeRateService(new ObjectMapper()),
+                reputationService
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));

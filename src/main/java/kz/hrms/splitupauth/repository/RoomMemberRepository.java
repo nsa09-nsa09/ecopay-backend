@@ -27,6 +27,17 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
     long countByUserAndDeletedAtIsNull(User user);
     Optional<RoomMember> findByRoomAndUserAndStatusIn(Room room, User user, List<MemberStatus> statuses);
 
+    /** Successful participations: rooms the user was ACTIVE in that have since COMPLETED. */
+    @Query("""
+            select count(m)
+            from RoomMember m
+            where m.deletedAt is null
+              and m.user = :user
+              and m.status = kz.hrms.splitupauth.entity.MemberStatus.ACTIVE
+              and m.room.status = kz.hrms.splitupauth.entity.RoomStatus.COMPLETED
+            """)
+    long countCompletedAsActiveMember(@Param("user") User user);
+
     /** Batch occupied-seat counts for a set of rooms (avoids N+1 in listings). */
     @Query("""
             select m.room.id as roomId, count(m) as occupied

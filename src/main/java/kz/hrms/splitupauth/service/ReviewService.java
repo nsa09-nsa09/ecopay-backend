@@ -29,6 +29,7 @@ public class ReviewService {
     private final UserRepository userRepository;
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
+    private final ReputationService reputationService;
 
     @Transactional
     public ReviewDto createReview(User author, CreateReviewRequest req) {
@@ -73,7 +74,7 @@ public class ReviewService {
                 .build();
         review = reviewRepository.save(review);
 
-        recalculateReputation(recipient);
+        reputationService.recompute(recipient);
 
         return ReviewDto.from(review);
     }
@@ -99,20 +100,10 @@ public class ReviewService {
                 .userId(user.getId())
                 .displayName(user.getDisplayName())
                 .reputation(user.getReputation())
+                .reputationLevel(reputationService.levelOf(user.getReputation()).name())
                 .averageRating(Math.round(avg * 10.0) / 10.0)
                 .reviewsCount((long) reviews.size())
-                .completedRoomsCount(0L)
+                .completedRoomsCount(reputationService.completedRoomsCount(user))
                 .build();
-    }
-
-    private void recalculateReputation(User user) {
-        var reviews = reviewRepository
-                .findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user);
-        if (reviews.isEmpty()) return;
-        double avg = reviews.stream().mapToInt(Review::getRating).average().orElse(0.0);
-        // Simple formula: scale 1-5 → 0-100.
-        int reputation = (int) Math.round(avg * 20);
-        user.setReputation(reputation);
-        userRepository.save(user);
     }
 }

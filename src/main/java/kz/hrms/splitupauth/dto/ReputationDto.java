@@ -9,6 +9,7 @@ public class ReputationDto {
     private Long userId;
     private String displayName;
     private Integer reputation;
+    private String reputationLevel;
     private Double averageRating;
     private Long reviewsCount;
     private Long completedRoomsCount;

@@ -36,6 +36,7 @@ public class DisputeService {
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
     private final RefundService refundService;
+    private final ReputationService reputationService;
 
     @Transactional
     public DisputeResponse openFromTicket(Long ticketId, User currentUser) {
@@ -217,6 +218,11 @@ public class DisputeService {
             );
         }
 
+        // A decided dispute can confirm an owner violation, which penalises reputation.
+        if (dispute.getRoom() != null) {
+            reputationService.recompute(dispute.getRoom().getOwner());
+        }
+
         return map(dispute);
     }
 
@@ -328,6 +334,11 @@ public class DisputeService {
         dispute.setResolvedAt(java.time.LocalDateTime.now());
         dispute.setAssignedAdmin(currentUser);
         disputeRepository.save(dispute);
+
+        // Confirmed owner violation — refresh the owner's activity-based reputation.
+        if (dispute.getRoom() != null) {
+            reputationService.recompute(dispute.getRoom().getOwner());
+        }
 
         return map(dispute);
     }

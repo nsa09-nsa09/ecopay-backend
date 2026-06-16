@@ -28,6 +28,7 @@ public class UserService {
     private final ServiceReviewRepository serviceReviewRepository;
     private final TokenRevocationService tokenRevocationService;
     private final AvatarStorageService avatarStorageService;
+    private final ReputationService reputationService;
 
     @Transactional(readOnly = true)
     public UserDto getCurrentUser(User user) {
@@ -80,10 +81,11 @@ public class UserService {
                 .displayName(user.getDisplayName())
                 .avatar(avatarStorageService.publicUrl(user.getAvatar()))
                 .reputation(user.getReputation())
+                .reputationLevel(reputationService.levelOf(user.getReputation()).name())
                 .status(user.getStatus())
                 .averageRating(Math.round(avg * 10.0) / 10.0)
                 .reviewsCount((long) reviews.size())
-                .completedRoomsCount(0L)
+                .completedRoomsCount(reputationService.completedRoomsCount(user))
                 .createdAt(user.getCreatedAt())
                 .build();
     }

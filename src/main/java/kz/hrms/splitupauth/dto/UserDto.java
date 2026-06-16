@@ -22,5 +22,6 @@ public class UserDto {
     private UserStatus status;
     private Role role;
     private Integer reputation;
+    private String reputationLevel;
     private Boolean emailVerified;
 }

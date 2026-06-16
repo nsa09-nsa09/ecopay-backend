@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
+import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.Room;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,8 @@ public class RoomMapper {
                 .ownerUserId(room.getOwner().getId())
                 .ownerDisplayName(room.getOwner().getDisplayName())
                 .ownerVerified(Boolean.TRUE.equals(room.getOwner().getOwnerVerified()))
+                .ownerReputation(room.getOwner().getReputation())
+                .ownerReputationLevel(ReputationLevel.fromScore(room.getOwner().getReputation()).name())
                 .categoryId(room.getCategory() != null ? room.getCategory().getId() : null)
                 .serviceId(room.getService().getId())
                 .tariffPlanId(room.getTariffPlan() != null ? room.getTariffPlan().getId() : null)
@@ -68,6 +71,8 @@ public class RoomMapper {
                 .ownerUserId(room.getOwner().getId())
                 .ownerDisplayName(room.getOwner().getDisplayName())
                 .ownerVerified(Boolean.TRUE.equals(room.getOwner().getOwnerVerified()))
+                .ownerReputation(room.getOwner().getReputation())
+                .ownerReputationLevel(ReputationLevel.fromScore(room.getOwner().getReputation()).name())
                 .serviceId(room.getService().getId())
                 .serviceName(room.getService().getName())
                 .accessType(room.getAccessType())
