@@ -84,4 +84,14 @@ public class AdminDashboardController {
     public ResponseEntity<List<DashboardLabelValueDto>> roomStatusDistribution() {
         return ResponseEntity.ok(chartsService.roomStatusDistribution());
     }
+
+    // Country breakdown is intentionally separate from operator-distribution:
+    // the latter is KZ-only (+7 7XX) so non-KZ numbers don't pollute carrier
+    // bars, while this chart groups every user by phone country code so the
+    // foreign cohort is still observable.
+    @GetMapping("/country-distribution")
+    @PreAuthorize("hasAuthority('ADMIN')")
+    public ResponseEntity<List<DashboardLabelValueDto>> countryDistribution() {
+        return ResponseEntity.ok(chartsService.countryDistribution());
+    }
 }

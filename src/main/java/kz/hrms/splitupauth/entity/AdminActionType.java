@@ -29,5 +29,15 @@ public enum AdminActionType {
     TESTIMONIAL_DELETED,
     SITE_CONTENT_UPDATED,
     FEEDBACK_STATUS_CHANGED,
-    FEEDBACK_NOTE_UPDATED
+    FEEDBACK_NOTE_UPDATED,
+    /**
+     * Read-only sentinel used by {@code AdminActionTypeConverter} when the DB
+     * row carries an action_type that this build's enum doesn't know about
+     * (e.g. an older deployment wrote a value that has since been removed, or
+     * a newer deployment wrote one this build hasn't shipped yet). Keeps the
+     * admin-logs endpoint from 500-ing on a forwards/backwards mismatch.
+     * Never written back to the database — the CHECK constraint would reject
+     * it — and never produced by any business-logic write path.
+     */
+    UNKNOWN
 }
