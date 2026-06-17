@@ -89,6 +89,8 @@ class RoomMemberServiceTest {
     private ModerationQueueRepository moderationQueueRepository;
     @Mock
     private RoomEventLogger roomEventLogger;
+    @Mock
+    private NotificationService notificationService;
 
     private RoomMemberService roomMemberService;
 
@@ -106,7 +108,8 @@ class RoomMemberServiceTest {
                 moderationService,
                 disputeRepository,
                 moderationQueueRepository,
-                roomEventLogger
+                roomEventLogger,
+                notificationService
         );
 
         lenient().when(roomMemberRepository.save(any(RoomMember.class)))

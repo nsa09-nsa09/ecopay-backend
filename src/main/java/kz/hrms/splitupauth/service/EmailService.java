@@ -92,6 +92,55 @@ public class EmailService {
         }
     }
 
+    /**
+     * Generic transactional-notification email. Used by the notification system
+     * for email-eligible events the user hasn't opted out of. {@code link} is an
+     * optional frontend-relative path (e.g. {@code /rooms/member/42}) rendered as
+     * a "View details" button.
+     */
+    public void sendNotificationEmail(String to, String subject, String body, String link) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setFrom(fromEmail.trim());
+            helper.setTo(to);
+            helper.setSubject(subject);
+
+            helper.setText(buildNotificationEmail(subject, body, link), true);
+
+            mailSender.send(message);
+        } catch (MessagingException e) {
+            throw new RuntimeException("Failed to send email", e);
+        }
+    }
+
+    private String buildNotificationEmail(String title, String body, String link) {
+        StringBuilder html = new StringBuilder();
+        html.append("<html><body>")
+                .append("<h2>").append(escape(title)).append("</h2>")
+                .append("<p>").append(escape(body)).append("</p>");
+        if (link != null && !link.isBlank()) {
+            String absolute = link.startsWith("http") ? link : frontendUrl + link;
+            html.append("<p><a href=\"").append(absolute).append("\">View details</a></p>");
+        }
+        html.append("<hr><p style=\"color:#888;font-size:12px;\">")
+                .append("You can manage which emails you receive in EcoPay settings.")
+                .append("</p>")
+                .append("</body></html>");
+        return html.toString();
+    }
+
+    /** Minimal HTML-escaping so user-derived title/body can't inject markup. */
+    private String escape(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+    }
+
     private String buildPasswordResetEmail(String resetLink) {
         return "<html>" +
                 "<body>" +

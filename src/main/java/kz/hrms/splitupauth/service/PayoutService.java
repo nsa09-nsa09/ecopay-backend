@@ -40,6 +40,7 @@ public class PayoutService {
     private final PaymentGatewayRegistry gatewayRegistry;
     private final PaymentEventLogger eventLogger;
     private final SavedCardRepository savedCardRepository;
+    private final NotificationService notificationService;
 
     @Value("${app.platform.fee-percent:8}")
     private int platformFeePercent;
@@ -177,6 +178,17 @@ public class PayoutService {
         payout.setProcessedAt(LocalDateTime.now());
         payoutRepository.save(payout);
         log.info("Payout {} marked {} by provider callback", payout.getId(), payout.getStatus());
+
+        if (success && payout.getUser() != null) {
+            notificationService.notify(
+                    payout.getUser(),
+                    kz.hrms.splitupauth.entity.NotificationType.PAYOUT_SENT,
+                    "Выплата отправлена",
+                    "Выплата на сумму " + payout.getAmount() + " " + payout.getCurrency()
+                            + " была отправлена на ваш способ получения.",
+                    "/payment/payout",
+                    java.util.Map.of("payoutId", payout.getId()));
+        }
     }
 
     /**

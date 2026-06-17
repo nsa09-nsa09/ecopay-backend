@@ -29,13 +29,15 @@ class PayoutServiceTest {
     @Mock private PaymentGatewayRegistry gatewayRegistry;
     @Mock private PaymentEventLogger eventLogger;
     @Mock private SavedCardRepository savedCardRepository;
+    @Mock private NotificationService notificationService;
 
     private PayoutService payoutService;
 
     @BeforeEach
     void setUp() {
         payoutService = new PayoutService(
-                payoutRepository, payoutMethodRepository, gatewayRegistry, eventLogger, savedCardRepository);
+                payoutRepository, payoutMethodRepository, gatewayRegistry, eventLogger, savedCardRepository,
+                notificationService);
     }
 
     @Test

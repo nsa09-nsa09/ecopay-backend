@@ -48,6 +48,7 @@ public class PaymentService {
     private final PayoutService payoutService;
     private final RefundService refundService;
     private final RoomEventLogger roomEventLogger;
+    private final NotificationService notificationService;
 
     @Transactional
     public PaymentIntentResponse createPaymentIntent(
@@ -184,6 +185,20 @@ public class PaymentService {
                 "payment_success",
                 Map.of("intentId", String.valueOf(intent.getId()),
                         "amount", String.valueOf(intent.getAmount())));
+
+        // Notify the payer that the charge succeeded. Single point covers the
+        // synchronous, redirect-reconcile, and webhook success paths.
+        Room room = member == null ? null : member.getRoom();
+        notificationService.notify(
+                intent.getUser(),
+                NotificationType.PAYMENT_SUCCESS,
+                "Платёж принят",
+                "Оплата" + (room == null ? "" : " за участие в комнате «" + room.getTitle() + "»")
+                        + " на сумму " + intent.getAmount()
+                        + (room == null ? "" : " " + room.getCurrency()) + " прошла успешно.",
+                room == null ? null : "/rooms/member/" + room.getId(),
+                Map.of("intentId", intent.getId(),
+                        "roomId", room == null ? 0L : room.getId()));
     }
 
     /**

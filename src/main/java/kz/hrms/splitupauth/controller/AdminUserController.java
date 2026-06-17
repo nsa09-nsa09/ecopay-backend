@@ -58,6 +58,7 @@ public class AdminUserController {
     private final ObjectMapper objectMapper;
     private final TokenRevocationService tokenRevocationService;
     private final AccountRealtimeService accountRealtimeService;
+    private final kz.hrms.splitupauth.service.NotificationService notificationService;
     private final AvatarStorageService avatarStorageService;
 
     // Whitelist of API sort fields → entity property names.
@@ -261,6 +262,16 @@ public class AdminUserController {
         tokenRevocationService.revokeAllUserTokens(u);
         // Push the live-ban notification to the user's personal account topic.
         accountRealtimeService.publishBanned(u.getId(), u.getBanReason(), u.getBannedAt());
+        // Persisted + email notification (the realtime push above is forced-logout only).
+        notificationService.notify(
+                u,
+                kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_BANNED,
+                "Аккаунт заблокирован",
+                "Ваш аккаунт был заблокирован."
+                        + (request.getReason() == null || request.getReason().isBlank()
+                            ? "" : " Причина: " + request.getReason()),
+                null,
+                null);
 
         return ResponseEntity.ok(buildDetailDto(u));
     }
@@ -284,6 +295,13 @@ public class AdminUserController {
                 prev, UserStatus.ACTIVE, httpRequest);
 
         accountRealtimeService.publishUnbanned(u.getId());
+        notificationService.notify(
+                u,
+                kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_UNBANNED,
+                "Аккаунт разблокирован",
+                "Ваш аккаунт снова активен. Добро пожаловать обратно!",
+                null,
+                null);
 
         return ResponseEntity.ok(buildDetailDto(u));
     }

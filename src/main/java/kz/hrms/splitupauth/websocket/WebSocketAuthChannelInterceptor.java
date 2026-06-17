@@ -26,6 +26,7 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
 
     private static final Pattern TICKET_TOPIC = Pattern.compile("^/topic/support-tickets/(\\d+)$");
     private static final Pattern ACCOUNT_TOPIC = Pattern.compile("^/topic/users/(\\d+)/account$");
+    private static final Pattern NOTIFICATIONS_TOPIC = Pattern.compile("^/topic/users/(\\d+)/notifications$");
 
     private final SupportTicketRepository supportTicketRepository;
 
@@ -86,6 +87,14 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         Matcher accountMatcher = ACCOUNT_TOPIC.matcher(destination);
         if (accountMatcher.matches()) {
             validateAccountTopic(user, Long.parseLong(accountMatcher.group(1)));
+            return;
+        }
+
+        Matcher notificationsMatcher = NOTIFICATIONS_TOPIC.matcher(destination);
+        if (notificationsMatcher.matches()) {
+            // Same owner-only rule as the account topic: a user's notification
+            // stream is personal; staff get no backdoor here.
+            validateAccountTopic(user, Long.parseLong(notificationsMatcher.group(1)));
             return;
         }
 

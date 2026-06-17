@@ -36,6 +36,7 @@ public class RefundService {
     private final PaymentGatewayRegistry gatewayRegistry;
     private final PaymentEventLogger eventLogger;
     private final PayoutService payoutService;
+    private final NotificationService notificationService;
 
     /**
      * User-initiated refund request — owner of the original payment can request
@@ -290,6 +291,22 @@ public class RefundService {
                         .userAgent(httpRequest.getHeader("User-Agent"))
                         .build()
         );
+
+        // Notify the payer that their refund was issued.
+        User recipient = refund.getPaymentTransaction() != null
+                && refund.getPaymentTransaction().getPaymentIntent() != null
+                ? refund.getPaymentTransaction().getPaymentIntent().getUser()
+                : null;
+        if (recipient != null) {
+            notificationService.notify(
+                    recipient,
+                    NotificationType.REFUND_ISSUED,
+                    "Возврат средств",
+                    "Возврат на сумму " + refund.getAmount() + " " + refund.getCurrency()
+                            + " был выполнен.",
+                    "/payment/refund",
+                    java.util.Map.of("refundId", refund.getId()));
+        }
 
         return map(refund);
     }

@@ -38,6 +38,7 @@ public class RoomMemberService {
     private final DisputeRepository disputeRepository;
     private final ModerationQueueRepository moderationQueueRepository;
     private final RoomEventLogger roomEventLogger;
+    private final NotificationService notificationService;
     @Transactional
     public RoomMemberDto joinRoom(Long roomId, User currentUser, JoinRoomRequest request) {
         if (currentUser.getPhoneVerifiedAt() == null) {
@@ -76,6 +77,15 @@ public class RoomMemberService {
 
         roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "member_joined",
                 java.util.Map.of("roomType", String.valueOf(room.getRoomType())));
+
+        // Notify the owner that someone applied to their room.
+        notificationService.notify(
+                room.getOwner(),
+                NotificationType.MEMBER_JOINED,
+                "Новая заявка в комнату",
+                currentUser.getDisplayName() + " подал(а) заявку в комнату «" + room.getTitle() + "».",
+                "/rooms/owner/" + room.getId(),
+                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
         return roomMemberMapper.toDto(roomMember);
     }
@@ -191,6 +201,15 @@ public class RoomMemberService {
         roomEventLogger.log(room, roomMember, currentUser, "OWNER", "owner_access_granted",
                 java.util.Map.of("accessMethod", String.valueOf(request.getAccessMethod())));
 
+        // Notify the member that the owner granted access — their cue to confirm.
+        notificationService.notify(
+                roomMember.getUser(),
+                NotificationType.OWNER_ACCESS_GRANTED,
+                "Доступ предоставлен",
+                "Владелец комнаты «" + room.getTitle() + "» предоставил доступ. Подтвердите получение доступа.",
+                "/rooms/member/" + room.getId(),
+                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
         tryActivateMembership(roomMember);
 
         roomMemberRepository.save(roomMember);
@@ -221,6 +240,15 @@ public class RoomMemberService {
 
         roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "member_confirmed",
                 java.util.Map.of());
+
+        // Notify the owner that the member confirmed they received access.
+        notificationService.notify(
+                room.getOwner(),
+                NotificationType.MEMBER_CONFIRMED,
+                "Участник подтвердил доступ",
+                currentUser.getDisplayName() + " подтвердил(а) получение доступа в комнате «" + room.getTitle() + "».",
+                "/rooms/owner/" + room.getId(),
+                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
         tryActivateMembership(roomMember);
 
@@ -320,9 +348,31 @@ public class RoomMemberService {
         // (Without this the room never left OPEN/IN_VERIFICATION → reviews and
         // completion were unreachable.)
         Room room = roomMember.getRoom();
+        boolean roomBecameActive = false;
         if (room.getStatus() == RoomStatus.OPEN || room.getStatus() == RoomStatus.IN_VERIFICATION) {
             room.setStatus(RoomStatus.ACTIVE);
             roomRepository.save(room);
+            roomBecameActive = true;
+        }
+
+        // Central activation point — fired from every path that can flip a
+        // membership to ACTIVE (owner-confirm, member-confirm, paid-no-review).
+        notificationService.notify(
+                roomMember.getUser(),
+                NotificationType.MEMBERSHIP_ACTIVATED,
+                "Участие активировано",
+                "Ваше участие в комнате «" + room.getTitle() + "» активно. Доступ подтверждён.",
+                "/rooms/member/" + room.getId(),
+                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
+        if (roomBecameActive) {
+            notificationService.notify(
+                    room.getOwner(),
+                    NotificationType.ROOM_ACTIVE,
+                    "Комната активна",
+                    "Комната «" + room.getTitle() + "» перешла в статус «Активна».",
+                    "/rooms/owner/" + room.getId(),
+                    java.util.Map.of("roomId", room.getId()));
         }
     }
     private void validateJoin(Room room, User currentUser, JoinRoomRequest request) {

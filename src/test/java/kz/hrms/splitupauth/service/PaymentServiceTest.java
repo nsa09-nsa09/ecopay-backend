@@ -41,6 +41,7 @@ class PaymentServiceTest {
     @Mock private PayoutService payoutService;
     @Mock private RefundService refundService;
     @Mock private RoomEventLogger roomEventLogger;
+    @Mock private NotificationService notificationService;
 
     private PaymentService paymentService;
 
@@ -57,7 +58,8 @@ class PaymentServiceTest {
                 eventLogger,
                 payoutService,
                 refundService,
-                roomEventLogger
+                roomEventLogger,
+                notificationService
         );
     }
 

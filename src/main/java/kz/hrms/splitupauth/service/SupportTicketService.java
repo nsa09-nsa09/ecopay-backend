@@ -37,6 +37,7 @@ public class SupportTicketService {
     private final RoomMemberRepository roomMemberRepository;
     private final ModerationService moderationService;
     private final SupportTicketRealtimeService supportTicketRealtimeService;
+    private final NotificationService notificationService;
 
     @Transactional
     public SupportTicketResponse createTicket(User currentUser, CreateSupportTicketRequest request) {
@@ -333,6 +334,16 @@ public class SupportTicketService {
         }
 
         supportTicketRepository.save(ticket);
+
+        // Notify the ticket owner that support replied.
+        notificationService.notify(
+                ticket.getUser(),
+                NotificationType.TICKET_REPLY,
+                "Ответ поддержки",
+                "Поддержка ответила на вашу заявку «" + ticket.getSubject() + "».",
+                "/support",
+                java.util.Map.of("ticketId", ticket.getId()));
+
         return publishAndReturn(ticket);
     }
 

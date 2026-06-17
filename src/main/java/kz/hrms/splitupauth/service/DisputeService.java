@@ -37,6 +37,7 @@ public class DisputeService {
     private final UserRepository userRepository;
     private final RefundService refundService;
     private final ReputationService reputationService;
+    private final NotificationService notificationService;
 
     @Transactional
     public DisputeResponse openFromTicket(Long ticketId, User currentUser) {
@@ -221,6 +222,19 @@ public class DisputeService {
         // A decided dispute can confirm an owner violation, which penalises reputation.
         if (dispute.getRoom() != null) {
             reputationService.recompute(dispute.getRoom().getOwner());
+        }
+
+        // Notify whoever opened the dispute of the admin's decision.
+        if (dispute.getOpenedByUser() != null) {
+            String verdict = newStatus == DisputeStatus.RESOLVED ? "удовлетворён" : "отклонён";
+            notificationService.notify(
+                    dispute.getOpenedByUser(),
+                    NotificationType.DISPUTE_RESOLVED,
+                    "Спор " + verdict,
+                    "Ваш спор был " + verdict + ". Решение: " + dispute.getDecision(),
+                    "/disputes-flows",
+                    java.util.Map.of("disputeId", dispute.getId(),
+                            "status", dispute.getStatus().name()));
         }
 
         return map(dispute);
