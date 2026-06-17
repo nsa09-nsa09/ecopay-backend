@@ -14,6 +14,7 @@ import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
 import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
+import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Review;
@@ -118,11 +119,14 @@ public class RoomService {
 
         // Hybrid access/restrictions: request value wins, else inherit tariff defaults.
         JsonNode rules = tariffRules(tariffPlan);
+        // Priority: explicit request value > tariff default rule > fallback by connection method.
+        // The create-room form does not collect accessType, so for tariffs whose operator_rules
+        // omit defaultAccessType we derive a sensible default instead of failing publication.
         AccessType accessType = request.getAccessType() != null
                 ? request.getAccessType()
                 : enumRule(rules, "defaultAccessType");
         if (accessType == null) {
-            throw new InvalidRequestException("Access type is required");
+            accessType = defaultAccessFor(request.getConnectionType());
         }
         String regionRestriction = request.getRegionRestriction() != null
                 ? request.getRegionRestriction()
@@ -658,6 +662,18 @@ public class RoomService {
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    /** Last-resort access type when neither the request nor the tariff rules specify one. */
+    private AccessType defaultAccessFor(ConnectionType connectionType) {
+        if (connectionType == null) {
+            return AccessType.FAMILY_PLAN;
+        }
+        return switch (connectionType) {
+            case SIM, ESIM -> AccessType.FAMILY_PLAN;     // operator adds the member to a family/group plan
+            case ACCOUNT_LINK -> AccessType.INVITE_LINK;  // invite into the operator account
+            case OTHER -> AccessType.FAMILY_PLAN;
+        };
     }
 
     private void transitionRoomToVerification(Room room, LocalDateTime transitionTime) {
