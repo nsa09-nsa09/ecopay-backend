@@ -14,6 +14,7 @@ import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
 import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.Category;
+import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Review;
@@ -118,11 +119,14 @@ public class RoomService {
 
         // Hybrid access/restrictions: request value wins, else inherit tariff defaults.
         JsonNode rules = tariffRules(tariffPlan);
+        // Priority: explicit request value > tariff default rule > fallback by connection method.
+        // The create-room form does not collect accessType, so for tariffs whose operator_rules
+        // omit defaultAccessType we derive a sensible default instead of failing publication.
         AccessType accessType = request.getAccessType() != null
                 ? request.getAccessType()
                 : enumRule(rules, "defaultAccessType");
         if (accessType == null) {
-            throw new InvalidRequestException("Access type is required");
+            accessType = defaultAccessFor(request.getConnectionType());
         }
         String regionRestriction = request.getRegionRestriction() != null
                 ? request.getRegionRestriction()
@@ -141,11 +145,25 @@ public class RoomService {
                 ? request.getOperatorRestrictions()
                 : textRule(rules, "sharingWarning");
 
+        // The create form sends only one price side depending on the owner's pricing model
+        // ("total" vs "per member"). Derive the missing side so both are always populated and
+        // the room detail never shows a 0 share. Validation already guaranteed one side is positive.
+        java.math.BigDecimal priceTotal = request.getPriceTotal();
+        java.math.BigDecimal pricePerMember = request.getPricePerMember();
+        if (request.getMaxMembers() != null && request.getMaxMembers() > 0) {
+            java.math.BigDecimal members = java.math.BigDecimal.valueOf(request.getMaxMembers());
+            if (pricePerMember == null && priceTotal != null) {
+                pricePerMember = priceTotal.divide(members, 2, java.math.RoundingMode.HALF_UP);
+            } else if (priceTotal == null && pricePerMember != null) {
+                priceTotal = pricePerMember.multiply(members);
+            }
+        }
+
         // Resolve currency (whitelist check) + freeze the FX snapshot at creation.
         String currency = Currency.normalize(request.getCurrency()).name();
         java.math.BigDecimal fxRate = exchangeRateService.rateOf(currency);
-        java.math.BigDecimal priceTotalKzt = exchangeRateService.toKzt(request.getPriceTotal(), currency);
-        java.math.BigDecimal pricePerMemberKzt = exchangeRateService.toKzt(request.getPricePerMember(), currency);
+        java.math.BigDecimal priceTotalKzt = exchangeRateService.toKzt(priceTotal, currency);
+        java.math.BigDecimal pricePerMemberKzt = exchangeRateService.toKzt(pricePerMember, currency);
 
         Room room = Room.builder()
                 .owner(currentUser)
@@ -158,8 +176,8 @@ public class RoomService {
                 .title(request.getTitle())
                 .description(request.getDescription())
                 .maxMembers(request.getMaxMembers())
-                .priceTotal(request.getPriceTotal())
-                .pricePerMember(request.getPricePerMember())
+                .priceTotal(priceTotal)
+                .pricePerMember(pricePerMember)
                 .currency(currency)
                 .fxRateToKzt(fxRate)
                 .priceTotalKzt(priceTotalKzt)
@@ -658,6 +676,18 @@ public class RoomService {
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    /** Last-resort access type when neither the request nor the tariff rules specify one. */
+    private AccessType defaultAccessFor(ConnectionType connectionType) {
+        if (connectionType == null) {
+            return AccessType.FAMILY_PLAN;
+        }
+        return switch (connectionType) {
+            case SIM, ESIM -> AccessType.FAMILY_PLAN;     // operator adds the member to a family/group plan
+            case ACCOUNT_LINK -> AccessType.INVITE_LINK;  // invite into the operator account
+            case OTHER -> AccessType.FAMILY_PLAN;
+        };
     }
 
     private void transitionRoomToVerification(Room room, LocalDateTime transitionTime) {
