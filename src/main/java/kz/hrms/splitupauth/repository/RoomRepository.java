@@ -50,6 +50,9 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
        """)
     Optional<Room> findByIdForUpdate(@Param("id") Long id);
     List<Room> findByOwnerAndDeletedAtIsNullOrderByCreatedAtDesc(User owner);
+
+    /** Count of an owner's live rooms in the given statuses — backs the per-user active-room cap. */
+    long countByOwnerAndDeletedAtIsNullAndStatusIn(User owner, java.util.Collection<RoomStatus> statuses);
     List<Room> findByStatusAndDeletedAtIsNullOrderByCreatedAtDesc(RoomStatus status);
     List<Room> findByStatusAndDeletedAtIsNullAndStartDateLessThanEqual(RoomStatus status, LocalDateTime startDate);
 

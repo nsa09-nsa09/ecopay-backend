@@ -30,6 +30,7 @@ import kz.hrms.splitupauth.entity.VerificationMode;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
 import kz.hrms.splitupauth.repository.ReviewRepository;
@@ -75,6 +76,19 @@ public class RoomService {
     /** Member statuses that occupy a seat (see CLAUDE.md). */
     private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
 
+    /** Non-terminal room statuses that count toward an owner's active-room cap. */
+    private static final List<RoomStatus> ACTIVE_OWNER_STATUSES =
+            List.of(RoomStatus.OPEN, RoomStatus.IN_VERIFICATION, RoomStatus.ACTIVE);
+
+    /**
+     * Hard ceiling on how many live rooms a single owner may hold at once
+     * (OPEN / IN_VERIFICATION / ACTIVE). Anti-abuse backstop on top of the
+     * per-time rate limit in {@code RoomController}. Tune via env without a
+     * redeploy. 0 or negative disables the cap.
+     */
+    @Value("${app.rate-limit.room-create.max-active-per-owner:10}")
+    private int maxActiveRoomsPerOwner;
+
     /**
      * Public host of the SPA. Used to build copy-pasteable invite links —
      * we deliberately do not derive this from the current request so the
@@ -104,6 +118,16 @@ public class RoomService {
     public RoomResponse createRoom(User currentUser, CreateRoomRequest request) {
         if (currentUser.getPhoneVerifiedAt() == null) {
             throw new ForbiddenOperationException("Verify your phone number before creating a room");
+        }
+
+        if (maxActiveRoomsPerOwner > 0) {
+            long activeRooms = roomRepository
+                    .countByOwnerAndDeletedAtIsNullAndStatusIn(currentUser, ACTIVE_OWNER_STATUSES);
+            if (activeRooms >= maxActiveRoomsPerOwner) {
+                throw new TooManyRequestsException(
+                        "Достигнут лимит активных комнат (" + maxActiveRoomsPerOwner
+                                + "). Завершите или отмените существующие комнаты, прежде чем создавать новые.");
+            }
         }
 
         Category category = null;

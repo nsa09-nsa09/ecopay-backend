@@ -4,10 +4,26 @@ import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.Room;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
 public class RoomMapper {
+
+    /**
+     * Field-injected (mirrors {@link CatalogMapper}) so call sites that still
+     * {@code new RoomMapper()} in unit tests keep compiling; when the logo
+     * storage isn't wired, {@code serviceLogoUrl} simply comes back null.
+     */
+    @Autowired(required = false)
+    private ServiceLogoStorageService logoStorage;
+
+    private String serviceLogoUrl(Room room) {
+        if (logoStorage == null || room.getService() == null) {
+            return null;
+        }
+        return logoStorage.publicUrl(room.getService().getLogoKey());
+    }
 
     public RoomResponse toResponse(Room room) {
         return RoomResponse.builder()
@@ -19,6 +35,7 @@ public class RoomMapper {
                 .ownerReputationLevel(ReputationLevel.fromScore(room.getOwner().getReputation()).name())
                 .categoryId(room.getCategory() != null ? room.getCategory().getId() : null)
                 .serviceId(room.getService().getId())
+                .serviceLogoUrl(serviceLogoUrl(room))
                 .tariffPlanId(room.getTariffPlan() != null ? room.getTariffPlan().getId() : null)
                 .roomType(room.getRoomType())
                 .verificationMode(room.getVerificationMode())
@@ -75,6 +92,7 @@ public class RoomMapper {
                 .ownerReputationLevel(ReputationLevel.fromScore(room.getOwner().getReputation()).name())
                 .serviceId(room.getService().getId())
                 .serviceName(room.getService().getName())
+                .serviceLogoUrl(serviceLogoUrl(room))
                 .accessType(room.getAccessType())
                 .regionRestriction(room.getRegionRestriction())
                 .operatorRestrictions(room.getOperatorRestrictions())

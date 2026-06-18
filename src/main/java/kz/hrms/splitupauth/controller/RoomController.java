@@ -9,6 +9,7 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.InMemoryRateLimiter;
 import kz.hrms.splitupauth.service.RoomService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -25,13 +26,32 @@ public class RoomController {
     private final RoomService roomService;
     private final InMemoryRateLimiter rateLimiter;
 
+    /** Burst guard: max rooms one user may create within the short window. */
+    @Value("${app.rate-limit.room-create.burst-max:5}")
+    private int createBurstMax;
+    @Value("${app.rate-limit.room-create.burst-window-seconds:600}")
+    private long createBurstWindowSeconds;
+
+    /** Daily guard: max rooms one user may create per rolling 24h. */
+    @Value("${app.rate-limit.room-create.daily-max:10}")
+    private int createDailyMax;
+    @Value("${app.rate-limit.room-create.daily-window-seconds:86400}")
+    private long createDailyWindowSeconds;
+
     @PostMapping
     public ResponseEntity<RoomResponse> createRoom(
             @AuthenticationPrincipal User user,
             @Valid @RequestBody CreateRoomRequest request
     ) {
-        rateLimiter.check("room-create:" + user.getId(), 10, 600,
-                "Too many rooms created — please slow down");
+        String message = "Слишком много созданных комнат. Попробуйте позже.";
+        if (createBurstMax > 0) {
+            rateLimiter.check("room-create-burst:" + user.getId(),
+                    createBurstMax, createBurstWindowSeconds, message);
+        }
+        if (createDailyMax > 0) {
+            rateLimiter.check("room-create-daily:" + user.getId(),
+                    createDailyMax, createDailyWindowSeconds, message);
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(roomService.createRoom(user, request));
     }
 

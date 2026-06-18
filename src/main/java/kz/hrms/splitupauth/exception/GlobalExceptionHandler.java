@@ -57,6 +57,9 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
     }
 
+    // Generic anti-abuse breaches (room create/join, SMS flood, etc).
+    // Without these they fall through to the generic Exception handler and
+    // are served as a misleading HTTP 500.
     @ExceptionHandler(TooManySmsAttemptsException.class)
     public ResponseEntity<ErrorResponse> handleTooManySmsAttempts(TooManySmsAttemptsException ex) {
         ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());

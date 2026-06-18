@@ -40,6 +40,8 @@ public class RoomSummaryDto {
     private Integer ownerReviewCount;
     private Long serviceId;
     private String serviceName;
+    /** Backend-served URL of the service logo (S3-backed), or null if none uploaded. */
+    private String serviceLogoUrl;
     private AccessType accessType;
     private String regionRestriction;
     private String operatorRestrictions;
