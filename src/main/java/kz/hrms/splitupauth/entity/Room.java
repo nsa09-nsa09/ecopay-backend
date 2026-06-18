@@ -138,6 +138,14 @@ public class Room {
     @Column(name = "block_reason", columnDefinition = "text")
     private String blockReason;
 
+    /**
+     * Lazy-minted on the first GET /rooms/{id}/invite-link by the owner.
+     * Stays null until then so legacy rooms don't need a backfill — the
+     * partial unique index (V36) ignores null entries.
+     */
+    @Column(name = "invite_token", length = 40, unique = true)
+    private String inviteToken;
+
     @Version
     @Column(nullable = false)
     @Builder.Default

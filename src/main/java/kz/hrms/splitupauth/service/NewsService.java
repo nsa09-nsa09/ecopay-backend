@@ -7,14 +7,12 @@ import kz.hrms.splitupauth.dto.CreateNewsRequest;
 import kz.hrms.splitupauth.dto.NewsDto;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.UpdateNewsRequest;
-import kz.hrms.splitupauth.entity.AdminActionLog;
 import kz.hrms.splitupauth.entity.AdminActionType;
 import kz.hrms.splitupauth.entity.News;
 import kz.hrms.splitupauth.entity.NewsStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
-import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.NewsRepository;
 import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +26,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * CRUD for editorial news items. Read paths split into:
@@ -50,7 +47,7 @@ public class NewsService {
     private static final int MAX_PAGE_SIZE = 50;
 
     private final NewsRepository newsRepository;
-    private final AdminActionLogRepository adminActionLogRepository;
+    private final NewsAuditWriter auditWriter;
     private final NewsImageStorageService imageStorage;
     private final ObjectMapper objectMapper;
 
@@ -112,7 +109,7 @@ public class NewsService {
         news = newsRepository.save(news);
 
         ObjectNode newState = snapshot(news);
-        writeLog(admin, AdminActionType.NEWS_CREATED, news.getId(), null, newState, http);
+        auditWriter.writeOrSwallow(admin, AdminActionType.NEWS_CREATED, news.getId(), null, newState, http);
 
         return toDto(news);
     }
@@ -144,7 +141,7 @@ public class NewsService {
         news = newsRepository.save(news);
 
         ObjectNode newState = snapshot(news);
-        writeLog(admin, AdminActionType.NEWS_UPDATED, news.getId(), oldState, newState, http);
+        auditWriter.writeOrSwallow(admin, AdminActionType.NEWS_UPDATED, news.getId(), oldState, newState, http);
 
         return toDto(news);
     }
@@ -170,7 +167,7 @@ public class NewsService {
         // tx could leave an orphaned key (which is fine: harmless and rare).
         imageStorage.deleteIfManaged(imageKey);
 
-        writeLog(admin, AdminActionType.NEWS_DELETED, id, oldState, null, http);
+        auditWriter.writeOrSwallow(admin, AdminActionType.NEWS_DELETED, id, oldState, null, http);
     }
 
     @Transactional
@@ -193,7 +190,7 @@ public class NewsService {
         oldState.put("imageKey", oldKey);
         ObjectNode newState = objectMapper.createObjectNode();
         newState.put("imageKey", news.getImageKey());
-        writeLog(admin, AdminActionType.NEWS_UPDATED, news.getId(), oldState, newState, http);
+        auditWriter.writeOrSwallow(admin, AdminActionType.NEWS_UPDATED, news.getId(), oldState, newState, http);
 
         return toDto(news);
     }
@@ -262,25 +259,5 @@ public class NewsService {
                 .hasNext(page.hasNext())
                 .hasPrevious(page.hasPrevious())
                 .build();
-    }
-
-    private void writeLog(User admin,
-                          AdminActionType type,
-                          Long entityId,
-                          ObjectNode oldState,
-                          ObjectNode newState,
-                          HttpServletRequest http) {
-        adminActionLogRepository.save(AdminActionLog.builder()
-                .eventId(UUID.randomUUID())
-                .adminUser(admin)
-                .actionType(type)
-                .entityType("NEWS")
-                .entityId(entityId)
-                .reason(null)
-                .oldState(oldState)
-                .newState(newState)
-                .ipAddress(http != null ? http.getRemoteAddr() : null)
-                .userAgent(http != null ? http.getHeader("User-Agent") : null)
-                .build());
     }
 }

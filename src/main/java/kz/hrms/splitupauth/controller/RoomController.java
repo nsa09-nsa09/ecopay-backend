@@ -83,6 +83,18 @@ public class RoomController {
         return ResponseEntity.ok(roomService.getRoom(id));
     }
 
+    /**
+     * Returns (or lazily mints) the copy-pasteable invite link for the room
+     * owner. Owner-only — the service layer rejects non-owners with a 403.
+     */
+    @GetMapping("/{id}/invite-link")
+    public ResponseEntity<RoomInviteLinkDto> getInviteLink(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User user
+    ) {
+        return ResponseEntity.ok(roomService.getOrCreateInviteLink(id, user));
+    }
+
     @PatchMapping("/{id}")
     public ResponseEntity<RoomResponse> updateRoom(
             @PathVariable Long id,
