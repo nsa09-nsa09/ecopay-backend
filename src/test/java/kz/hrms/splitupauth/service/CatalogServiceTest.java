@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import kz.hrms.splitupauth.dto.CatalogSearchResultDto;
 import kz.hrms.splitupauth.dto.ServiceDto;
 import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.PeriodType;
@@ -9,6 +10,7 @@ import kz.hrms.splitupauth.entity.TariffPlan;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
+import org.springframework.data.domain.Pageable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,7 +22,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -120,6 +127,32 @@ class CatalogServiceTest {
 
         assertEquals(99L, result.get(0).getId());
         assertEquals(1L, result.get(1).getId());
+    }
+
+    @Test
+    void searchServices_emptyOrShortQuery_returnsEmptyList_noRepoCall() {
+        assertTrue(service.searchServices(null, 10).isEmpty(), "null q must be empty");
+        assertTrue(service.searchServices("", 10).isEmpty(), "blank q must be empty");
+        assertTrue(service.searchServices("a", 10).isEmpty(), "1-char q must be empty");
+        // No DB scan should have been issued for the noisy queries.
+        verify(serviceRepository, never()).searchActiveByName(any(), any());
+    }
+
+    @Test
+    void searchServices_passesLowercaseQuery_andMapsCompactDto() {
+        ServiceEntity netflix = svc(1L, "Netflix");
+        when(serviceRepository.searchActiveByName(eq("net"), any(Pageable.class)))
+                .thenReturn(List.of(netflix));
+
+        List<CatalogSearchResultDto> result = service.searchServices("Net", 5);
+
+        assertEquals(1, result.size());
+        CatalogSearchResultDto row = result.get(0);
+        assertEquals(1L, row.getServiceId());
+        assertEquals("Netflix", row.getName());
+        assertEquals("Video", row.getCategoryName(),
+                "category name flows through from the entity's category");
+        assertNull(row.getLogoUrl(), "logoUrl is not yet supplied — explicitly null for now");
     }
 
     @Test

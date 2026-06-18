@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.controller;
 
+import kz.hrms.splitupauth.dto.CatalogSearchResultDto;
 import kz.hrms.splitupauth.dto.CategoryDto;
 import kz.hrms.splitupauth.dto.ServiceDto;
 import kz.hrms.splitupauth.dto.TariffPlanDto;
@@ -33,6 +34,19 @@ public class CatalogController {
     @GetMapping("/services/{id}")
     public ResponseEntity<ServiceDto> getService(@PathVariable Long id) {
         return ResponseEntity.ok(catalogService.getService(id));
+    }
+
+    /**
+     * Public navbar search ("Поиск планов…"). Case-insensitive substring match
+     * on service name, scoped to active services. Short queries return an empty
+     * list silently — see {@link CatalogService#searchServices(String, int)}.
+     */
+    @GetMapping("/search")
+    public ResponseEntity<List<CatalogSearchResultDto>> search(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false, defaultValue = "10") int limit
+    ) {
+        return ResponseEntity.ok(catalogService.searchServices(q, limit));
     }
 
     @GetMapping("/services/{id}/tariffs")

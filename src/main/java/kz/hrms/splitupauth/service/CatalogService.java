@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import kz.hrms.splitupauth.dto.CatalogSearchResultDto;
 import kz.hrms.splitupauth.dto.CategoryDto;
 import kz.hrms.splitupauth.dto.ServiceDto;
 import kz.hrms.splitupauth.dto.TariffPlanDto;
@@ -10,6 +11,7 @@ import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,13 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class CatalogService {
+
+    /** Below this length we treat the query as too noisy to match meaningfully. */
+    private static final int SEARCH_MIN_QUERY_LENGTH = 2;
+    /** Default dropdown row count when the caller doesn't pass a limit. */
+    private static final int SEARCH_DEFAULT_LIMIT = 10;
+    /** Hard cap so a malicious caller can't ask for the whole catalog. */
+    private static final int SEARCH_MAX_LIMIT = 25;
 
     private final CategoryRepository categoryRepository;
     private final ServiceRepository serviceRepository;
@@ -70,6 +79,35 @@ public class CatalogService {
         Map<Long, TariffStats> statsByService = loadTariffStats(List.of(service));
         TariffStats stats = statsByService.getOrDefault(service.getId(), TariffStats.EMPTY);
         return catalogMapper.toDto(service, stats.minPricePerMember, stats.cheapestCurrency, stats.count);
+    }
+
+    /**
+     * Compact ILIKE search by service name, scoped to active services. Backs
+     * the public navbar "Поиск планов…" dropdown. Returns an empty list on
+     * blank or too-short queries (under {@value #SEARCH_MIN_QUERY_LENGTH} chars)
+     * so the FE can call this on every keystroke without bursts of 1-letter
+     * scans. The {@code limit} arg is clamped to {@value #SEARCH_MAX_LIMIT}.
+     */
+    @Transactional(readOnly = true)
+    public List<CatalogSearchResultDto> searchServices(String q, int limit) {
+        if (q == null) return List.of();
+        String trimmed = q.trim();
+        if (trimmed.length() < SEARCH_MIN_QUERY_LENGTH) return List.of();
+
+        int effective = limit <= 0 ? SEARCH_DEFAULT_LIMIT : Math.min(limit, SEARCH_MAX_LIMIT);
+        String qLower = trimmed.toLowerCase(Locale.ROOT);
+
+        return serviceRepository
+                .searchActiveByName(qLower, PageRequest.of(0, effective))
+                .stream()
+                .map(s -> CatalogSearchResultDto.builder()
+                        .serviceId(s.getId())
+                        .name(s.getName())
+                        .slug(s.getSlug())
+                        .categoryName(s.getCategory() != null ? s.getCategory().getName() : null)
+                        .logoUrl(null)
+                        .build())
+                .toList();
     }
 
     @Transactional(readOnly = true)

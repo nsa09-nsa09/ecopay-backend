@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.security;
 
 import kz.hrms.splitupauth.config.AvatarUploadProperties;
 import kz.hrms.splitupauth.config.CorsProperties;
+import kz.hrms.splitupauth.config.NewsImageUploadProperties;
 import kz.hrms.splitupauth.sms.SmsProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -27,7 +28,7 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties({CorsProperties.class, SmsProperties.class, AvatarUploadProperties.class})
+@EnableConfigurationProperties({CorsProperties.class, SmsProperties.class, AvatarUploadProperties.class, NewsImageUploadProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -80,6 +81,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/site/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/public/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/users/avatars/**").permitAll()
+                        // Public editorial news feed + image proxy. Admin writes
+                        // live under /api/v1/admin/news (ADMIN-only via the
+                        // /api/v1/admin/** matcher further down).
+                        .requestMatchers(HttpMethod.GET, "/api/v1/news", "/api/v1/news/**").permitAll()
                         // Public room browsing only: the catalog list and a single room by id.
                         // Everything deeper under a room (members, membership) requires auth,
                         // and falls through to anyRequest().authenticated() below.
