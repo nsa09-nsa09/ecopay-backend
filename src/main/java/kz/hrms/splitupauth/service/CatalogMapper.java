@@ -6,12 +6,23 @@ import kz.hrms.splitupauth.dto.TariffPlanDto;
 import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
 @Component
 public class CatalogMapper {
+
+    /**
+     * Injected via field rather than constructor so existing call sites that
+     * still {@code new CatalogMapper()} (notably the Mockito-extension unit
+     * test) keep compiling. When the logo storage isn't wired in those tests,
+     * {@code logoUrl} comes back null — which is what the legacy contract
+     * expected anyway.
+     */
+    @Autowired(required = false)
+    private ServiceLogoStorageService logoStorage;
 
     public CategoryDto toDto(Category category) {
         return CategoryDto.builder()
@@ -40,6 +51,7 @@ public class CatalogMapper {
                 .minPricePerMember(minPricePerMember)
                 .currency(currency)
                 .tariffCount(tariffCount)
+                .logoUrl(logoStorage == null ? null : logoStorage.publicUrl(service.getLogoKey()))
                 .build();
     }
 

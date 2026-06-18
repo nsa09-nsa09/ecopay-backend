@@ -56,4 +56,13 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
     long countByOwnerAndDeletedAtIsNull(User owner);
 
     long countByOwnerAndStatusAndDeletedAtIsNull(User owner, RoomStatus status);
+
+    /**
+     * FIFO scan for {@code CatalogService#matchRoomForService}. Returns every
+     * OPEN, non-deleted room on the given service whose start_date is still in
+     * the future, ordered oldest-first. The caller picks the first one that
+     * has a free seat and isn't owned by the requesting user.
+     */
+    List<Room> findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+            Long serviceId, RoomStatus status, LocalDateTime startDateAfter);
 }

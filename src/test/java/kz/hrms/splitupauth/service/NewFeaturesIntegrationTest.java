@@ -61,8 +61,6 @@ class NewFeaturesIntegrationTest extends AbstractIntegrationTest {
         req.setEmail("new_" + n + "_" + System.nanoTime() + "@test.kz");
         req.setPassword("Test1234");
         req.setDisplayName(name);
-        String phone = "+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L));
-        req.setPhone(phone);
         authService.register(req);
         return userRepository.findByEmail(req.getEmail()).orElseThrow();
     }

@@ -2,7 +2,6 @@ package kz.hrms.splitupauth.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -19,8 +18,4 @@ public class RegisterRequest {
 
     @NotBlank(message = "Display name is required")
     private String displayName;
-
-    @NotBlank(message = "Phone is required")
-    @Pattern(regexp = "^\\+7\\d{10}$", message = "Phone must be in +7XXXXXXXXXX format")
-    private String phone;
 }

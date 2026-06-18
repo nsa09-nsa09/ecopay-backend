@@ -77,7 +77,6 @@ class Round2IntegrationTest extends AbstractIntegrationTest {
         req.setEmail("r2_" + n + "_" + System.nanoTime() + "@test.kz");
         req.setPassword("Test1234");
         req.setDisplayName(name);
-        req.setPhone("+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L)));
         authService.register(req);
         User u = userRepository.findByEmail(req.getEmail()).orElseThrow();
         // Need emailVerified=true for login

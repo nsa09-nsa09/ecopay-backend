@@ -6,10 +6,15 @@ import kz.hrms.splitupauth.dto.AdminTariffDto;
 import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
 public class AdminCatalogMapper {
+
+    /** Optional so legacy {@code new AdminCatalogMapper()} test setups still compile. */
+    @Autowired(required = false)
+    private ServiceLogoStorageService logoStorage;
 
     public AdminCategoryDto toDto(Category category, long servicesCount) {
         return AdminCategoryDto.builder()
@@ -36,6 +41,7 @@ public class AdminCatalogMapper {
                 .tariffsCount(tariffsCount)
                 .createdAt(service.getCreatedAt())
                 .updatedAt(service.getUpdatedAt())
+                .logoUrl(logoStorage == null ? null : logoStorage.publicUrl(service.getLogoKey()))
                 .build();
     }
 

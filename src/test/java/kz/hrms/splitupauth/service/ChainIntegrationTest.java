@@ -59,12 +59,14 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
         req.setEmail("it_" + n + "_" + System.nanoTime() + "@test.kz");
         req.setPassword("Test1234");
         req.setDisplayName(name);
-        String phone = "+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L));
-        req.setPhone(phone);
 
         authService.register(req);
         User user = userRepository.findByEmail(req.getEmail()).orElseThrow();
-        // Verify via dev-bypass so money/participation actions are allowed.
+        // Phone is now collected at room-creation time. Attach + verify it via
+        // dev-bypass here so the subsequent createRoom path still passes the
+        // phoneVerifiedAt gate.
+        String phone = "+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L));
+        phoneVerificationService.requestCode(user, phone);
         phoneVerificationService.verifyCode(user, phone, "000000");
         return userRepository.findByEmail(req.getEmail()).orElseThrow();
     }
@@ -132,7 +134,9 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
         req.setEmail("it_unv_" + System.nanoTime() + "@test.kz");
         req.setPassword("Test1234");
         req.setDisplayName("Unverified");
-        req.setPhone("+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L)));
+        // Phone is no longer collected at registration; this account stays
+        // phone-less, which keeps phoneVerifiedAt = null and trips the
+        // createRoom gate below.
         authService.register(req);
         User user = userRepository.findByEmail(req.getEmail()).orElseThrow();
 

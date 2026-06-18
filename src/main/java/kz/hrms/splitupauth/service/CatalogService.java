@@ -2,12 +2,19 @@ package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.CatalogSearchResultDto;
 import kz.hrms.splitupauth.dto.CategoryDto;
+import kz.hrms.splitupauth.dto.RoomMatchDto;
 import kz.hrms.splitupauth.dto.ServiceDto;
 import kz.hrms.splitupauth.dto.TariffPlanDto;
+import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
+import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -35,10 +43,17 @@ public class CatalogService {
     /** Hard cap so a malicious caller can't ask for the whole catalog. */
     private static final int SEARCH_MAX_LIMIT = 25;
 
+    /** Membership states that occupy a seat (per CLAUDE.md "Slot occupied" rule). */
+    private static final List<MemberStatus> OCCUPYING_STATUSES =
+            List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
+
     private final CategoryRepository categoryRepository;
     private final ServiceRepository serviceRepository;
     private final TariffPlanRepository tariffPlanRepository;
+    private final RoomRepository roomRepository;
+    private final RoomMemberRepository roomMemberRepository;
     private final CatalogMapper catalogMapper;
+    private final ServiceLogoStorageService logoStorage;
 
     @Transactional(readOnly = true)
     public List<CategoryDto> getCategories() {
@@ -105,9 +120,62 @@ public class CatalogService {
                         .name(s.getName())
                         .slug(s.getSlug())
                         .categoryName(s.getCategory() != null ? s.getCategory().getName() : null)
-                        .logoUrl(null)
+                        .logoUrl(logoStorage.publicUrl(s.getLogoKey()))
                         .build())
                 .toList();
+    }
+
+    /**
+     * FIFO subscription matcher: returns the oldest still-OPEN room on this
+     * service that the caller can join, falling back to "CREATE" when none
+     * fits. "Fits" means the room has at least one free seat (owner counts as
+     * one occupied seat per CLAUDE.md), the caller is not the owner, the
+     * start_date is still in the future, and the room isn't soft-deleted.
+     *
+     * <p>The repository pre-filters by {@code status=OPEN, deleted_at IS NULL,
+     * start_date > now}; this method does the seat math in-process. Volume of
+     * OPEN rooms per service stays small in practice, so the seat-count
+     * round-trip per row is acceptable; if it ever isn't, swap to the batch
+     * {@code RoomMemberRepository#countOccupiedByRoomIds} projection.</p>
+     */
+    @Transactional(readOnly = true)
+    public RoomMatchDto matchRoomForService(Long serviceId, User currentUser) {
+        if (!serviceRepository.existsById(serviceId)) {
+            throw new ResourceNotFoundException("Service not found");
+        }
+
+        List<Room> candidates = roomRepository
+                .findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+                        serviceId, RoomStatus.OPEN, LocalDateTime.now());
+
+        for (Room room : candidates) {
+            if (currentUser != null
+                    && room.getOwner() != null
+                    && currentUser.getId().equals(room.getOwner().getId())) {
+                // Owner already holds one seat — they can't "join" their own room.
+                continue;
+            }
+            if (room.getMaxMembers() == null || room.getMaxMembers() < 2) {
+                // Defensive: malformed rooms (V1 enforces >=2 at DB level too).
+                continue;
+            }
+
+            long occupied = roomMemberRepository
+                    .countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
+            // Owner = 1, plus PENDING/ACTIVE members. Free = max - 1 - occupied.
+            long free = room.getMaxMembers() - 1L - occupied;
+            if (free >= 1L) {
+                return RoomMatchDto.builder()
+                        .action("JOIN")
+                        .roomId(room.getId())
+                        .build();
+            }
+        }
+
+        return RoomMatchDto.builder()
+                .action("CREATE")
+                .roomId(null)
+                .build();
     }
 
     @Transactional(readOnly = true)

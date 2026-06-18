@@ -25,4 +25,6 @@ public class ServiceDto {
     private String currency;
     /** Count of active tariffs. */
     private Integer tariffCount;
+    /** Backend-served URL for the service logo, or null when none uploaded. */
+    private String logoUrl;
 }

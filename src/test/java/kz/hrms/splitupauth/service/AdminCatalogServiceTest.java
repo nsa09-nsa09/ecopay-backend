@@ -56,6 +56,7 @@ class AdminCatalogServiceTest {
     @Mock private ServiceRepository serviceRepository;
     @Mock private TariffPlanRepository tariffPlanRepository;
     @Mock private AdminActionLogRepository adminActionLogRepository;
+    @Mock private ServiceLogoStorageService logoStorage;
     @Mock private HttpServletRequest http;
 
     private AdminCatalogMapper mapper;
@@ -70,7 +71,7 @@ class AdminCatalogServiceTest {
         mapper = new AdminCatalogMapper();
         service = new AdminCatalogService(
                 categoryRepository, serviceRepository, tariffPlanRepository,
-                adminActionLogRepository, mapper, objectMapper);
+                adminActionLogRepository, mapper, objectMapper, logoStorage);
     }
 
     // ===================== Categories =====================

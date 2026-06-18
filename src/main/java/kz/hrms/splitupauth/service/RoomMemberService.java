@@ -41,10 +41,6 @@ public class RoomMemberService {
     private final NotificationService notificationService;
     @Transactional
     public RoomMemberDto joinRoom(Long roomId, User currentUser, JoinRoomRequest request) {
-        if (currentUser.getPhoneVerifiedAt() == null) {
-            throw new ForbiddenOperationException("Verify your phone number before joining a room");
-        }
-
         Room room = roomRepository.findByIdForUpdate(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 

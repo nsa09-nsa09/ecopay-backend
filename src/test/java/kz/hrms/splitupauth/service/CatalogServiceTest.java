@@ -8,6 +8,8 @@ import kz.hrms.splitupauth.entity.ProviderType;
 import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
 import kz.hrms.splitupauth.repository.CategoryRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import org.springframework.data.domain.Pageable;
@@ -36,6 +38,9 @@ class CatalogServiceTest {
     @Mock private CategoryRepository categoryRepository;
     @Mock private ServiceRepository serviceRepository;
     @Mock private TariffPlanRepository tariffPlanRepository;
+    @Mock private RoomRepository roomRepository;
+    @Mock private RoomMemberRepository roomMemberRepository;
+    @Mock private ServiceLogoStorageService logoStorage;
 
     private CatalogService service;
     private Category category;
@@ -43,7 +48,8 @@ class CatalogServiceTest {
     @BeforeEach
     void setUp() {
         service = new CatalogService(categoryRepository, serviceRepository,
-                tariffPlanRepository, new CatalogMapper());
+                tariffPlanRepository, roomRepository, roomMemberRepository,
+                new CatalogMapper(), logoStorage);
         category = Category.builder().id(1L).name("Video").slug("video").isActive(true).sortOrder(0).build();
     }
 
