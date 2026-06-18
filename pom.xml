@@ -189,6 +189,24 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <!--
+                  Pin the test JVM to Asia/Almaty. Production does this in
+                  SplitUpAuthApplication.main() before Spring starts, but tests
+                  boot via @SpringBootTest and never call main(), so they would
+                  otherwise inherit the CI runner's UTC clock. That mismatch made
+                  the dashboard-metrics test flaky: a row written with
+                  created_at = LocalDateTime.now() during the 18:00-24:00 UTC
+                  window lands on the next Almaty day and fell outside the
+                  metrics range. Running tests in the same zone the data is
+                  written in keeps date-bucketing deterministic.
+                -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-Duser.timezone=Asia/Almaty</argLine>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
