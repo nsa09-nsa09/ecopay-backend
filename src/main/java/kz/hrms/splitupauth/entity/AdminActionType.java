@@ -30,6 +30,9 @@ public enum AdminActionType {
     SITE_CONTENT_UPDATED,
     FEEDBACK_STATUS_CHANGED,
     FEEDBACK_NOTE_UPDATED,
+    NEWS_CREATED,
+    NEWS_UPDATED,
+    NEWS_DELETED,
     /**
      * Read-only sentinel used by {@code AdminActionTypeConverter} when the DB
      * row carries an action_type that this build's enum doesn't know about

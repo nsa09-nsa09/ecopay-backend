@@ -38,7 +38,6 @@ public class AuthService {
     private final EmailService emailService;
     private final RateLimitService rateLimitService;
     private final UserMapper userMapper;
-    private final PhoneVerificationService phoneVerificationService;
     private final StaffTwoFactorService staffTwoFactorService;
 
     // Dev/test only: auto-verify email on registration so login works without SMTP.
@@ -51,15 +50,12 @@ public class AuthService {
             throw new UserAlreadyExistsException("User with this email already exists");
         }
 
-        if (userRepository.existsByPhone(request.getPhone())) {
-            throw new PhoneAlreadyExistsException("User with this phone already exists");
-        }
-
+        // Phone is no longer collected at registration — it's requested at
+        // room-creation time (when the platform actually needs to verify it).
         User user = User.builder()
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .displayName(request.getDisplayName())
-                .phone(request.getPhone())
                 .status(UserStatus.ACTIVE)
                 .role(Role.USER)
                 .reputation(0)
@@ -74,13 +70,6 @@ public class AuthService {
             user = userRepository.save(user);
         } else {
             sendVerificationEmail(user);
-        }
-        try {
-            phoneVerificationService.requestCode(user, request.getPhone());
-        } catch (Exception ex) {
-            // SMS delivery failure must not block registration — user can resend.
-            log.warn("Failed to send initial SMS code for user {}: {}",
-                    user.getEmail(), ex.getMessage());
         }
 
         // No tokens issued: the account must verify its email before logging in.

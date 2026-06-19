@@ -29,6 +29,7 @@ import kz.hrms.splitupauth.util.Slugifier;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -44,6 +45,7 @@ public class AdminCatalogService {
     private final AdminActionLogRepository adminActionLogRepository;
     private final AdminCatalogMapper mapper;
     private final ObjectMapper objectMapper;
+    private final ServiceLogoStorageService logoStorage;
 
     // ===================== Categories =====================
 
@@ -225,6 +227,37 @@ public class AdminCatalogService {
         newState.put("categoryId", service.getCategory().getId());
         newState.put("providerType", service.getProviderType().name());
         newState.put("isActive", service.getIsActive());
+        writeLog(admin, AdminActionType.SERVICE_UPDATED, "SERVICE", service.getId(),
+                null, oldState, newState, http);
+
+        return mapper.toDto(service, tariffPlanRepository.countByServiceId(service.getId()));
+    }
+
+    /**
+     * Upload + replace the S3-backed logo on a service. Old key is best-effort
+     * deleted (mirrors {@code NewsService#uploadImage}). Logged to
+     * admin_action_log as SERVICE_UPDATED — we reuse the existing action type
+     * rather than introducing a new SERVICE_LOGO_* family because the change
+     * still reads as "an admin edited a service field".
+     */
+    @Transactional
+    public AdminServiceDto uploadServiceLogo(Long id, User admin, MultipartFile file, HttpServletRequest http) {
+        ServiceEntity service = serviceRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Service not found"));
+
+        String oldKey = service.getLogoKey();
+        String newKey = logoStorage.store(file);
+        service.setLogoKey(newKey);
+        service = serviceRepository.save(service);
+
+        if (oldKey != null && !oldKey.equals(newKey)) {
+            logoStorage.deleteIfManaged(oldKey);
+        }
+
+        ObjectNode oldState = objectMapper.createObjectNode();
+        oldState.put("logoKey", oldKey);
+        ObjectNode newState = objectMapper.createObjectNode();
+        newState.put("logoKey", service.getLogoKey());
         writeLog(admin, AdminActionType.SERVICE_UPDATED, "SERVICE", service.getId(),
                 null, oldState, newState, http);
 

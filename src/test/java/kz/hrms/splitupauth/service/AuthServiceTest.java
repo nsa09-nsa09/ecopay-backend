@@ -60,7 +60,6 @@ class AuthServiceTest {
     @Mock private EmailService emailService;
     @Mock private RateLimitService rateLimitService;
     @Mock private UserMapper userMapper;
-    @Mock private PhoneVerificationService phoneVerificationService;
     @Mock private StaffTwoFactorService staffTwoFactorService;
 
     private AuthService authService;
@@ -77,7 +76,6 @@ class AuthServiceTest {
                 emailService,
                 rateLimitService,
                 userMapper,
-                phoneVerificationService,
                 staffTwoFactorService
         );
     }

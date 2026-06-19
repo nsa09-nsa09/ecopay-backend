@@ -29,6 +29,8 @@ public class RoomResponse {
     private Integer ownerReviewCount;
     private Long categoryId;
     private Long serviceId;
+    /** Backend-served URL of the service logo (S3-backed), or null if none uploaded. */
+    private String serviceLogoUrl;
     private Long tariffPlanId;
     private RoomType roomType;
     private VerificationMode verificationMode;

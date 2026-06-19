@@ -23,4 +23,6 @@ public class AdminServiceDto {
     private Long tariffsCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    /** Backend-served URL for the service logo, or null when none uploaded. */
+    private String logoUrl;
 }

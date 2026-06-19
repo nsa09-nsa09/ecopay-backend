@@ -40,6 +40,10 @@ public class ServiceEntity {
     @Builder.Default
     private Boolean isActive = true;
 
+    /** S3 object key under {@code service-logos/}; null when no logo uploaded. */
+    @Column(name = "logo_key", length = 255)
+    private String logoKey;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

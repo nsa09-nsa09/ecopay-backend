@@ -18,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -102,6 +103,16 @@ public class AdminCatalogController {
     ) {
         adminCatalogService.deleteService(id, admin, http);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/services/{id}/logo")
+    public ResponseEntity<AdminServiceDto> uploadServiceLogo(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User admin,
+            @RequestPart("file") MultipartFile file,
+            HttpServletRequest http
+    ) {
+        return ResponseEntity.ok(adminCatalogService.uploadServiceLogo(id, admin, file, http));
     }
 
     // ===================== Tariffs =====================

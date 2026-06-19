@@ -7,6 +7,7 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.InMemoryRateLimiter;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -22,14 +23,21 @@ public class RoomMemberController {
     private final RoomMemberService roomMemberService;
     private final InMemoryRateLimiter rateLimiter;
 
+    @Value("${app.rate-limit.room-join.max:20}")
+    private int joinMax;
+    @Value("${app.rate-limit.room-join.window-seconds:600}")
+    private long joinWindowSeconds;
+
     @PostMapping("/{id}/members")
     public ResponseEntity<RoomMemberDto> createMembership(
             @PathVariable Long id,
             @AuthenticationPrincipal User user,
             @Valid @RequestBody JoinRoomRequest request
     ) {
-        rateLimiter.check("room-join:" + user.getId(), 20, 600,
-                "Too many join attempts — please slow down");
+        if (joinMax > 0) {
+            rateLimiter.check("room-join:" + user.getId(), joinMax, joinWindowSeconds,
+                    "Слишком много попыток вступления. Попробуйте позже.");
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(roomMemberService.joinRoom(id, user, request));
     }
 

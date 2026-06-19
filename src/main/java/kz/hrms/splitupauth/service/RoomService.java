@@ -9,6 +9,7 @@ import jakarta.persistence.criteria.Subquery;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.RoomFilter;
+import kz.hrms.splitupauth.dto.RoomInviteLinkDto;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
@@ -29,6 +30,7 @@ import kz.hrms.splitupauth.entity.VerificationMode;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
@@ -39,6 +41,7 @@ import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -52,6 +55,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -73,6 +77,28 @@ public class RoomService {
 
     /** Member statuses that occupy a seat (see CLAUDE.md). */
     private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
+
+    /** Non-terminal room statuses that count toward an owner's active-room cap. */
+    private static final List<RoomStatus> ACTIVE_OWNER_STATUSES =
+            List.of(RoomStatus.OPEN, RoomStatus.IN_VERIFICATION, RoomStatus.ACTIVE);
+
+    /**
+     * Hard ceiling on how many live rooms a single owner may hold at once
+     * (OPEN / IN_VERIFICATION / ACTIVE). Anti-abuse backstop on top of the
+     * per-time rate limit in {@code RoomController}. Tune via env without a
+     * redeploy. 0 or negative disables the cap.
+     */
+    @Value("${app.rate-limit.room-create.max-active-per-owner:10}")
+    private int maxActiveRoomsPerOwner;
+
+    /**
+     * Public host of the SPA. Used to build copy-pasteable invite links —
+     * we deliberately do not derive this from the current request so the
+     * link is correct from background contexts too (and is unaffected by
+     * a misconfigured reverse proxy that forwards localhost host headers).
+     */
+    @Value("${app.frontend-url:http://localhost:5173}")
+    private String frontendUrl;
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -103,6 +129,16 @@ public class RoomService {
         if (!hasPayoutCard) {
             throw new ForbiddenOperationException(
                     "Connect a payout card before creating a room — owner payouts require an active card");
+        }
+
+        if (maxActiveRoomsPerOwner > 0) {
+            long activeRooms = roomRepository
+                    .countByOwnerAndDeletedAtIsNullAndStatusIn(currentUser, ACTIVE_OWNER_STATUSES);
+            if (activeRooms >= maxActiveRoomsPerOwner) {
+                throw new TooManyRequestsException(
+                        "Достигнут лимит активных комнат (" + maxActiveRoomsPerOwner
+                                + "). Завершите или отмените существующие комнаты, прежде чем создавать новые.");
+            }
         }
 
         Category category = null;
@@ -784,5 +820,41 @@ public class RoomService {
         room = roomRepository.save(room);
 
         return roomMapper.toResponse(room);
+    }
+
+    /**
+     * Returns (or lazily mints) the copy-pasteable invite link for the room's
+     * owner. The token is opaque, single-room-scoped, and the URL is built
+     * against {@code app.frontend-url} — so it stays correct under the prod
+     * domain instead of leaking whatever host the backend sees.
+     *
+     * <p>Auth: owner-only. Non-owners get a 403 instead of leaking that the
+     * room even has a token.</p>
+     */
+    @Transactional
+    public RoomInviteLinkDto getOrCreateInviteLink(Long roomId, User currentUser) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+        if (room.getOwner() == null
+                || currentUser == null
+                || !room.getOwner().getId().equals(currentUser.getId())) {
+            throw new ForbiddenOperationException("Only the room owner can issue an invite link");
+        }
+
+        if (room.getInviteToken() == null || room.getInviteToken().isBlank()) {
+            // Hex-only, 32 chars — fits the VARCHAR(40) column with room to
+            // spare and stays URL-safe without any encoding step.
+            room.setInviteToken(UUID.randomUUID().toString().replace("-", ""));
+            room = roomRepository.save(room);
+        }
+
+        String base = frontendUrl == null ? "" : frontendUrl.replaceAll("/+$", "");
+        String url = base + "/room/" + room.getId() + "?invite=" + room.getInviteToken();
+
+        return RoomInviteLinkDto.builder()
+                .url(url)
+                .token(room.getInviteToken())
+                .build();
     }
 }

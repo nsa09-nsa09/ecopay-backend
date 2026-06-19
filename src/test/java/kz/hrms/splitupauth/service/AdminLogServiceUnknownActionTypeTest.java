@@ -61,6 +61,10 @@ class AdminLogServiceUnknownActionTypeTest extends AbstractIntegrationTest {
         // Re-add the same constraint but only for *new* writes — the stray row
         // skips validation thanks to NOT VALID. Mirrors what a real schema
         // would look like mid-migration.
+        // Keep the value list in sync with the latest migration (V32). Test
+        // classes share a singleton testcontainer, so a narrower list here
+        // would brick downstream tests that legitimately write the newer
+        // action types (NEWS_*).
         jdbc.execute(
                 "ALTER TABLE admin_action_log "
                         + "ADD CONSTRAINT chk_admin_action_log_action_type "
@@ -74,7 +78,8 @@ class AdminLogServiceUnknownActionTypeTest extends AbstractIntegrationTest {
                         + "'TARIFF_CREATED','TARIFF_UPDATED','TARIFF_DELETED',"
                         + "'TESTIMONIAL_FEATURED','TESTIMONIAL_UNFEATURED','TESTIMONIAL_EDITED',"
                         + "'TESTIMONIAL_DELETED','SITE_CONTENT_UPDATED',"
-                        + "'FEEDBACK_STATUS_CHANGED','FEEDBACK_NOTE_UPDATED'"
+                        + "'FEEDBACK_STATUS_CHANGED','FEEDBACK_NOTE_UPDATED',"
+                        + "'NEWS_CREATED','NEWS_UPDATED','NEWS_DELETED'"
                         + ")) NOT VALID");
 
         // The actual assertion: hydrating that row must not blow up the
