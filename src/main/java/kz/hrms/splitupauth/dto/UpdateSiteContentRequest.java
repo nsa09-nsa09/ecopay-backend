@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -38,32 +39,42 @@ public class UpdateSiteContentRequest {
 
     // ----- Tri-lingual fields (V30). All optional; absent ones leave the
     // corresponding column unchanged. Sized generously to match TEXT columns
-    // but capped to discourage abuse. -----
+    // but capped to discourage abuse. Wire names are snake_case to match the
+    // admin About editor contract. -----
 
+    @JsonProperty("title_kz")
     @Size(max = 255)
     private String titleKz;
 
+    @JsonProperty("title_ru")
     @Size(max = 255)
     private String titleRu;
 
+    @JsonProperty("title_en")
     @Size(max = 255)
     private String titleEn;
 
+    @JsonProperty("mission_kz")
     @Size(max = 4000)
     private String missionKz;
 
+    @JsonProperty("mission_ru")
     @Size(max = 4000)
     private String missionRu;
 
+    @JsonProperty("mission_en")
     @Size(max = 4000)
     private String missionEn;
 
+    @JsonProperty("description_kz")
     @Size(max = 8000)
     private String descriptionKz;
 
+    @JsonProperty("description_ru")
     @Size(max = 8000)
     private String descriptionRu;
 
+    @JsonProperty("description_en")
     @Size(max = 8000)
     private String descriptionEn;
 }

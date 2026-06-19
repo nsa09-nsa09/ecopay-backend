@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import kz.hrms.splitupauth.entity.SiteContent;
 import lombok.Builder;
 import lombok.Data;
@@ -21,17 +22,18 @@ public class SiteContentDto {
     private LocalDateTime updatedAt;
 
     // ----- Tri-lingual variants (V30) -----
-    private String titleKz;
-    private String titleRu;
-    private String titleEn;
+    // Wire names are snake_case to match the admin About editor contract.
+    @JsonProperty("title_kz")       private String titleKz;
+    @JsonProperty("title_ru")       private String titleRu;
+    @JsonProperty("title_en")       private String titleEn;
 
-    private String missionKz;
-    private String missionRu;
-    private String missionEn;
+    @JsonProperty("mission_kz")     private String missionKz;
+    @JsonProperty("mission_ru")     private String missionRu;
+    @JsonProperty("mission_en")     private String missionEn;
 
-    private String descriptionKz;
-    private String descriptionRu;
-    private String descriptionEn;
+    @JsonProperty("description_kz") private String descriptionKz;
+    @JsonProperty("description_ru") private String descriptionRu;
+    @JsonProperty("description_en") private String descriptionEn;
 
     public static SiteContentDto from(SiteContent c) {
         return SiteContentDto.builder()

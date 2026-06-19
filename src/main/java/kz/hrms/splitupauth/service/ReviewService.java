@@ -30,6 +30,7 @@ public class ReviewService {
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
     private final ReputationService reputationService;
+    private final AvatarStorageService avatarStorageService;
 
     @Transactional
     public ReviewDto createReview(User author, CreateReviewRequest req) {
@@ -99,6 +100,7 @@ public class ReviewService {
         return ReputationDto.builder()
                 .userId(user.getId())
                 .displayName(user.getDisplayName())
+                .avatar(avatarStorageService.publicUrl(user.getAvatar()))
                 .reputation(user.getReputation())
                 .reputationLevel(reputationService.levelOf(user.getReputation()).name())
                 .averageRating(Math.round(avg * 10.0) / 10.0)

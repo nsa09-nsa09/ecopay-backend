@@ -8,6 +8,7 @@ import lombok.Data;
 public class ReputationDto {
     private Long userId;
     private String displayName;
+    private String avatar;
     private Integer reputation;
     private String reputationLevel;
     private Double averageRating;

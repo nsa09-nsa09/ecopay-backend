@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import kz.hrms.splitupauth.AbstractIntegrationTest;
 import kz.hrms.splitupauth.dto.SiteContentDto;
 import kz.hrms.splitupauth.dto.UpdateSiteContentRequest;
@@ -31,6 +32,7 @@ class SiteContentI18nTest extends AbstractIntegrationTest {
     @Autowired SiteContentService service;
     @Autowired UserRepository userRepository;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ObjectMapper mapper;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 
@@ -109,6 +111,59 @@ class SiteContentI18nTest extends AbstractIntegrationTest {
         SiteContentDto fresh = service.getAbout();
         assertEquals("EcoPay туралы", fresh.getTitleKz());
         assertEquals("EN description", fresh.getDescriptionEn());
+    }
+
+    @Test
+    void wireContract_isSnakeCaseForPerLanguageFields_andRoundTripsThroughService() throws Exception {
+        // The admin About editor speaks snake_case. Verify both directions of
+        // the JSON contract here so a future Jackson config tweak doesn't
+        // silently regress to camelCase and drop kz/en again. We reuse the
+        // Spring-configured ObjectMapper so JSR310 / module setup matches
+        // what the controller layer actually serializes with.
+
+        String json = "{"
+                + "\"companyName\":\"EcoPay\","
+                + "\"title\":\"О EcoPay\","
+                + "\"mission\":\"Mission RU mirror\","
+                + "\"description\":\"Description RU mirror\","
+                + "\"title_kz\":\"EcoPay туралы\","
+                + "\"title_ru\":\"О EcoPay\","
+                + "\"title_en\":\"About EcoPay\","
+                + "\"mission_kz\":\"KZ миссия\","
+                + "\"mission_ru\":\"RU миссия\","
+                + "\"mission_en\":\"EN mission\","
+                + "\"description_kz\":\"KZ сипаттамасы\","
+                + "\"description_ru\":\"RU описание\","
+                + "\"description_en\":\"EN description\""
+                + "}";
+
+        UpdateSiteContentRequest req = mapper.readValue(json, UpdateSiteContentRequest.class);
+        assertEquals("EcoPay туралы", req.getTitleKz());
+        assertEquals("About EcoPay", req.getTitleEn());
+        assertEquals("KZ миссия", req.getMissionKz());
+        assertEquals("EN mission", req.getMissionEn());
+        assertEquals("KZ сипаттамасы", req.getDescriptionKz());
+        assertEquals("EN description", req.getDescriptionEn());
+
+        // Persist via the real service to prove the request DTO and the
+        // service-layer setters are wired together: the kz/en values must
+        // survive a subsequent getAbout() unchanged.
+        User adminUser = admin();
+        service.updateAbout(adminUser, req, new MockHttpServletRequest());
+        SiteContentDto fresh = service.getAbout();
+        assertEquals("EcoPay туралы", fresh.getTitleKz());
+        assertEquals("About EcoPay", fresh.getTitleEn());
+        assertEquals("EN description", fresh.getDescriptionEn());
+
+        // Response side: snake_case keys must appear on the wire, camelCase
+        // ones must not — that's what the frontend reads.
+        String responseJson = mapper.writeValueAsString(fresh);
+        assertTrue(responseJson.contains("\"title_kz\""), "expected title_kz in response: " + responseJson);
+        assertTrue(responseJson.contains("\"title_en\""), "expected title_en in response: " + responseJson);
+        assertTrue(responseJson.contains("\"mission_kz\""), "expected mission_kz in response");
+        assertTrue(responseJson.contains("\"description_en\""), "expected description_en in response");
+        // Legacy flat fields must stay camelCase.
+        assertTrue(responseJson.contains("\"companyName\""), "legacy companyName must remain camelCase");
     }
 
     @Test
