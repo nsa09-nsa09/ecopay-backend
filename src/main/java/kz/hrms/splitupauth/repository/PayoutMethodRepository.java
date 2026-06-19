@@ -13,4 +13,6 @@ public interface PayoutMethodRepository extends JpaRepository<PayoutMethod, Long
     List<PayoutMethod> findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(User user, String status);
 
     Optional<PayoutMethod> findByUserAndIsDefaultTrueAndStatus(User user, String status);
+
+    Optional<PayoutMethod> findByUserAndProviderCardTokenAndStatus(User user, String providerCardToken, String status);
 }

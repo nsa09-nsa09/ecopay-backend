@@ -17,6 +17,7 @@ public class PayoutDto {
     private String providerPayoutId;
     private String failureReason;
     private Long roomId;
+    private LocalDateTime releaseAt;
     private LocalDateTime createdAt;
     private LocalDateTime processedAt;
 
@@ -29,6 +30,7 @@ public class PayoutDto {
                 .providerPayoutId(p.getProviderPayoutId())
                 .failureReason(p.getFailureReason())
                 .roomId(p.getRoom() == null ? null : p.getRoom().getId())
+                .releaseAt(p.getReleaseAt())
                 .createdAt(p.getCreatedAt())
                 .processedAt(p.getProcessedAt())
                 .build();

@@ -19,6 +19,7 @@ import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
@@ -34,6 +35,7 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomOccupancyProjection;
@@ -77,6 +79,7 @@ public class RoomService {
     private final RoomMemberRepository roomMemberRepository;
     private final ExchangeRateService exchangeRateService;
     private final ReputationService reputationService;
+    private final PayoutMethodRepository payoutMethodRepository;
 
     /** Member statuses that occupy a seat (see CLAUDE.md). */
     private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
@@ -159,6 +162,15 @@ public class RoomService {
             throw new ForbiddenOperationException("Verify your phone number before creating a room");
         }
 
+        // Owners are paid out monthly to a connected card, so a room cannot exist without one.
+        boolean hasPayoutCard = payoutMethodRepository
+                .findByUserAndIsDefaultTrueAndStatus(currentUser, "ACTIVE")
+                .isPresent();
+        if (!hasPayoutCard) {
+            throw new ForbiddenOperationException(
+                    "Connect a payout card before creating a room — owner payouts require an active card");
+        }
+
         if (maxActiveRoomsPerOwner > 0) {
             long activeRooms = roomRepository
                     .countByOwnerAndDeletedAtIsNullAndStatusIn(currentUser, ACTIVE_OWNER_STATUSES);
@@ -179,15 +191,12 @@ public class RoomService {
                 .filter(serviceEntity -> Boolean.TRUE.equals(serviceEntity.getIsActive()))
                 .orElseThrow(() -> new ResourceNotFoundException("Service not found"));
 
-        TariffPlan tariffPlan = null;
-        if (request.getTariffPlanId() != null) {
-            tariffPlan = tariffPlanRepository.findById(request.getTariffPlanId())
-                    .filter(tp -> Boolean.TRUE.equals(tp.getIsActive()))
-                    .orElseThrow(() -> new ResourceNotFoundException("Tariff plan not found"));
+        TariffPlan tariffPlan = tariffPlanRepository.findById(request.getTariffPlanId())
+                .filter(tp -> Boolean.TRUE.equals(tp.getIsActive()))
+                .orElseThrow(() -> new ResourceNotFoundException("Tariff plan not found"));
 
-            if (!tariffPlan.getService().getId().equals(service.getId())) {
-                throw new InvalidRequestException("Tariff plan does not belong to the selected service");
-            }
+        if (!tariffPlan.getService().getId().equals(service.getId())) {
+            throw new InvalidRequestException("Tariff plan does not belong to the selected service");
         }
 
         validateCreateRequest(request);
@@ -220,22 +229,21 @@ public class RoomService {
                 ? request.getOperatorRestrictions()
                 : textRule(rules, "sharingWarning");
 
-        // The create form sends only one price side depending on the owner's pricing model
-        // ("total" vs "per member"). Derive the missing side so both are always populated and
-        // the room detail never shows a 0 share. Validation already guaranteed one side is positive.
-        java.math.BigDecimal priceTotal = request.getPriceTotal();
-        java.math.BigDecimal pricePerMember = request.getPricePerMember();
-        if (request.getMaxMembers() != null && request.getMaxMembers() > 0) {
-            java.math.BigDecimal members = java.math.BigDecimal.valueOf(request.getMaxMembers());
-            if (pricePerMember == null && priceTotal != null) {
-                pricePerMember = priceTotal.divide(members, 2, java.math.RoundingMode.HALF_UP);
-            } else if (priceTotal == null && pricePerMember != null) {
-                priceTotal = pricePerMember.multiply(members);
-            }
+        // Price, currency, billing period, and seat count are owned by the admin-managed
+        // tariff — NOT the room owner. Snapshot them from the tariff so editing a tariff
+        // later never silently re-prices existing rooms. The per-member share is the total
+        // split equally across the seats the admin configured.
+        Integer maxMembers = tariffPlan.getMaxMembers();
+        PeriodType periodType = tariffPlan.getPeriodType();
+        java.math.BigDecimal priceTotal = tariffPlan.getBasePriceTotal();
+        java.math.BigDecimal pricePerMember = priceTotal;
+        if (maxMembers != null && maxMembers > 0) {
+            pricePerMember = priceTotal.divide(
+                    java.math.BigDecimal.valueOf(maxMembers), 2, java.math.RoundingMode.HALF_UP);
         }
 
         // Resolve currency (whitelist check) + freeze the FX snapshot at creation.
-        String currency = Currency.normalize(request.getCurrency()).name();
+        String currency = Currency.normalize(tariffPlan.getCurrency()).name();
         java.math.BigDecimal fxRate = exchangeRateService.rateOf(currency);
         java.math.BigDecimal priceTotalKzt = exchangeRateService.toKzt(priceTotal, currency);
         java.math.BigDecimal pricePerMemberKzt = exchangeRateService.toKzt(pricePerMember, currency);
@@ -250,14 +258,14 @@ public class RoomService {
                 .status(RoomStatus.OPEN)
                 .title(request.getTitle())
                 .description(request.getDescription())
-                .maxMembers(request.getMaxMembers())
+                .maxMembers(maxMembers)
                 .priceTotal(priceTotal)
                 .pricePerMember(pricePerMember)
                 .currency(currency)
                 .fxRateToKzt(fxRate)
                 .priceTotalKzt(priceTotalKzt)
                 .pricePerMemberKzt(pricePerMemberKzt)
-                .periodType(request.getPeriodType())
+                .periodType(periodType)
                 .startDate(request.getStartDate())
                 .cancellationPolicy(request.getCancellationPolicy())
                 .providerName(request.getProviderName())
@@ -553,17 +561,7 @@ public class RoomService {
             room.setDescription(request.getDescription());
         }
 
-        if (request.getMaxMembers() != null) {
-            room.setMaxMembers(request.getMaxMembers());
-        }
-
-        if (request.getPriceTotal() != null) {
-            room.setPriceTotal(request.getPriceTotal());
-        }
-
-        if (request.getPricePerMember() != null) {
-            room.setPricePerMember(request.getPricePerMember());
-        }
+        // Seat count and pricing are tariff-controlled and not editable by the owner.
 
         if (request.getCancellationPolicy() != null) {
             room.setCancellationPolicy(request.getCancellationPolicy());
@@ -654,15 +652,8 @@ public class RoomService {
 
 
     private void validateCreateRequest(CreateRoomRequest request) {
-        boolean hasAnyPositiveAmount =
-                hasPositiveAmount(request.getPriceTotal()) || hasPositiveAmount(request.getPricePerMember());
-        if (!hasAnyPositiveAmount) {
-            throw new InvalidRequestException("Either positive priceTotal or positive pricePerMember must be provided");
-        }
-
-        if (request.getCurrency() != null && !Currency.isSupported(request.getCurrency())) {
-            throw new InvalidRequestException("Unsupported currency: " + request.getCurrency());
-        }
+        // Price/currency/period/seat count are validated on the tariff plan itself
+        // (admin-managed) and snapshotted onto the room — nothing to validate here.
 
         if (request.getStartDate().isBefore(LocalDateTime.now())) {
             throw new InvalidRequestException("Start date must be in the future");

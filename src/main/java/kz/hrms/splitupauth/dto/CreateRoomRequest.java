@@ -3,11 +3,9 @@ package kz.hrms.splitupauth.dto;
 import jakarta.validation.constraints.*;
 import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
-import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomType;
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
@@ -18,6 +16,11 @@ public class CreateRoomRequest {
     @NotNull(message = "Service id is required")
     private Long serviceId;
 
+    // Pricing-critical fields (price, currency, billing period, seat count) are
+    // owned by the admin-managed tariff plan — not the room owner. Selecting a
+    // tariff is therefore mandatory, and the room snapshots those values from it
+    // at creation time. The owner cannot override them here.
+    @NotNull(message = "Tariff plan is required")
     private Long tariffPlanId;
 
     @NotNull(message = "Room type is required")
@@ -28,21 +31,6 @@ public class CreateRoomRequest {
     private String title;
 
     private String description;
-
-    @NotNull(message = "Max members is required")
-    @Min(value = 2, message = "Max members must be at least 2")
-    private Integer maxMembers;
-
-    @PositiveOrZero(message = "Total price cannot be negative")
-    private BigDecimal priceTotal;
-
-    @PositiveOrZero(message = "Price per member cannot be negative")
-    private BigDecimal pricePerMember;
-
-    private String currency;
-
-    @NotNull(message = "Period type is required")
-    private PeriodType periodType;
 
     @NotNull(message = "Start date is required")
     @Future(message = "Start date must be in the future")

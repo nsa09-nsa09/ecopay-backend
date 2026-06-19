@@ -11,7 +11,6 @@ import kz.hrms.splitupauth.dto.RoomMemberDto;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
-import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -71,9 +70,19 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
         return userRepository.findByEmail(req.getEmail()).orElseThrow();
     }
 
+    /** Owners must have an active default payout card before they can create a room. */
+    private void givePayoutCard(User owner) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_methods (user_id, provider_name, provider_card_token, pan_mask, "
+                        + "is_default, status, created_at) VALUES (?, 'freedompay', ?, '4242', TRUE, "
+                        + "'ACTIVE', CURRENT_TIMESTAMP)",
+                owner.getId(), "tok_test_" + owner.getId());
+    }
+
     @Test
     void fullChain_reachesActiveMembership_andWritesAppendOnlyAudit() {
         User owner = registerVerified("IT Owner");
+        givePayoutCard(owner);
         User member = registerVerified("IT Member");
 
         // Create a DIGITAL room on the seeded Netflix service (V7).
@@ -83,11 +92,7 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
         create.setCategoryId(1L);
         create.setRoomType(RoomType.DIGITAL);
         create.setTitle("IT Netflix");
-        create.setMaxMembers(4);
-        create.setPriceTotal(new BigDecimal("7290.00"));
-        create.setPricePerMember(new BigDecimal("1822.50"));
-        create.setCurrency("KZT");
-        create.setPeriodType(PeriodType.MONTHLY);
+        // Seats/price/currency/period now come from the seeded tariff plan (V10): 7290.00 / 4 monthly.
         create.setStartDate(LocalDateTime.now().plusMonths(2));
         RoomResponse room = roomService.createRoom(owner, create);
         assertEquals(RoomStatus.OPEN, room.getStatus());
@@ -142,11 +147,9 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
 
         CreateRoomRequest create = new CreateRoomRequest();
         create.setServiceId(2L);
+        create.setTariffPlanId(2L);
         create.setRoomType(RoomType.DIGITAL);
         create.setTitle("blocked");
-        create.setMaxMembers(4);
-        create.setPricePerMember(new BigDecimal("1000.00"));
-        create.setPeriodType(PeriodType.MONTHLY);
         create.setStartDate(LocalDateTime.now().plusMonths(2));
 
         assertThrows(RuntimeException.class, () -> roomService.createRoom(user, create));

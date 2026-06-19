@@ -6,8 +6,6 @@ import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import lombok.Data;
 
-import java.math.BigDecimal;
-
 @Data
 public class UpdateRoomRequest {
 
@@ -17,12 +15,8 @@ public class UpdateRoomRequest {
     @Size(max = 2000, message = "Description must be at most 2000 characters")
     private String description;
 
-    @Min(value = 2, message = "Max members must be at least 2")
-    private Integer maxMembers;
-
-    private BigDecimal priceTotal;
-
-    private BigDecimal pricePerMember;
+    // Price, currency, billing period, and seat count are tariff-controlled
+    // (set by the admin on the tariff plan) and intentionally NOT editable here.
 
     @Size(max = 1000, message = "Cancellation policy must be at most 1000 characters")
     private String cancellationPolicy;
