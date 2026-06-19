@@ -44,13 +44,19 @@ public class NewsController {
 
     /**
      * Streams an attached news image through the backend host (same model as
-     * the avatar proxy at /api/v1/users/avatars/{file}).
+     * the avatar proxy at /api/v1/users/avatars/{file}). Content-Type is
+     * picked from the filename extension so PNGs stored under a {@code .png}
+     * key serve with the right media type even though the upload pipeline
+     * normalises new uploads to JPEG.
      */
     @GetMapping("/images/{filename}")
     public ResponseEntity<byte[]> getImage(@PathVariable String filename) {
         byte[] data = imageStorage.loadImageBytes(filename);
+        MediaType mediaType = filename.toLowerCase().endsWith(".png")
+                ? MediaType.IMAGE_PNG
+                : MediaType.IMAGE_JPEG;
         return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
+                .contentType(mediaType)
                 .cacheControl(CacheControl.maxAge(Duration.ofDays(7)).cachePublic())
                 .body(data);
     }

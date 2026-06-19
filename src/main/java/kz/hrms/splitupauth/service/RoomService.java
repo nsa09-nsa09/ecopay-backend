@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Root;
@@ -40,7 +41,10 @@ import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -59,6 +63,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RoomService {
 
     private final RoomRepository roomRepository;
@@ -97,6 +102,40 @@ public class RoomService {
      */
     @Value("${app.frontend-url:http://localhost:5173}")
     private String frontendUrl;
+
+    /**
+     * Field-injected so the {@link #RoomService} constructor (Lombok-generated
+     * via {@code @RequiredArgsConstructor}) and the unit-test wiring don't
+     * have to change. Only used by the startup validator below.
+     */
+    @Autowired(required = false)
+    private Environment env;
+
+    /**
+     * Defence-in-depth: fail fast on a missing or blank {@code app.frontend-url},
+     * and shout when a non-dev profile is still pointing at localhost so a
+     * misconfigured deployment doesn't silently mint invite links nobody can
+     * follow. Dev profiles are allowed to use localhost as their normal URL.
+     */
+    @PostConstruct
+    void validateFrontendUrl() {
+        if (frontendUrl == null || frontendUrl.isBlank()) {
+            throw new IllegalStateException("app.frontend-url must be configured");
+        }
+        if (frontendUrl.contains("localhost") && !isDevProfile()) {
+            log.warn("app.frontend-url is set to a localhost address ({}). "
+                            + "Invite links will point to localhost. "
+                            + "Set APP_FRONTEND_URL env var for production.",
+                    frontendUrl);
+        }
+    }
+
+    private boolean isDevProfile() {
+        if (env == null) {
+            return false;
+        }
+        return java.util.Arrays.asList(env.getActiveProfiles()).contains("dev");
+    }
 
     private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
         boolean allowed =
@@ -251,7 +290,10 @@ public class RoomService {
 
         RoomResponse response = roomMapper.toResponse(room);
         applyOwnerRating(response, room.getOwner().getId());
-        int occupied = (int) roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
+        int memberOccupied = (int) roomMemberRepository
+                .countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
+        // Owner always occupies 1 slot — they created the room.
+        int occupied = Math.min(response.getMaxMembers(), 1 + memberOccupied);
         response.setFilledSeats(occupied);
         response.setFreeSeats(Math.max(0, response.getMaxMembers() - occupied));
         return response;
@@ -462,8 +504,10 @@ public class RoomService {
         Map<Long, Long> occupiedByRoom = roomMemberRepository.countOccupiedByRoomIds(roomIds, OCCUPYING_STATUSES).stream()
                 .collect(Collectors.toMap(RoomOccupancyProjection::getRoomId, RoomOccupancyProjection::getOccupied));
         for (RoomSummaryDto summary : summaries) {
-            int occupied = occupiedByRoom.getOrDefault(summary.getId(), 0L).intValue();
+            int memberOccupied = occupiedByRoom.getOrDefault(summary.getId(), 0L).intValue();
             int max = summary.getMaxMembers() != null ? summary.getMaxMembers() : 0;
+            // Owner always occupies 1 slot — they created the room.
+            int occupied = Math.min(max, 1 + memberOccupied);
             summary.setFilledSeats(occupied);
             summary.setFreeSeats(Math.max(0, max - occupied));
         }

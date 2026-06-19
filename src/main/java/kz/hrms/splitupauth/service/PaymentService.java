@@ -67,10 +67,6 @@ public class PaymentService {
             throw new ForbiddenOperationException("You can only create payment intent for your own membership");
         }
 
-        if (currentUser.getPhoneVerifiedAt() == null) {
-            throw new ForbiddenOperationException("Verify your phone number before paying");
-        }
-
         // Idempotency must be checked BEFORE the status guard: once a payment succeeds the
         // membership leaves APPLIED, and a retried call with the same key must still return
         // the original intent (not fail the status check → no double charge, true idempotency).

@@ -532,7 +532,7 @@ class RoomMemberServiceTest {
                 .role(role)
                 .displayName("User " + userId)
                 .status(UserStatus.ACTIVE)
-                .phoneVerifiedAt(LocalDateTime.now()) // verified — passes the join/pay phone-verification guard
+                .phoneVerifiedAt(LocalDateTime.now())
                 .build();
     }
 }
