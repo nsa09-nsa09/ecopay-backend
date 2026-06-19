@@ -10,6 +10,7 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.entity.VerificationMode;
 import kz.hrms.splitupauth.repository.CategoryRepository;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -56,6 +57,8 @@ class RoomServiceTest {
     private RoomMemberRepository roomMemberRepository;
     @Mock
     private ReputationService reputationService;
+    @Mock
+    private PayoutMethodRepository payoutMethodRepository;
 
     private RoomService roomService;
 
@@ -72,7 +75,8 @@ class RoomServiceTest {
                 reviewRepository,
                 roomMemberRepository,
                 new ExchangeRateService(new ObjectMapper()),
-                reputationService
+                reputationService,
+                payoutMethodRepository
         );
 
         when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));

@@ -123,6 +123,7 @@ public class PaymentService {
                 .description("Ecopay membership #" + roomMember.getId())
                 .userEmail(currentUser.getEmail())
                 .userPhone(currentUser.getPhone())
+                .userId(currentUser.getId() == null ? null : String.valueOf(currentUser.getId()))
                 .saveCardRequested(intent.getSaveCardRequested())
                 .build();
 

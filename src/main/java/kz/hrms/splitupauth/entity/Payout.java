@@ -65,6 +65,14 @@ public class Payout {
     @Builder.Default
     private Integer retryCount = 0;
 
+    /**
+     * When this payout becomes eligible for dispatch. The member's charge is captured
+     * immediately, but the owner payout is held until release_at (default created_at + 30d).
+     * The dispatcher ignores payouts whose release_at is still in the future.
+     */
+    @Column(name = "release_at")
+    private LocalDateTime releaseAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -80,6 +88,8 @@ public class Payout {
         if (status == null) status = "PENDING";
         if (currency == null) currency = "KZT";
         if (retryCount == null) retryCount = 0;
+        // Defensive: a payout with no explicit hold releases immediately.
+        if (releaseAt == null) releaseAt = createdAt;
     }
 
     @PreUpdate

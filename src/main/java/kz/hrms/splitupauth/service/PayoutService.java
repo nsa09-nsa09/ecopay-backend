@@ -45,6 +45,10 @@ public class PayoutService {
     @Value("${app.platform.fee-percent:8}")
     private int platformFeePercent;
 
+    /** Days a captured payment is held in the merchant balance before the owner payout is dispatched. */
+    @Value("${app.payout.hold-days:30}")
+    private int payoutHoldDays;
+
     /**
      * Called from PaymentService when a member's charge succeeds. Creates a
      * pending payout for the room owner.
@@ -60,6 +64,11 @@ public class PayoutService {
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
         BigDecimal payoutAmount = intent.getAmount().subtract(fee);
 
+        // Hold the payout: capture happened now, but the owner is only paid once the hold
+        // window elapses. The dispatcher skips payouts until releaseAt is reached.
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime releaseAt = now.plusDays(payoutHoldDays);
+
         Payout payout = Payout.builder()
                 .user(owner)
                 .room(intent.getRoomMember().getRoom())
@@ -67,6 +76,7 @@ public class PayoutService {
                 .amount(payoutAmount)
                 .currency("KZT")
                 .status("PENDING")
+                .releaseAt(releaseAt)
                 .idempotencyKey("payout-" + intent.getId() + "-" + UUID.randomUUID())
                 .build();
         payout = payoutRepository.save(payout);
@@ -74,16 +84,21 @@ public class PayoutService {
         eventLogger.log("PAYOUT", payout.getId(), "CREATED",
                 null, payout.getStatus(), null, null,
                 payout.getIdempotencyKey(),
-                java.util.Map.of("amount", payoutAmount.toPlainString()));
+                java.util.Map.of("amount", payoutAmount.toPlainString(),
+                        "releaseAt", releaseAt.toString(),
+                        "holdDays", String.valueOf(payoutHoldDays)));
 
         return payout;
     }
 
-    /** Run every minute: pick up PENDING payouts and try to dispatch them. */
+    /**
+     * Run every minute: pick up payouts whose hold window has elapsed (releaseAt &lt;= now)
+     * and try to dispatch them. Held payouts (releaseAt in the future) are skipped until due.
+     */
     @Scheduled(fixedDelay = 60_000)
     public void processPendingPayouts() {
-        List<Payout> pending = payoutRepository.findByStatusInOrderByCreatedAtAsc(
-                List.of("PENDING", "PENDING_METHOD"));
+        List<Payout> pending = payoutRepository.findDispatchable(
+                List.of("PENDING", "PENDING_METHOD"), LocalDateTime.now());
         for (Payout payout : pending) {
             try {
                 dispatchPayout(payout.getId());
@@ -261,6 +276,15 @@ public class PayoutService {
                 .filter(c -> c.getStatus() == SavedCardStatus.ACTIVE)
                 .orElseThrow(() -> new InvalidRequestException(
                         "Card token does not belong to you or is not an active saved card"));
+
+        // Idempotent: re-registering an already-connected card returns the existing method
+        // (also avoids tripping the unique (user, provider_card_token) constraint).
+        PayoutMethod already = payoutMethodRepository
+                .findByUserAndProviderCardTokenAndStatus(user, providerCardToken, "ACTIVE")
+                .orElse(null);
+        if (already != null) {
+            return already;
+        }
 
         boolean firstMethod = payoutMethodRepository
                 .findByUserAndIsDefaultTrueAndStatus(user, "ACTIVE").isEmpty();

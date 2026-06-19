@@ -15,8 +15,16 @@ public class GatewayChargeRequest {
     private String description;
     private String userEmail;
     private String userPhone;
+    /** Merchant-side user id (pg_user_id). Required by Freedom Pay when saving a card. */
+    private String userId;
     private boolean saveCardRequested;
     /** Optional URL the gateway should redirect to on success/failure. */
     private String successUrl;
     private String failureUrl;
+    /**
+     * Optional override for the provider order id. Used by non-room flows (e.g. payout-card
+     * binding) so their order id is NOT a bare numeric PaymentIntent id — keeps their async
+     * webhooks from being mis-matched to a real payment intent.
+     */
+    private String orderIdOverride;
 }

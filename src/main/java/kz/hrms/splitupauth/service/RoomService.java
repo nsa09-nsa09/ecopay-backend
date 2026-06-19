@@ -34,6 +34,7 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomOccupancyProjection;
@@ -73,6 +74,7 @@ public class RoomService {
     private final RoomMemberRepository roomMemberRepository;
     private final ExchangeRateService exchangeRateService;
     private final ReputationService reputationService;
+    private final PayoutMethodRepository payoutMethodRepository;
 
     /** Member statuses that occupy a seat (see CLAUDE.md). */
     private static final List<MemberStatus> OCCUPYING_STATUSES = List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
@@ -119,6 +121,15 @@ public class RoomService {
     public RoomResponse createRoom(User currentUser, CreateRoomRequest request) {
         if (currentUser.getPhoneVerifiedAt() == null) {
             throw new ForbiddenOperationException("Verify your phone number before creating a room");
+        }
+
+        // Owners are paid out monthly to a connected card, so a room cannot exist without one.
+        boolean hasPayoutCard = payoutMethodRepository
+                .findByUserAndIsDefaultTrueAndStatus(currentUser, "ACTIVE")
+                .isPresent();
+        if (!hasPayoutCard) {
+            throw new ForbiddenOperationException(
+                    "Connect a payout card before creating a room — owner payouts require an active card");
         }
 
         if (maxActiveRoomsPerOwner > 0) {
