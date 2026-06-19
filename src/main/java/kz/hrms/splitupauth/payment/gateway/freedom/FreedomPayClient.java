@@ -58,4 +58,26 @@ public class FreedomPayClient {
                     "Freedom Pay request failed: " + ex.getMessage(), ex);
         }
     }
+
+    /**
+     * Send form-urlencoded params and return the raw XML body (for endpoints whose response is a
+     * list, e.g. cardstorage/list, which the flat-map parser can't represent).
+     */
+    public String postFormRaw(String path, Map<String, String> params) {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        params.forEach(form::add);
+        try {
+            return restClient.post()
+                    .uri(path)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .accept(MediaType.APPLICATION_XML, MediaType.TEXT_XML)
+                    .body(form)
+                    .retrieve()
+                    .body(String.class);
+        } catch (Exception ex) {
+            log.error("Freedom Pay request to {} failed: {}", path, ex.getMessage());
+            throw new FreedomPayException(
+                    "Freedom Pay request failed: " + ex.getMessage(), ex);
+        }
+    }
 }

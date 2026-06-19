@@ -6,6 +6,7 @@ import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.FreedomWebhookInboxRepository;
 import kz.hrms.splitupauth.service.PaymentService;
+import kz.hrms.splitupauth.service.PayoutCardBindingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -28,6 +29,7 @@ public class FreedomPayWebhookController {
     private final FreedomPayGateway gateway;
     private final FreedomWebhookInboxRepository inboxRepository;
     private final PaymentService paymentService;
+    private final PayoutCardBindingService cardBindingService;
     private final ObjectMapper objectMapper;
 
     @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
@@ -72,7 +74,19 @@ public class FreedomPayWebhookController {
                 return errorResponse(script, "invalid signature");
             }
 
-            paymentService.applyWebhookEvent(event);
+            // Payout-card binding callbacks carry a "cardbind-{id}" order id (kept out of the
+            // numeric PaymentIntent space). Route them to the binding finalizer; everything else
+            // is a normal charge/refund/payout event.
+            String orderId = safe.get("pg_order_id");
+            if (orderId != null && orderId.startsWith("cardbind-")) {
+                Long bindingId = parseLongOrNull(orderId.substring("cardbind-".length()));
+                boolean success = "1".equals(safe.get("pg_result"))
+                        || "SUCCESS".equals(event.getResultStatus());
+                cardBindingService.applyBindingWebhook(
+                        bindingId, success, event.getCardToken(), event.getCardPanMask());
+            } else {
+                paymentService.applyWebhookEvent(event);
+            }
 
             inbox.setProcessingStatus("PROCESSED");
             inbox.setProcessedAt(LocalDateTime.now());
@@ -92,5 +106,14 @@ public class FreedomPayWebhookController {
 
     private ResponseEntity<String> errorResponse(String script, String description) {
         return ResponseEntity.ok(gateway.buildWebhookResponse(script, "error", description));
+    }
+
+    private static Long parseLongOrNull(String s) {
+        if (s == null || s.isBlank()) return null;
+        try {
+            return Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }
