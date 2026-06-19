@@ -71,9 +71,19 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
         return userRepository.findByEmail(req.getEmail()).orElseThrow();
     }
 
+    /** Owners must have an active default payout card before they can create a room. */
+    private void givePayoutCard(User owner) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_methods (user_id, provider_name, provider_card_token, pan_mask, "
+                        + "is_default, status, created_at) VALUES (?, 'freedompay', ?, '4242', TRUE, "
+                        + "'ACTIVE', CURRENT_TIMESTAMP)",
+                owner.getId(), "tok_test_" + owner.getId());
+    }
+
     @Test
     void fullChain_reachesActiveMembership_andWritesAppendOnlyAudit() {
         User owner = registerVerified("IT Owner");
+        givePayoutCard(owner);
         User member = registerVerified("IT Member");
 
         // Create a DIGITAL room on the seeded Netflix service (V7).
