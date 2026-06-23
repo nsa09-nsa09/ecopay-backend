@@ -36,8 +36,17 @@ public class PaymentIntent {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /** Total charged to the member = tariff share + ECOpay commission. */
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal amount;
+
+    /**
+     * ECOpay commission portion of {@link #amount}. The owner payout is
+     * {@code amount - commissionAmount} (i.e. the member's tariff share).
+     */
+    @Column(name = "commission_amount", nullable = false, precision = 12, scale = 2)
+    @Builder.Default
+    private BigDecimal commissionAmount = BigDecimal.ZERO;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

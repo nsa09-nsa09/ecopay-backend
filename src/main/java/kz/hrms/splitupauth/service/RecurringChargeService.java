@@ -97,6 +97,9 @@ public class RecurringChargeService {
                 .roomMember(member)
                 .user(member.getUser())
                 .amount(lastSuccess.getAmount())
+                // Carry the commission breakdown forward so each renewal pays the owner
+                // the share only and ECOpay keeps the same commission.
+                .commissionAmount(lastSuccess.getCommissionAmount())
                 .status(PaymentIntentStatus.PENDING)
                 .providerName(gateway.providerName())
                 .saveCardRequested(false)

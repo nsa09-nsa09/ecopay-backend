@@ -52,7 +52,7 @@ Package root: `kz.hrms.splitupauth`. Public API base: `/api/v1/`.
 
 - Payment gateway: FreedomPay (prod) + mock (dev), behind `PaymentGatewayRegistry`. **Owned by parallel work — read-only here.**
 - Idempotency on intents, refunds, payouts.
-- `PayoutService` creates owner payout on charge success, deducts platform fee, dispatches against registered card token. Anti-IDOR: payout method may only be registered from a card token owned by the user (saved-card check).
+- `PayoutService` creates owner payout on charge success and dispatches against registered card token. The member pays (tariff share + tiered ECOpay commission, see `CommissionCalculator`); the owner is paid the full share, ECOpay keeps the commission (owners pay no commission). Anti-IDOR: payout method may only be registered from a card token owned by the user (saved-card check).
 - Clawback: `PayoutService.reverseOwnerPayoutForRefund` reverses not-yet-paid payouts on full refund; partial refund or already-dispatched → `CLAWBACK_REQUIRED` event for manual handling.
 - Refunds: user can request on own charge (IDOR check); admin can create + finalize; webhooks finalize async PENDING.
 - `RecurringChargeService` re-charges saved-card subscriptions on schedule.

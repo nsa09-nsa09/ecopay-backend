@@ -42,6 +42,10 @@ public class RoomResponse {
     private Integer freeSeats;
     private BigDecimal priceTotal;
     private BigDecimal pricePerMember;
+    /** ECOpay commission a joining member pays on top of {@link #pricePerMember}. */
+    private BigDecimal pricePerMemberCommission;
+    /** Total a joining member pays = pricePerMember + pricePerMemberCommission. */
+    private BigDecimal pricePerMemberTotal;
     private String currency;
     /** Snapshot of the price→KZT rate used at room creation (1 for KZT). */
     private BigDecimal fxRateToKzt;

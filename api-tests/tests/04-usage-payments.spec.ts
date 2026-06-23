@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { register, auth, createDigitalRoom, joinRoom, pay } from "./helpers";
 
 test.describe("Usage & payouts", () => {
-  test("successful member payment creates a PENDING owner payout (minus platform fee)", async ({ request }) => {
+  test("successful member payment creates a PENDING owner payout for the full tariff share", async ({ request }) => {
     const owner = await register(request, "Payout Owner");
     const member = await register(request, "Payout Member");
     const room = await createDigitalRoom(request, owner.token);
@@ -15,8 +15,9 @@ test.describe("Usage & payouts", () => {
     expect(Array.isArray(payouts)).toBe(true);
     const forRoom = payouts.find((p: any) => p.roomId === room.id);
     expect(forRoom, "owner has a payout for this room").toBeTruthy();
-    // 8% platform fee withheld from the owner payout: 1822.5 * 0.92 = 1676.70
-    expect(Number(forRoom.amount)).toBeCloseTo(1822.5 * 0.92, 1);
+    // The owner is paid the full tariff share (the member separately covered the ECOpay
+    // commission on top). No percentage fee is withheld from the owner payout anymore.
+    expect(Number(forRoom.amount)).toBeCloseTo(1822.5, 1);
     expect(forRoom.currency).toBe("KZT");
   });
 

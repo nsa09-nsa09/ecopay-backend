@@ -108,7 +108,11 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
         pay.setIdempotencyKey("it-" + membership.getId());
         PaymentIntentResponse intent = paymentService.createPaymentIntent(membership.getId(), member, pay);
         assertEquals(PaymentIntentStatus.SUCCESS, intent.getStatus());
-        assertEquals(0, new BigDecimal("1822.50").compareTo(intent.getAmount()));
+        // Share = 7290.00 / 4 = 1822.50; ECOpay commission for that tier (<= 4000) = 500.00;
+        // the member is charged share + commission = 2322.50.
+        assertEquals(0, new BigDecimal("1822.50").compareTo(intent.getShareAmount()));
+        assertEquals(0, new BigDecimal("500.00").compareTo(intent.getCommissionAmount()));
+        assertEquals(0, new BigDecimal("2322.50").compareTo(intent.getAmount()));
         assertEquals(MemberStatus.PENDING,
                 roomMemberRepository.findById(membership.getId()).orElseThrow().getStatus());
 

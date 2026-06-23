@@ -29,8 +29,12 @@ test.describe("Business chain (happy path)", () => {
     const intent = await pay(request, member.token, membership.id);
     expect(intent.status).toBe("SUCCESS");
     expect(["mock", "freedompay"]).toContain(intent.providerName);
-    // Charged exactly the member share (no fee added on top)
-    expect(Number(intent.amount)).toBe(Number(room.pricePerMember));
+    // Charged the member share plus the ECOpay commission on top.
+    expect(Number(intent.amount)).toBe(Number(room.pricePerMemberTotal));
+    expect(Number(intent.shareAmount)).toBe(Number(room.pricePerMember));
+    expect(Number(intent.commissionAmount)).toBe(
+      Number(room.pricePerMemberTotal) - Number(room.pricePerMember),
+    );
 
     // membership advanced APPLIED → PENDING
     let me = await request.get(`rooms/${room.id}/members/me`, auth(member.token));

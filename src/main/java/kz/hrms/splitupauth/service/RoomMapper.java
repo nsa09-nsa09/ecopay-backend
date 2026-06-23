@@ -7,6 +7,9 @@ import kz.hrms.splitupauth.entity.Room;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
 @Component
 public class RoomMapper {
 
@@ -18,6 +21,10 @@ public class RoomMapper {
     @Autowired(required = false)
     private ServiceLogoStorageService logoStorage;
 
+    /** Field-injected for the same reason; null in plain unit tests → commission fields come back null. */
+    @Autowired(required = false)
+    private CommissionCalculator commissionCalculator;
+
     private String serviceLogoUrl(Room room) {
         if (logoStorage == null || room.getService() == null) {
             return null;
@@ -25,7 +32,31 @@ public class RoomMapper {
         return logoStorage.publicUrl(room.getService().getLogoKey());
     }
 
+    /** The per-member tariff share, mirroring PaymentService: explicit price, else priceTotal split. */
+    private BigDecimal effectiveShare(Room room) {
+        if (room.getPricePerMember() != null && room.getPricePerMember().signum() > 0) {
+            return room.getPricePerMember();
+        }
+        if (room.getPriceTotal() != null && room.getPriceTotal().signum() > 0
+                && room.getMaxMembers() != null && room.getMaxMembers() >= 2) {
+            return room.getPriceTotal()
+                    .divide(BigDecimal.valueOf(room.getMaxMembers()), 2, RoundingMode.HALF_UP);
+        }
+        return null;
+    }
+
+    private BigDecimal memberCommission(Room room) {
+        BigDecimal share = effectiveShare(room);
+        if (commissionCalculator == null || share == null) {
+            return null;
+        }
+        return commissionCalculator.commissionFor(share);
+    }
+
     public RoomResponse toResponse(Room room) {
+        BigDecimal commission = memberCommission(room);
+        BigDecimal share = effectiveShare(room);
+        BigDecimal total = (commission != null && share != null) ? share.add(commission) : null;
         return RoomResponse.builder()
                 .id(room.getId())
                 .ownerUserId(room.getOwner().getId())
@@ -45,6 +76,8 @@ public class RoomMapper {
                 .maxMembers(room.getMaxMembers())
                 .priceTotal(room.getPriceTotal())
                 .pricePerMember(room.getPricePerMember())
+                .pricePerMemberCommission(commission)
+                .pricePerMemberTotal(total)
                 .currency(room.getCurrency())
                 .fxRateToKzt(room.getFxRateToKzt())
                 .priceTotalKzt(room.getPriceTotalKzt())

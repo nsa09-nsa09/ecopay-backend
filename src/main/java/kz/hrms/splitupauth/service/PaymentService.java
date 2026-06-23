@@ -49,6 +49,7 @@ public class PaymentService {
     private final RefundService refundService;
     private final RoomEventLogger roomEventLogger;
     private final NotificationService notificationService;
+    private final CommissionCalculator commissionCalculator;
 
     @Transactional
     public PaymentIntentResponse createPaymentIntent(
@@ -81,7 +82,11 @@ public class PaymentService {
         }
 
         PaymentGateway gateway = gatewayRegistry.defaultGateway();
-        BigDecimal amount = resolvePaymentAmount(roomMember.getRoom());
+        // The member pays their tariff share plus the ECOpay commission (owner pays none).
+        // The owner is later paid the share; ECOpay keeps the commission (see PayoutService).
+        BigDecimal share = resolveShareAmount(roomMember.getRoom());
+        BigDecimal commission = commissionCalculator.commissionFor(share);
+        BigDecimal amount = share.add(commission);
 
         SavedCard savedCard = null;
         if (request.getSavedCardId() != null) {
@@ -96,6 +101,7 @@ public class PaymentService {
                 .roomMember(roomMember)
                 .user(currentUser)
                 .amount(amount)
+                .commissionAmount(commission)
                 .status(PaymentIntentStatus.PENDING)
                 .providerName(gateway.providerName())
                 .saveCardRequested(Boolean.TRUE.equals(request.getSaveCard()))
@@ -108,7 +114,10 @@ public class PaymentService {
                 "INTENT", intent.getId(), "CREATED",
                 null, intent.getStatus().name(),
                 currentUser.getId(), null, intent.getIdempotencyKey(),
-                Map.of("provider", gateway.providerName(), "amount", amount.toPlainString())
+                Map.of("provider", gateway.providerName(),
+                        "amount", amount.toPlainString(),
+                        "share", share.toPlainString(),
+                        "commission", commission.toPlainString())
         );
 
         GatewayChargeRequest chargeReq = GatewayChargeRequest.builder()
@@ -457,10 +466,16 @@ public class PaymentService {
     }
 
     private PaymentIntentResponse mapToResponse(PaymentIntent intent) {
+        BigDecimal commission = intent.getCommissionAmount() == null
+                ? BigDecimal.ZERO : intent.getCommissionAmount();
+        BigDecimal share = intent.getAmount() == null
+                ? null : intent.getAmount().subtract(commission);
         return PaymentIntentResponse.builder()
                 .id(intent.getId())
                 .idempotencyKey(intent.getIdempotencyKey())
                 .amount(intent.getAmount())
+                .shareAmount(share)
+                .commissionAmount(commission)
                 .currency("KZT")
                 .status(intent.getStatus())
                 .providerName(intent.getProviderName())
@@ -475,7 +490,8 @@ public class PaymentService {
                 .build();
     }
 
-    private BigDecimal resolvePaymentAmount(Room room) {
+    /** The per-member tariff share (before the ECOpay commission is added on top). */
+    private BigDecimal resolveShareAmount(Room room) {
         if (room == null) {
             throw new InvalidRequestException("Room configuration is required to calculate payment amount");
         }

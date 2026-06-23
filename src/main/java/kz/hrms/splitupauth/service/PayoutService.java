@@ -42,9 +42,6 @@ public class PayoutService {
     private final SavedCardRepository savedCardRepository;
     private final NotificationService notificationService;
 
-    @Value("${app.platform.fee-percent:8}")
-    private int platformFeePercent;
-
     /** Days a captured payment is held in the merchant balance before the owner payout is dispatched. */
     @Value("${app.payout.hold-days:30}")
     private int payoutHoldDays;
@@ -59,10 +56,12 @@ public class PayoutService {
             return null;
         }
         User owner = intent.getRoomMember().getRoom().getOwner();
-        BigDecimal fee = intent.getAmount()
-                .multiply(BigDecimal.valueOf(platformFeePercent))
-                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal payoutAmount = intent.getAmount().subtract(fee);
+        // The member was charged (share + commission). The owner is paid the full share;
+        // ECOpay keeps the commission. Owners never pay a commission themselves.
+        BigDecimal commission = intent.getCommissionAmount() == null
+                ? BigDecimal.ZERO : intent.getCommissionAmount();
+        BigDecimal payoutAmount = intent.getAmount().subtract(commission)
+                .setScale(2, RoundingMode.HALF_UP);
 
         // Hold the payout: capture happened now, but the owner is only paid once the hold
         // window elapses. The dispatcher skips payouts until releaseAt is reached.
@@ -85,6 +84,7 @@ public class PayoutService {
                 null, payout.getStatus(), null, null,
                 payout.getIdempotencyKey(),
                 java.util.Map.of("amount", payoutAmount.toPlainString(),
+                        "commission", commission.toPlainString(),
                         "releaseAt", releaseAt.toString(),
                         "holdDays", String.valueOf(payoutHoldDays)));
 

@@ -49,14 +49,15 @@ test.describe("Security & IDOR", () => {
     const room = await createDigitalRoom(request, owner.token);
     const membership = await joinRoom(request, member.token, room.id);
 
-    // Even if a client sends extra fields, the charged amount is room.pricePerMember.
+    // Even if a client sends extra fields, the charged amount is server-computed
+    // (member share + ECOpay commission), never client-influenced.
     const res = await request.post(`payments/members/${membership.id}/intent`, {
       ...auth(member.token),
       data: { idempotencyKey: `amt-${Date.now()}`, amount: 1, currency: "USD" },
     });
     expect(res.status()).toBe(201);
     const intent = await res.json();
-    expect(Number(intent.amount)).toBe(Number(room.pricePerMember));
+    expect(Number(intent.amount)).toBe(Number(room.pricePerMemberTotal));
     expect(intent.currency).toBe("KZT");
   });
 
