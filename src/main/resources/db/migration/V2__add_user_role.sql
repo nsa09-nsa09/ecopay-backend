@@ -11,15 +11,8 @@ ALTER TABLE users
 ALTER TABLE users
     ALTER COLUMN role SET DEFAULT 'USER';
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'chk_users_role'
-    ) THEN
+-- CockroachDB does not support anonymous DO blocks; add the constraint directly.
+-- Flyway runs each migration once, so the existence guard isn't needed.
 ALTER TABLE users
     ADD CONSTRAINT chk_users_role
         CHECK (role IN ('USER', 'ADMIN', 'SUPPORT'));
-END IF;
-END $$;
