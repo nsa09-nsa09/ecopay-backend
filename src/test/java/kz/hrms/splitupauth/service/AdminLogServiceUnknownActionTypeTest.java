@@ -61,10 +61,15 @@ class AdminLogServiceUnknownActionTypeTest extends AbstractIntegrationTest {
         // Re-add the same constraint but only for *new* writes — the stray row
         // skips validation thanks to NOT VALID. Mirrors what a real schema
         // would look like mid-migration.
-        // Keep the value list in sync with the latest migration (V32). Test
-        // classes share a singleton testcontainer, so a narrower list here
-        // would brick downstream tests that legitimately write the newer
-        // action types (NEWS_*).
+        //
+        // CRITICAL: this list must stay in sync with the FULL set of
+        // AdminActionType values (i.e. the latest migration to redefine the
+        // constraint — currently V42). Test classes share a singleton
+        // testcontainer and this raw DDL auto-commits (it is NOT rolled back
+        // with the test transaction), so an outdated/narrower list here
+        // permanently overwrites the migrated constraint and bricks any
+        // downstream test that legitimately writes a newer action type
+        // (e.g. LEGAL_DOCUMENT_UPDATED — the omission that caused CI to fail).
         jdbc.execute(
                 "ALTER TABLE admin_action_log "
                         + "ADD CONSTRAINT chk_admin_action_log_action_type "
@@ -79,7 +84,8 @@ class AdminLogServiceUnknownActionTypeTest extends AbstractIntegrationTest {
                         + "'TESTIMONIAL_FEATURED','TESTIMONIAL_UNFEATURED','TESTIMONIAL_EDITED',"
                         + "'TESTIMONIAL_DELETED','SITE_CONTENT_UPDATED',"
                         + "'FEEDBACK_STATUS_CHANGED','FEEDBACK_NOTE_UPDATED',"
-                        + "'NEWS_CREATED','NEWS_UPDATED','NEWS_DELETED'"
+                        + "'NEWS_CREATED','NEWS_UPDATED','NEWS_DELETED',"
+                        + "'LEGAL_DOCUMENT_UPDATED'"
                         + ")) NOT VALID");
 
         // The actual assertion: hydrating that row must not blow up the
