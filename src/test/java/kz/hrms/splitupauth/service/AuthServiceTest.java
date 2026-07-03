@@ -61,6 +61,7 @@ class AuthServiceTest {
     @Mock private RateLimitService rateLimitService;
     @Mock private UserMapper userMapper;
     @Mock private StaffTwoFactorService staffTwoFactorService;
+    @Mock private LegalDocumentService legalDocumentService;
 
     private AuthService authService;
 
@@ -76,7 +77,8 @@ class AuthServiceTest {
                 emailService,
                 rateLimitService,
                 userMapper,
-                staffTwoFactorService
+                staffTwoFactorService,
+                legalDocumentService
         );
     }
 

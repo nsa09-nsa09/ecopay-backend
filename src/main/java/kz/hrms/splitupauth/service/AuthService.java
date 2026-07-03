@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.EmailVerificationToken;
+import kz.hrms.splitupauth.entity.LegalDocument;
 import kz.hrms.splitupauth.entity.PasswordResetToken;
 import kz.hrms.splitupauth.entity.RefreshToken;
 import kz.hrms.splitupauth.entity.StaffTwoFactorChallenge;
@@ -39,6 +40,7 @@ public class AuthService {
     private final RateLimitService rateLimitService;
     private final UserMapper userMapper;
     private final StaffTwoFactorService staffTwoFactorService;
+    private final LegalDocumentService legalDocumentService;
 
     // Dev/test only: auto-verify email on registration so login works without SMTP.
     @Value("${app.dev.auto-verify-email:false}")
@@ -50,6 +52,17 @@ public class AuthService {
             throw new UserAlreadyExistsException("User with this email already exists");
         }
 
+        // @AssertTrue on RegisterRequest.termsAccepted already rejects null/false
+        // with a 400, so anything reaching this point has consented. Persist the
+        // acceptance timestamp + document versions. If the caller didn't send
+        // versions, fall back to the current server-side versions.
+        Integer termsVersion = request.getAcceptedTermsVersion() != null
+                ? request.getAcceptedTermsVersion()
+                : legalDocumentService.currentVersion(LegalDocument.DocType.TERMS);
+        Integer privacyVersion = request.getAcceptedPrivacyVersion() != null
+                ? request.getAcceptedPrivacyVersion()
+                : legalDocumentService.currentVersion(LegalDocument.DocType.PRIVACY);
+
         // Phone is no longer collected at registration — it's requested at
         // room-creation time (when the platform actually needs to verify it).
         User user = User.builder()
@@ -60,6 +73,9 @@ public class AuthService {
                 .role(Role.USER)
                 .reputation(0)
                 .emailVerified(false)
+                .termsAcceptedAt(LocalDateTime.now())
+                .acceptedTermsVersion(termsVersion)
+                .acceptedPrivacyVersion(privacyVersion)
                 .build();
 
         user = userRepository.save(user);

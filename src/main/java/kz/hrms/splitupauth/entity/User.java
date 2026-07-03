@@ -86,6 +86,18 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /** Set once at registration when the user ticks the "I accept ..." box. */
+    @Column(name = "terms_accepted_at")
+    private LocalDateTime termsAcceptedAt;
+
+    /** Version of the Terms of Service the user accepted at registration. */
+    @Column(name = "accepted_terms_version")
+    private Integer acceptedTermsVersion;
+
+    /** Version of the Privacy consent the user accepted at registration. */
+    @Column(name = "accepted_privacy_version")
+    private Integer acceptedPrivacyVersion;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
