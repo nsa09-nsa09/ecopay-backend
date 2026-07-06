@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.entity;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -72,7 +73,7 @@ public class PriceWatchProvider {
 
   /** Selector / regex / JSON-LD path knobs. Shape is extractor-specific. */
   @JdbcTypeCode(SqlTypes.JSON)
-  @Column(name = "extractor_config", columnDefinition = "jsonb")
+  @Column(name = "extractor_config", nullable = false, columnDefinition = "jsonb")
   private JsonNode extractorConfig;
 
   @Column(name = "requires_js", nullable = false)
@@ -128,6 +129,9 @@ public class PriceWatchProvider {
     }
     if (extractorType == null) {
       extractorType = PriceExtractorType.AUTO;
+    }
+    if (extractorConfig == null) {
+      extractorConfig = JsonNodeFactory.instance.objectNode();
     }
     if (status == null) {
       status = PriceWatchStatus.PENDING;
