@@ -98,6 +98,13 @@
             <version>3.1.0</version>
         </dependency>
 
+        <!-- HTML/DOM/CSS/JSON-LD extraction for the Price Watch module. -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.18.3</version>
+        </dependency>
+
         <!-- Source: https://mvnrepository.com/artifact/org.springdoc/springdoc-openapi-starter-webmvc-ui -->
         <dependency>
             <groupId>org.springdoc</groupId>
