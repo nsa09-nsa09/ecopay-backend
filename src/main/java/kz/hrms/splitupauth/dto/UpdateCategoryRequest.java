@@ -12,13 +12,13 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpdateCategoryRequest {
 
-    @Size(max = 100)
-    private String name;
+  @Size(max = 100)
+  private String name;
 
-    @Size(max = 120)
-    private String slug;
+  @Size(max = 120)
+  private String slug;
 
-    private Integer sortOrder;
+  private Integer sortOrder;
 
-    private Boolean isActive;
+  private Boolean isActive;
 }

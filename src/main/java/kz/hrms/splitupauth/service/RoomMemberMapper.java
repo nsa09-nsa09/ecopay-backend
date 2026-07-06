@@ -10,41 +10,41 @@ import org.springframework.stereotype.Component;
 @Component
 public class RoomMemberMapper {
 
-    public RoomMemberDto toDto(RoomMember roomMember) {
-        return RoomMemberDto.builder()
-                .id(roomMember.getId())
-                .roomId(roomMember.getRoom().getId())
-                .userId(roomMember.getUser().getId())
-                .userDisplayName(roomMember.getUser().getDisplayName())
-                .userEmail(roomMember.getUser().getEmail())
-                .userReputation(roomMember.getUser().getReputation())
-                .userReputationLevel(ReputationLevel.fromScore(roomMember.getUser().getReputation()).name())
-                .status(roomMember.getStatus())
-                .requiresAdminReview(roomMember.getRequiresAdminReview())
-                .accessMethod(roomMember.getAccessMethod())
-                .ownerAccessConfirmedAt(roomMember.getOwnerAccessConfirmedAt())
-                .memberConfirmedAt(roomMember.getMemberConfirmedAt())
-                .activatedAt(roomMember.getActivatedAt())
-                .rejectedAt(roomMember.getRejectedAt())
-                .endedAt(roomMember.getEndedAt())
-                .consentAcceptedAt(roomMember.getConsentAcceptedAt())
-                .createdAt(roomMember.getCreatedAt())
-                .build();
-    }
+  public RoomMemberDto toDto(RoomMember roomMember) {
+    return RoomMemberDto.builder()
+        .id(roomMember.getId())
+        .roomId(roomMember.getRoom().getId())
+        .userId(roomMember.getUser().getId())
+        .userDisplayName(roomMember.getUser().getDisplayName())
+        .userEmail(roomMember.getUser().getEmail())
+        .userReputation(roomMember.getUser().getReputation())
+        .userReputationLevel(ReputationLevel.fromScore(roomMember.getUser().getReputation()).name())
+        .status(roomMember.getStatus())
+        .requiresAdminReview(roomMember.getRequiresAdminReview())
+        .accessMethod(roomMember.getAccessMethod())
+        .ownerAccessConfirmedAt(roomMember.getOwnerAccessConfirmedAt())
+        .memberConfirmedAt(roomMember.getMemberConfirmedAt())
+        .activatedAt(roomMember.getActivatedAt())
+        .rejectedAt(roomMember.getRejectedAt())
+        .endedAt(roomMember.getEndedAt())
+        .consentAcceptedAt(roomMember.getConsentAcceptedAt())
+        .createdAt(roomMember.getCreatedAt())
+        .build();
+  }
 
-    public MyRoomMembershipDto toMyDto(RoomMember roomMember, RoomMemberIdentifier identifier) {
-        return MyRoomMembershipDto.builder()
-                .id(roomMember.getId())
-                .roomId(roomMember.getRoom().getId())
-                .userId(roomMember.getUser().getId())
-                .status(roomMember.getStatus())
-                .requiresAdminReview(roomMember.getRequiresAdminReview())
-                .identifierType(identifier != null ? identifier.getIdentifierType() : null)
-                .identifierMasked(identifier != null ? identifier.getIdentifierMasked() : null)
-                .accessMethod(roomMember.getAccessMethod())
-                .ownerAccessConfirmedAt(roomMember.getOwnerAccessConfirmedAt())
-                .memberConfirmedAt(roomMember.getMemberConfirmedAt())
-                .activatedAt(roomMember.getActivatedAt())
-                .build();
-    }
+  public MyRoomMembershipDto toMyDto(RoomMember roomMember, RoomMemberIdentifier identifier) {
+    return MyRoomMembershipDto.builder()
+        .id(roomMember.getId())
+        .roomId(roomMember.getRoom().getId())
+        .userId(roomMember.getUser().getId())
+        .status(roomMember.getStatus())
+        .requiresAdminReview(roomMember.getRequiresAdminReview())
+        .identifierType(identifier != null ? identifier.getIdentifierType() : null)
+        .identifierMasked(identifier != null ? identifier.getIdentifierMasked() : null)
+        .accessMethod(roomMember.getAccessMethod())
+        .ownerAccessConfirmedAt(roomMember.getOwnerAccessConfirmedAt())
+        .memberConfirmedAt(roomMember.getMemberConfirmedAt())
+        .activatedAt(roomMember.getActivatedAt())
+        .build();
+  }
 }

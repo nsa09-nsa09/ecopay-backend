@@ -7,9 +7,9 @@ import lombok.Data;
 @Data
 @Builder
 public class PayoutCardBindingResponse {
-    private Long bindingId;
-    private String paymentUrl;
-    private boolean requiresRedirect;
-    private String status; // PENDING | FAILED
-    private String failureMessage;
+  private Long bindingId;
+  private String paymentUrl;
+  private boolean requiresRedirect;
+  private String status; // PENDING | FAILED
+  private String failureMessage;
 }

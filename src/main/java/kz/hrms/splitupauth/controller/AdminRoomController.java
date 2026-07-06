@@ -15,27 +15,25 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class AdminRoomController {
 
-    private final RoomService roomService;
+  private final RoomService roomService;
 
-    @GetMapping
-    public ResponseEntity<PagedResponse<RoomSummaryDto>> list(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) RoomStatus status,
-            @RequestParam(required = false) RoomType roomType,
-            @RequestParam(required = false) Long categoryId,
-            @RequestParam(required = false) Long serviceId,
-            @RequestParam(required = false) String sortBy,
-            @RequestParam(required = false) String sortDir
-    ) {
-        RoomFilter filter = RoomFilter.builder()
-                .status(status)
-                .roomType(roomType)
-                .categoryId(categoryId)
-                .serviceId(serviceId)
-                .build();
-        return ResponseEntity.ok(
-                roomService.getRooms(page, size, filter, sortBy, sortDir)
-        );
-    }
+  @GetMapping
+  public ResponseEntity<PagedResponse<RoomSummaryDto>> list(
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size,
+      @RequestParam(required = false) RoomStatus status,
+      @RequestParam(required = false) RoomType roomType,
+      @RequestParam(required = false) Long categoryId,
+      @RequestParam(required = false) Long serviceId,
+      @RequestParam(required = false) String sortBy,
+      @RequestParam(required = false) String sortDir) {
+    RoomFilter filter =
+        RoomFilter.builder()
+            .status(status)
+            .roomType(roomType)
+            .categoryId(categoryId)
+            .serviceId(serviceId)
+            .build();
+    return ResponseEntity.ok(roomService.getRooms(page, size, filter, sortBy, sortDir));
+  }
 }

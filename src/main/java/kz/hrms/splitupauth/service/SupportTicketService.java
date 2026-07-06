@@ -1,8 +1,11 @@
 package kz.hrms.splitupauth.service;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 import kz.hrms.splitupauth.dto.CreateSupportMessageRequest;
-import kz.hrms.splitupauth.util.TextSanitizer;
 import kz.hrms.splitupauth.dto.CreateSupportTicketRequest;
+import kz.hrms.splitupauth.dto.PageResponse;
 import kz.hrms.splitupauth.dto.SupportMessageDto;
 import kz.hrms.splitupauth.dto.SupportTicketResponse;
 import kz.hrms.splitupauth.dto.UpdateSupportTicketStatusRequest;
@@ -14,453 +17,459 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportMessageRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
+import kz.hrms.splitupauth.util.TextSanitizer;
 import kz.hrms.splitupauth.websocket.SupportTicketRealtimeService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import kz.hrms.splitupauth.dto.PageResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.List;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class SupportTicketService {
 
-    private final SupportTicketRepository supportTicketRepository;
-    private final SupportMessageRepository supportMessageRepository;
-    private final RoomRepository roomRepository;
-    private final RoomMemberRepository roomMemberRepository;
-    private final ModerationService moderationService;
-    private final SupportTicketRealtimeService supportTicketRealtimeService;
-    private final NotificationService notificationService;
+  private final SupportTicketRepository supportTicketRepository;
+  private final SupportMessageRepository supportMessageRepository;
+  private final RoomRepository roomRepository;
+  private final RoomMemberRepository roomMemberRepository;
+  private final ModerationService moderationService;
+  private final SupportTicketRealtimeService supportTicketRealtimeService;
+  private final NotificationService notificationService;
 
-    @Transactional
-    public SupportTicketResponse createTicket(User currentUser, CreateSupportTicketRequest request) {
-        Room room = null;
-        RoomMember roomMember = null;
+  @Transactional
+  public SupportTicketResponse createTicket(User currentUser, CreateSupportTicketRequest request) {
+    Room room = null;
+    RoomMember roomMember = null;
 
-        if (request.getRoomId() != null) {
-            room = roomRepository.findById(request.getRoomId())
-                    .filter(r -> r.getDeletedAt() == null)
-                    .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
-        }
-
-        if (request.getRoomMemberId() != null) {
-            roomMember = roomMemberRepository.findById(request.getRoomMemberId())
-                    .filter(rm -> rm.getDeletedAt() == null)
-                    .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
-
-            if (!roomMember.getUser().getId().equals(currentUser.getId())
-                    && !roomMember.getRoom().getOwner().getId().equals(currentUser.getId())) {
-                throw new ForbiddenOperationException("You cannot create ticket for this membership");
-            }
-
-            if (room == null) {
-                room = roomMember.getRoom();
-            }
-        }
-
-        // IDOR guard: if a room is referenced without an (already-verified) membership,
-        // the caller must be the owner or an actual member of that room.
-        if (room != null && roomMember == null) {
-            boolean isOwner = room.getOwner().getId().equals(currentUser.getId());
-            boolean isMember = roomMemberRepository
-                    .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
-                    .isPresent();
-            if (!isOwner && !isMember) {
-                throw new ForbiddenOperationException("You cannot create a ticket for a room you are not part of");
-            }
-        }
-
-        SupportTicket ticket = SupportTicket.builder()
-                .user(currentUser)
-                .room(room)
-                .roomMember(roomMember)
-                .subject(TextSanitizer.sanitize(request.getSubject()))
-                .topic(request.getTopic())
-                .status(SupportTicketStatus.OPEN)
-                .priority(roomMember != null ? SupportTicketPriority.HIGH : SupportTicketPriority.NORMAL)
-                .escalatedToDispute(false)
-                .build();
-
-        ticket = supportTicketRepository.save(ticket);
-
-        SupportMessage firstMessage = SupportMessage.builder()
-                .ticket(ticket)
-                .senderUser(currentUser)
-                .senderRole(SupportSenderRole.USER)
-                .message(TextSanitizer.sanitize(request.getMessage()))
-                .build();
-
-        supportMessageRepository.save(firstMessage);
-
-        if (roomMember != null) {
-            if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
-                roomMember.setRequiresAdminReview(true);
-                roomMemberRepository.save(roomMember);
-            }
-
-            moderationService.enqueueMembershipForReview(
-                    roomMember,
-                    "SUPPORT_TICKET",
-                    BigDecimal.ZERO
-            );
-        }
-
-        return publishAndReturn(ticket);
+    if (request.getRoomId() != null) {
+      room =
+          roomRepository
+              .findById(request.getRoomId())
+              .filter(r -> r.getDeletedAt() == null)
+              .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
     }
 
-    private SupportTicketResponse publishAndReturn(SupportTicket ticket) {
-        SupportTicketResponse response = mapTicket(ticket);
-        supportTicketRealtimeService.publishTicketUpdate(response);
-        return response;
+    if (request.getRoomMemberId() != null) {
+      roomMember =
+          roomMemberRepository
+              .findById(request.getRoomMemberId())
+              .filter(rm -> rm.getDeletedAt() == null)
+              .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+
+      if (!roomMember.getUser().getId().equals(currentUser.getId())
+          && !roomMember.getRoom().getOwner().getId().equals(currentUser.getId())) {
+        throw new ForbiddenOperationException("You cannot create ticket for this membership");
+      }
+
+      if (room == null) {
+        room = roomMember.getRoom();
+      }
     }
 
-    @Transactional(readOnly = true)
-    public List<SupportTicketResponse> getMyTickets(User currentUser) {
-        return supportTicketRepository.findByUserOrderByCreatedAtDesc(currentUser)
-                .stream()
-                .map(this::mapTicket)
-                .toList();
+    // IDOR guard: if a room is referenced without an (already-verified) membership,
+    // the caller must be the owner or an actual member of that room.
+    if (room != null && roomMember == null) {
+      boolean isOwner = room.getOwner().getId().equals(currentUser.getId());
+      boolean isMember =
+          roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, currentUser).isPresent();
+      if (!isOwner && !isMember) {
+        throw new ForbiddenOperationException(
+            "You cannot create a ticket for a room you are not part of");
+      }
     }
 
-    @Transactional(readOnly = true)
-    public SupportTicketResponse getMyTicket(Long ticketId, User currentUser) {
-        SupportTicket ticket = supportTicketRepository.findByIdAndUser(ticketId, currentUser)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+    SupportTicket ticket =
+        SupportTicket.builder()
+            .user(currentUser)
+            .room(room)
+            .roomMember(roomMember)
+            .subject(TextSanitizer.sanitize(request.getSubject()))
+            .topic(request.getTopic())
+            .status(SupportTicketStatus.OPEN)
+            .priority(
+                roomMember != null ? SupportTicketPriority.HIGH : SupportTicketPriority.NORMAL)
+            .escalatedToDispute(false)
+            .build();
 
-        return mapTicket(ticket);
+    ticket = supportTicketRepository.save(ticket);
+
+    SupportMessage firstMessage =
+        SupportMessage.builder()
+            .ticket(ticket)
+            .senderUser(currentUser)
+            .senderRole(SupportSenderRole.USER)
+            .message(TextSanitizer.sanitize(request.getMessage()))
+            .build();
+
+    supportMessageRepository.save(firstMessage);
+
+    if (roomMember != null) {
+      if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
+        roomMember.setRequiresAdminReview(true);
+        roomMemberRepository.save(roomMember);
+      }
+
+      moderationService.enqueueMembershipForReview(roomMember, "SUPPORT_TICKET", BigDecimal.ZERO);
     }
 
-    @Transactional
-    public SupportTicketResponse addMessage(Long ticketId, User currentUser, CreateSupportMessageRequest request) {
-        SupportTicket ticket = supportTicketRepository.findById(ticketId)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+    return publishAndReturn(ticket);
+  }
 
-        if (!ticket.getUser().getId().equals(currentUser.getId())) {
-            throw new ForbiddenOperationException("You can only write to your own ticket");
-        }
+  private SupportTicketResponse publishAndReturn(SupportTicket ticket) {
+    SupportTicketResponse response = mapTicket(ticket);
+    supportTicketRealtimeService.publishTicketUpdate(response);
+    return response;
+  }
 
-        if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
-            throw new InvalidRequestException("Cannot write to closed ticket");
-        }
+  @Transactional(readOnly = true)
+  public List<SupportTicketResponse> getMyTickets(User currentUser) {
+    return supportTicketRepository.findByUserOrderByCreatedAtDesc(currentUser).stream()
+        .map(this::mapTicket)
+        .toList();
+  }
 
-        SupportMessage message = SupportMessage.builder()
-                .ticket(ticket)
-                .senderUser(currentUser)
-                .senderRole(SupportSenderRole.USER)
-                .message(TextSanitizer.sanitize(request.getMessage()))
-                .build();
+  @Transactional(readOnly = true)
+  public SupportTicketResponse getMyTicket(Long ticketId, User currentUser) {
+    SupportTicket ticket =
+        supportTicketRepository
+            .findByIdAndUser(ticketId, currentUser)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
 
-        supportMessageRepository.save(message);
+    return mapTicket(ticket);
+  }
 
-        if (ticket.getStatus() == SupportTicketStatus.WAITING_USER) {
-            ticket.setStatus(SupportTicketStatus.IN_PROGRESS);
-            supportTicketRepository.save(ticket);
-        }
+  @Transactional
+  public SupportTicketResponse addMessage(
+      Long ticketId, User currentUser, CreateSupportMessageRequest request) {
+    SupportTicket ticket =
+        supportTicketRepository
+            .findById(ticketId)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
 
-        return publishAndReturn(ticket);
+    if (!ticket.getUser().getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("You can only write to your own ticket");
     }
 
-    @Transactional(readOnly = true)
-    public List<SupportTicketResponse> getStaffQueue(User currentUser) {
-        ensureStaff(currentUser);
-
-        return supportTicketRepository.findByStatusInOrderByCreatedAtAsc(
-                        List.of(
-                                SupportTicketStatus.OPEN,
-                                SupportTicketStatus.IN_PROGRESS,
-                                SupportTicketStatus.WAITING_USER,
-                                SupportTicketStatus.ESCALATED
-                        )
-                ).stream()
-                .map(this::mapTicket)
-                .toList();
-    }
-    //Get staff queue with pagination
-    @Transactional(readOnly = true)
-    public PageResponse<SupportTicketResponse> getStaffQueuePaged(User currentUser, int page, int size) {
-        ensureStaff(currentUser);
-
-        Pageable pageable = PageRequest.of(page, size);
-
-        Page<SupportTicket> result = supportTicketRepository.findByStatusInOrderByCreatedAtAsc(
-                List.of(
-                        SupportTicketStatus.OPEN,
-                        SupportTicketStatus.IN_PROGRESS,
-                        SupportTicketStatus.WAITING_USER,
-                        SupportTicketStatus.ESCALATED
-                ),
-                pageable
-        );
-
-        List<SupportTicketResponse> items = result.getContent()
-                .stream()
-                .map(this::mapTicket)
-                .toList();
-
-        return PageResponse.from(result, items);
-    }
-    @Transactional(readOnly = true)
-    public List<SupportTicketResponse> getAssignedTickets(User currentUser) {
-        ensureStaff(currentUser);
-
-        return supportTicketRepository.findByAssignedAdminOrderByUpdatedAtDescCreatedAtDesc(currentUser)
-                .stream()
-                .map(this::mapTicket)
-                .toList();
-    }
-    //Get assigned tickets with pagination
-    @Transactional(readOnly = true)
-    public PageResponse<SupportTicketResponse> getAssignedTicketsPaged(User currentUser, int page, int size) {
-        ensureStaff(currentUser);
-
-        Pageable pageable = PageRequest.of(page, size);
-
-        Page<SupportTicket> result = supportTicketRepository.findByAssignedAdminOrderByUpdatedAtDescCreatedAtDesc(
-                currentUser,
-                pageable
-        );
-
-        List<SupportTicketResponse> items = result.getContent()
-                .stream()
-                .map(this::mapTicket)
-                .toList();
-
-        return PageResponse.from(result, items);
+    if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
+      throw new InvalidRequestException("Cannot write to closed ticket");
     }
 
-    @Transactional(readOnly = true)
-    public SupportTicketResponse getStaffTicket(Long ticketId, User currentUser) {
-        ensureStaff(currentUser);
+    SupportMessage message =
+        SupportMessage.builder()
+            .ticket(ticket)
+            .senderUser(currentUser)
+            .senderRole(SupportSenderRole.USER)
+            .message(TextSanitizer.sanitize(request.getMessage()))
+            .build();
 
-        SupportTicket ticket = supportTicketRepository.findById(ticketId)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+    supportMessageRepository.save(message);
 
-        return mapTicket(ticket);
+    if (ticket.getStatus() == SupportTicketStatus.WAITING_USER) {
+      ticket.setStatus(SupportTicketStatus.IN_PROGRESS);
+      supportTicketRepository.save(ticket);
     }
 
-    @Transactional
-    public SupportTicketResponse assignTicketToMe(Long ticketId, User currentUser) {
-        ensureStaff(currentUser);
+    return publishAndReturn(ticket);
+  }
 
-        SupportTicket ticket = supportTicketRepository.findById(ticketId)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+  @Transactional(readOnly = true)
+  public List<SupportTicketResponse> getStaffQueue(User currentUser) {
+    ensureStaff(currentUser);
 
-        if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
-            throw new InvalidRequestException("Cannot assign closed ticket");
-        }
+    return supportTicketRepository
+        .findByStatusInOrderByCreatedAtAsc(
+            List.of(
+                SupportTicketStatus.OPEN,
+                SupportTicketStatus.IN_PROGRESS,
+                SupportTicketStatus.WAITING_USER,
+                SupportTicketStatus.ESCALATED))
+        .stream()
+        .map(this::mapTicket)
+        .toList();
+  }
 
-        ticket.setAssignedAdmin(currentUser);
+  // Get staff queue with pagination
+  @Transactional(readOnly = true)
+  public PageResponse<SupportTicketResponse> getStaffQueuePaged(
+      User currentUser, int page, int size) {
+    ensureStaff(currentUser);
 
-        if (ticket.getStatus() == SupportTicketStatus.OPEN) {
-            ticket.setStatus(SupportTicketStatus.IN_PROGRESS);
-        }
+    Pageable pageable = PageRequest.of(page, size);
 
-        supportTicketRepository.save(ticket);
-        return publishAndReturn(ticket);
+    Page<SupportTicket> result =
+        supportTicketRepository.findByStatusInOrderByCreatedAtAsc(
+            List.of(
+                SupportTicketStatus.OPEN,
+                SupportTicketStatus.IN_PROGRESS,
+                SupportTicketStatus.WAITING_USER,
+                SupportTicketStatus.ESCALATED),
+            pageable);
+
+    List<SupportTicketResponse> items = result.getContent().stream().map(this::mapTicket).toList();
+
+    return PageResponse.from(result, items);
+  }
+
+  @Transactional(readOnly = true)
+  public List<SupportTicketResponse> getAssignedTickets(User currentUser) {
+    ensureStaff(currentUser);
+
+    return supportTicketRepository
+        .findByAssignedAdminOrderByUpdatedAtDescCreatedAtDesc(currentUser)
+        .stream()
+        .map(this::mapTicket)
+        .toList();
+  }
+
+  // Get assigned tickets with pagination
+  @Transactional(readOnly = true)
+  public PageResponse<SupportTicketResponse> getAssignedTicketsPaged(
+      User currentUser, int page, int size) {
+    ensureStaff(currentUser);
+
+    Pageable pageable = PageRequest.of(page, size);
+
+    Page<SupportTicket> result =
+        supportTicketRepository.findByAssignedAdminOrderByUpdatedAtDescCreatedAtDesc(
+            currentUser, pageable);
+
+    List<SupportTicketResponse> items = result.getContent().stream().map(this::mapTicket).toList();
+
+    return PageResponse.from(result, items);
+  }
+
+  @Transactional(readOnly = true)
+  public SupportTicketResponse getStaffTicket(Long ticketId, User currentUser) {
+    ensureStaff(currentUser);
+
+    SupportTicket ticket =
+        supportTicketRepository
+            .findById(ticketId)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+
+    return mapTicket(ticket);
+  }
+
+  @Transactional
+  public SupportTicketResponse assignTicketToMe(Long ticketId, User currentUser) {
+    ensureStaff(currentUser);
+
+    SupportTicket ticket =
+        supportTicketRepository
+            .findById(ticketId)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+
+    if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
+      throw new InvalidRequestException("Cannot assign closed ticket");
     }
 
-    @Transactional
-    public SupportTicketResponse updateTicketStatus(
-            Long ticketId,
-            User currentUser,
-            UpdateSupportTicketStatusRequest request
-    ) {
-        ensureStaff(currentUser);
+    ticket.setAssignedAdmin(currentUser);
 
-        SupportTicket ticket = supportTicketRepository.findById(ticketId)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
-
-        SupportTicketStatus newStatus;
-        try {
-            newStatus = SupportTicketStatus.valueOf(request.getStatus().trim().toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            throw new InvalidRequestException("Unsupported ticket status");
-        }
-
-        if (newStatus == SupportTicketStatus.ESCALATED) {
-            throw new InvalidRequestException("Use dedicated escalate endpoint");
-        }
-
-        ticket.setAssignedAdmin(currentUser);
-        ticket.setStatus(newStatus);
-
-        if (newStatus == SupportTicketStatus.CLOSED) {
-            ticket.setClosedAt(LocalDateTime.now());
-        } else {
-            ticket.setClosedAt(null);
-        }
-
-        supportTicketRepository.save(ticket);
-        return publishAndReturn(ticket);
+    if (ticket.getStatus() == SupportTicketStatus.OPEN) {
+      ticket.setStatus(SupportTicketStatus.IN_PROGRESS);
     }
 
-    @Transactional
-    public SupportTicketResponse addStaffMessage(
-            Long ticketId,
-            User currentUser,
-            CreateSupportMessageRequest request
-    ) {
-        ensureStaff(currentUser);
+    supportTicketRepository.save(ticket);
+    return publishAndReturn(ticket);
+  }
 
-        SupportTicket ticket = supportTicketRepository.findById(ticketId)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+  @Transactional
+  public SupportTicketResponse updateTicketStatus(
+      Long ticketId, User currentUser, UpdateSupportTicketStatusRequest request) {
+    ensureStaff(currentUser);
 
-        if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
-            throw new InvalidRequestException("Cannot write to closed ticket");
-        }
+    SupportTicket ticket =
+        supportTicketRepository
+            .findById(ticketId)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
 
-        ticket.setAssignedAdmin(currentUser);
-
-        SupportMessage message = SupportMessage.builder()
-                .ticket(ticket)
-                .senderUser(currentUser)
-                .senderRole(resolveStaffSenderRole(currentUser))
-                .message(request.getMessage())
-                .build();
-
-        supportMessageRepository.save(message);
-
-        if (ticket.getStatus() == SupportTicketStatus.OPEN
-                || ticket.getStatus() == SupportTicketStatus.IN_PROGRESS
-                || ticket.getStatus() == SupportTicketStatus.WAITING_USER) {
-            ticket.setStatus(SupportTicketStatus.WAITING_USER);
-        }
-
-        supportTicketRepository.save(ticket);
-
-        // Notify the ticket owner that support replied.
-        notificationService.notify(
-                ticket.getUser(),
-                NotificationType.TICKET_REPLY,
-                "Ответ поддержки",
-                "Поддержка ответила на вашу заявку «" + ticket.getSubject() + "».",
-                "/support",
-                java.util.Map.of("ticketId", ticket.getId()));
-
-        return publishAndReturn(ticket);
+    SupportTicketStatus newStatus;
+    try {
+      newStatus = SupportTicketStatus.valueOf(request.getStatus().trim().toUpperCase());
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException("Unsupported ticket status");
     }
 
-    @Transactional
-    public SupportTicketResponse escalateTicketToAdmin(Long ticketId, User currentUser) {
-        ensureStaff(currentUser);
-
-        SupportTicket ticket = supportTicketRepository.findById(ticketId)
-                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
-
-        if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
-            throw new InvalidRequestException("Cannot escalate closed ticket");
-        }
-
-        if (ticket.getRoomMember() == null) {
-            throw new InvalidRequestException("Only membership-linked tickets can be escalated for now");
-        }
-
-        RoomMember roomMember = ticket.getRoomMember();
-
-        if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
-            roomMember.setRequiresAdminReview(true);
-            roomMemberRepository.save(roomMember);
-        }
-
-        moderationService.enqueueMembershipForReview(
-                roomMember,
-                "SUPPORT_ESCALATION",
-                BigDecimal.ZERO
-        );
-
-        ticket.setAssignedAdmin(currentUser.getRole() == Role.ADMIN ? currentUser : ticket.getAssignedAdmin());
-        ticket.setEscalatedToDispute(true);
-        ticket.setStatus(SupportTicketStatus.ESCALATED);
-
-        SupportMessage systemMessage = SupportMessage.builder()
-                .ticket(ticket)
-                .senderUser(currentUser)
-                .senderRole(resolveStaffSenderRole(currentUser))
-                .message("Ticket escalated to admin moderation")
-                .build();
-
-        supportMessageRepository.save(systemMessage);
-        supportTicketRepository.save(ticket);
-
-        return publishAndReturn(ticket);
+    if (newStatus == SupportTicketStatus.ESCALATED) {
+      throw new InvalidRequestException("Use dedicated escalate endpoint");
     }
 
-    @Transactional
-    public SupportTicket createSystemAccessIssueTicket(RoomMember roomMember, String subject, String message) {
-        boolean alreadyExists = supportTicketRepository.existsByRoomMemberAndTopicAndStatusIn(
-                roomMember,
-                "ACCESS_ISSUE",
-                List.of(
-                        SupportTicketStatus.OPEN,
-                        SupportTicketStatus.IN_PROGRESS,
-                        SupportTicketStatus.ESCALATED
-                )
-        );
+    ticket.setAssignedAdmin(currentUser);
+    ticket.setStatus(newStatus);
 
-        if (alreadyExists) {
-            return null;
-        }
-
-        SupportTicket ticket = SupportTicket.builder()
-                .user(roomMember.getUser())
-                .room(roomMember.getRoom())
-                .roomMember(roomMember)
-                .subject(subject)
-                .topic("ACCESS_ISSUE")
-                .status(SupportTicketStatus.OPEN)
-                .priority(SupportTicketPriority.HIGH)
-                .escalatedToDispute(false)
-                .build();
-
-        ticket = supportTicketRepository.save(ticket);
-
-        SupportMessage systemMessage = SupportMessage.builder()
-                .ticket(ticket)
-                .senderUser(roomMember.getUser())
-                .senderRole(SupportSenderRole.SYSTEM)
-                .message(message)
-                .build();
-
-        supportMessageRepository.save(systemMessage);
-
-        if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
-            roomMember.setRequiresAdminReview(true);
-            roomMemberRepository.save(roomMember);
-        }
-
-        moderationService.enqueueMembershipForReview(
-                roomMember,
-                "PENDING_TIMEOUT",
-                BigDecimal.ZERO
-        );
-
-        publishAndReturn(ticket);
-        return ticket;
+    if (newStatus == SupportTicketStatus.CLOSED) {
+      ticket.setClosedAt(LocalDateTime.now());
+    } else {
+      ticket.setClosedAt(null);
     }
 
-    private void ensureStaff(User currentUser) {
-        if (currentUser == null || (currentUser.getRole() != Role.ADMIN && currentUser.getRole() != Role.SUPPORT)) {
-            throw new ForbiddenOperationException("Support or admin access required");
-        }
+    supportTicketRepository.save(ticket);
+    return publishAndReturn(ticket);
+  }
+
+  @Transactional
+  public SupportTicketResponse addStaffMessage(
+      Long ticketId, User currentUser, CreateSupportMessageRequest request) {
+    ensureStaff(currentUser);
+
+    SupportTicket ticket =
+        supportTicketRepository
+            .findById(ticketId)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+
+    if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
+      throw new InvalidRequestException("Cannot write to closed ticket");
     }
 
-    private SupportSenderRole resolveStaffSenderRole(User currentUser) {
-        return currentUser.getRole() == Role.ADMIN
-                ? SupportSenderRole.ADMIN
-                : SupportSenderRole.SUPPORT;
+    ticket.setAssignedAdmin(currentUser);
+
+    SupportMessage message =
+        SupportMessage.builder()
+            .ticket(ticket)
+            .senderUser(currentUser)
+            .senderRole(resolveStaffSenderRole(currentUser))
+            .message(request.getMessage())
+            .build();
+
+    supportMessageRepository.save(message);
+
+    if (ticket.getStatus() == SupportTicketStatus.OPEN
+        || ticket.getStatus() == SupportTicketStatus.IN_PROGRESS
+        || ticket.getStatus() == SupportTicketStatus.WAITING_USER) {
+      ticket.setStatus(SupportTicketStatus.WAITING_USER);
     }
 
-    private SupportTicketResponse mapTicket(SupportTicket ticket) {
-        List<SupportMessageDto> messages = supportMessageRepository.findByTicketOrderByCreatedAtAsc(ticket)
-                .stream()
-                .map(msg -> SupportMessageDto.builder()
+    supportTicketRepository.save(ticket);
+
+    // Notify the ticket owner that support replied.
+    notificationService.notify(
+        ticket.getUser(),
+        NotificationType.TICKET_REPLY,
+        "Ответ поддержки",
+        "Поддержка ответила на вашу заявку «" + ticket.getSubject() + "».",
+        "/support",
+        java.util.Map.of("ticketId", ticket.getId()));
+
+    return publishAndReturn(ticket);
+  }
+
+  @Transactional
+  public SupportTicketResponse escalateTicketToAdmin(Long ticketId, User currentUser) {
+    ensureStaff(currentUser);
+
+    SupportTicket ticket =
+        supportTicketRepository
+            .findById(ticketId)
+            .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+
+    if (ticket.getStatus() == SupportTicketStatus.CLOSED) {
+      throw new InvalidRequestException("Cannot escalate closed ticket");
+    }
+
+    if (ticket.getRoomMember() == null) {
+      throw new InvalidRequestException("Only membership-linked tickets can be escalated for now");
+    }
+
+    RoomMember roomMember = ticket.getRoomMember();
+
+    if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
+      roomMember.setRequiresAdminReview(true);
+      roomMemberRepository.save(roomMember);
+    }
+
+    moderationService.enqueueMembershipForReview(roomMember, "SUPPORT_ESCALATION", BigDecimal.ZERO);
+
+    ticket.setAssignedAdmin(
+        currentUser.getRole() == Role.ADMIN ? currentUser : ticket.getAssignedAdmin());
+    ticket.setEscalatedToDispute(true);
+    ticket.setStatus(SupportTicketStatus.ESCALATED);
+
+    SupportMessage systemMessage =
+        SupportMessage.builder()
+            .ticket(ticket)
+            .senderUser(currentUser)
+            .senderRole(resolveStaffSenderRole(currentUser))
+            .message("Ticket escalated to admin moderation")
+            .build();
+
+    supportMessageRepository.save(systemMessage);
+    supportTicketRepository.save(ticket);
+
+    return publishAndReturn(ticket);
+  }
+
+  @Transactional
+  public SupportTicket createSystemAccessIssueTicket(
+      RoomMember roomMember, String subject, String message) {
+    boolean alreadyExists =
+        supportTicketRepository.existsByRoomMemberAndTopicAndStatusIn(
+            roomMember,
+            "ACCESS_ISSUE",
+            List.of(
+                SupportTicketStatus.OPEN,
+                SupportTicketStatus.IN_PROGRESS,
+                SupportTicketStatus.ESCALATED));
+
+    if (alreadyExists) {
+      return null;
+    }
+
+    SupportTicket ticket =
+        SupportTicket.builder()
+            .user(roomMember.getUser())
+            .room(roomMember.getRoom())
+            .roomMember(roomMember)
+            .subject(subject)
+            .topic("ACCESS_ISSUE")
+            .status(SupportTicketStatus.OPEN)
+            .priority(SupportTicketPriority.HIGH)
+            .escalatedToDispute(false)
+            .build();
+
+    ticket = supportTicketRepository.save(ticket);
+
+    SupportMessage systemMessage =
+        SupportMessage.builder()
+            .ticket(ticket)
+            .senderUser(roomMember.getUser())
+            .senderRole(SupportSenderRole.SYSTEM)
+            .message(message)
+            .build();
+
+    supportMessageRepository.save(systemMessage);
+
+    if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
+      roomMember.setRequiresAdminReview(true);
+      roomMemberRepository.save(roomMember);
+    }
+
+    moderationService.enqueueMembershipForReview(roomMember, "PENDING_TIMEOUT", BigDecimal.ZERO);
+
+    publishAndReturn(ticket);
+    return ticket;
+  }
+
+  private void ensureStaff(User currentUser) {
+    if (currentUser == null
+        || (currentUser.getRole() != Role.ADMIN && currentUser.getRole() != Role.SUPPORT)) {
+      throw new ForbiddenOperationException("Support or admin access required");
+    }
+  }
+
+  private SupportSenderRole resolveStaffSenderRole(User currentUser) {
+    return currentUser.getRole() == Role.ADMIN
+        ? SupportSenderRole.ADMIN
+        : SupportSenderRole.SUPPORT;
+  }
+
+  private SupportTicketResponse mapTicket(SupportTicket ticket) {
+    List<SupportMessageDto> messages =
+        supportMessageRepository.findByTicketOrderByCreatedAtAsc(ticket).stream()
+            .map(
+                msg ->
+                    SupportMessageDto.builder()
                         .id(msg.getId())
                         .senderUserId(msg.getSenderUser().getId())
                         .senderRole(msg.getSenderRole().name())
@@ -468,24 +477,26 @@ public class SupportTicketService {
                         .attachmentUrl(msg.getAttachmentUrl())
                         .createdAt(msg.getCreatedAt())
                         .build())
-                .toList();
+            .toList();
 
-        return SupportTicketResponse.builder()
-                .id(ticket.getId())
-                .userId(ticket.getUser().getId())
-                .roomId(ticket.getRoom() != null ? ticket.getRoom().getId() : null)
-                .roomMemberId(ticket.getRoomMember() != null ? ticket.getRoomMember().getId() : null)
-                .subject(ticket.getSubject())
-                .topic(ticket.getTopic())
-                .status(ticket.getStatus().name())
-                .priority(ticket.getPriority().name())
-                .escalatedToDispute(ticket.getEscalatedToDispute())
-                .assignedAdminId(ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getId() : null)
-                .assignedAdminDisplayName(ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getDisplayName() : null)
-                .createdAt(ticket.getCreatedAt())
-                .updatedAt(ticket.getUpdatedAt())
-                .closedAt(ticket.getClosedAt())
-                .messages(messages)
-                .build();
-    }
+    return SupportTicketResponse.builder()
+        .id(ticket.getId())
+        .userId(ticket.getUser().getId())
+        .roomId(ticket.getRoom() != null ? ticket.getRoom().getId() : null)
+        .roomMemberId(ticket.getRoomMember() != null ? ticket.getRoomMember().getId() : null)
+        .subject(ticket.getSubject())
+        .topic(ticket.getTopic())
+        .status(ticket.getStatus().name())
+        .priority(ticket.getPriority().name())
+        .escalatedToDispute(ticket.getEscalatedToDispute())
+        .assignedAdminId(
+            ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getId() : null)
+        .assignedAdminDisplayName(
+            ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getDisplayName() : null)
+        .createdAt(ticket.getCreatedAt())
+        .updatedAt(ticket.getUpdatedAt())
+        .closedAt(ticket.getClosedAt())
+        .messages(messages)
+        .build();
+  }
 }

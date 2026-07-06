@@ -17,34 +17,28 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class PaymentController {
 
-    private final PaymentService paymentService;
+  private final PaymentService paymentService;
 
-    @PostMapping("/members/{roomMemberId}/intent")
-    public ResponseEntity<PaymentIntentResponse> createPaymentIntent(
-            @PathVariable Long roomMemberId,
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody CreatePaymentIntentRequest request
-    ) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(paymentService.createPaymentIntent(roomMemberId, user, request));
-    }
+  @PostMapping("/members/{roomMemberId}/intent")
+  public ResponseEntity<PaymentIntentResponse> createPaymentIntent(
+      @PathVariable Long roomMemberId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody CreatePaymentIntentRequest request) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(paymentService.createPaymentIntent(roomMemberId, user, request));
+  }
 
-    @GetMapping("/intents/{paymentIntentId}")
-    public ResponseEntity<PaymentIntentResponse> getPaymentIntent(
-            @PathVariable Long paymentIntentId,
-            @AuthenticationPrincipal User user
-    ) {
-        return ResponseEntity.ok(paymentService.getPaymentIntent(paymentIntentId, user));
-    }
+  @GetMapping("/intents/{paymentIntentId}")
+  public ResponseEntity<PaymentIntentResponse> getPaymentIntent(
+      @PathVariable Long paymentIntentId, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(paymentService.getPaymentIntent(paymentIntentId, user));
+  }
 
-    @PostMapping("/intents/{paymentIntentId}/confirm-success")
-    public ResponseEntity<PaymentIntentResponse> confirmPaymentSuccess(
-            @PathVariable Long paymentIntentId,
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody ConfirmPaymentRequest request
-    ) {
-        return ResponseEntity.ok(
-                paymentService.confirmPaymentSuccess(paymentIntentId, user, request)
-        );
-    }
+  @PostMapping("/intents/{paymentIntentId}/confirm-success")
+  public ResponseEntity<PaymentIntentResponse> confirmPaymentSuccess(
+      @PathVariable Long paymentIntentId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody ConfirmPaymentRequest request) {
+    return ResponseEntity.ok(paymentService.confirmPaymentSuccess(paymentIntentId, user, request));
+  }
 }

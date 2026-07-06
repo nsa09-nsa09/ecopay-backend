@@ -13,15 +13,15 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpdateServiceRequest {
 
-    private Long categoryId;
+  private Long categoryId;
 
-    @Size(max = 120)
-    private String name;
+  @Size(max = 120)
+  private String name;
 
-    @Size(max = 120)
-    private String slug;
+  @Size(max = 120)
+  private String slug;
 
-    private ProviderType providerType;
+  private ProviderType providerType;
 
-    private Boolean isActive;
+  private Boolean isActive;
 }

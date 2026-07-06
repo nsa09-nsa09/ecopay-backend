@@ -16,14 +16,11 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class ReviewController {
 
-    private final ReviewService reviewService;
+  private final ReviewService reviewService;
 
-    @PostMapping
-    public ResponseEntity<ReviewDto> create(
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody CreateReviewRequest body
-    ) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(reviewService.createReview(user, body));
-    }
+  @PostMapping
+  public ResponseEntity<ReviewDto> create(
+      @AuthenticationPrincipal User user, @Valid @RequestBody CreateReviewRequest body) {
+    return ResponseEntity.status(HttpStatus.CREATED).body(reviewService.createReview(user, body));
+  }
 }

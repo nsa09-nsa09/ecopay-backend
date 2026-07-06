@@ -1,27 +1,26 @@
 package kz.hrms.splitupauth.dto;
 
-import lombok.Builder;
-import lombok.Data;
-
 import java.time.LocalDateTime;
 import java.util.List;
+import lombok.Builder;
+import lombok.Data;
 
 @Data
 @Builder
 public class SupportTicketResponse {
-    private Long id;
-    private Long userId;
-    private Long roomId;
-    private Long roomMemberId;
-    private String subject;
-    private String topic;
-    private String status;
-    private String priority;
-    private Boolean escalatedToDispute;
-    private Long assignedAdminId;
-    private String assignedAdminDisplayName;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
-    private LocalDateTime closedAt;
-    private List<SupportMessageDto> messages;
+  private Long id;
+  private Long userId;
+  private Long roomId;
+  private Long roomMemberId;
+  private String subject;
+  private String topic;
+  private String status;
+  private String priority;
+  private Boolean escalatedToDispute;
+  private Long assignedAdminId;
+  private String assignedAdminDisplayName;
+  private LocalDateTime createdAt;
+  private LocalDateTime updatedAt;
+  private LocalDateTime closedAt;
+  private List<SupportMessageDto> messages;
 }

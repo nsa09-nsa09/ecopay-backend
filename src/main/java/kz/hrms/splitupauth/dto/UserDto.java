@@ -12,16 +12,16 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class UserDto {
-    private Long id;
-    private String publicId;
-    private String email;
-    private String displayName;
-    private String phone;
-    private boolean phoneVerified;
-    private String avatar;
-    private UserStatus status;
-    private Role role;
-    private Integer reputation;
-    private String reputationLevel;
-    private Boolean emailVerified;
+  private Long id;
+  private String publicId;
+  private String email;
+  private String displayName;
+  private String phone;
+  private boolean phoneVerified;
+  private String avatar;
+  private UserStatus status;
+  private Role role;
+  private Integer reputation;
+  private String reputationLevel;
+  private Boolean emailVerified;
 }

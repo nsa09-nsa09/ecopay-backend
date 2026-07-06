@@ -23,25 +23,23 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class FeedbackController {
 
-    private final FeedbackService feedbackService;
+  private final FeedbackService feedbackService;
 
-    @PostMapping
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<FeedbackDto> submit(
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody CreateFeedbackRequest request,
-            HttpServletRequest http
-    ) {
-        return ResponseEntity.ok(feedbackService.submit(user, request, http));
-    }
+  @PostMapping
+  @PreAuthorize("isAuthenticated()")
+  public ResponseEntity<FeedbackDto> submit(
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody CreateFeedbackRequest request,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(feedbackService.submit(user, request, http));
+  }
 
-    @GetMapping("/me")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<PagedResponse<FeedbackDto>> listMine(
-            @AuthenticationPrincipal User user,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
-    ) {
-        return ResponseEntity.ok(feedbackService.listMine(user, page, size));
-    }
+  @GetMapping("/me")
+  @PreAuthorize("isAuthenticated()")
+  public ResponseEntity<PagedResponse<FeedbackDto>> listMine(
+      @AuthenticationPrincipal User user,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(feedbackService.listMine(user, page, size));
+  }
 }

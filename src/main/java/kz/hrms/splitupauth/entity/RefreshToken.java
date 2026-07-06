@@ -1,51 +1,52 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "refresh_tokens", indexes = {
-        @Index(name = "idx_token", columnList = "token"),
-        @Index(name = "idx_user_id", columnList = "user_id")
-})
+@Table(
+    name = "refresh_tokens",
+    indexes = {
+      @Index(name = "idx_token", columnList = "token"),
+      @Index(name = "idx_user_id", columnList = "user_id")
+    })
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class RefreshToken {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(nullable = false, unique = true)
-    private String token;
+  @Column(nullable = false, unique = true)
+  private String token;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "user_id", nullable = false)
+  private User user;
 
-    @Column(name = "expires_at", nullable = false)
-    private LocalDateTime expiresAt;
+  @Column(name = "expires_at", nullable = false)
+  private LocalDateTime expiresAt;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+  @Column(name = "created_at", nullable = false)
+  private LocalDateTime createdAt;
 
-    @Column(nullable = false)
-    @Builder.Default
-    private Boolean revoked = false;
+  @Column(nullable = false)
+  @Builder.Default
+  private Boolean revoked = false;
 
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
+  @PrePersist
+  protected void onCreate() {
+    createdAt = LocalDateTime.now();
+  }
 
-    public boolean isExpired() {
-        return LocalDateTime.now().isAfter(expiresAt);
-    }
+  public boolean isExpired() {
+    return LocalDateTime.now().isAfter(expiresAt);
+  }
 }

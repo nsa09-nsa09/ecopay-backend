@@ -14,10 +14,10 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class AdminUpdateServiceReviewRequest {
 
-    @Min(1)
-    @Max(5)
-    private Integer rating;
+  @Min(1)
+  @Max(5)
+  private Integer rating;
 
-    @Size(max = 2000)
-    private String text;
+  @Size(max = 2000)
+  private String text;
 }

@@ -21,50 +21,46 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class UserController {
 
-    private final UserService userService;
-    private final MemberDashboardService memberDashboardService;
+  private final UserService userService;
+  private final MemberDashboardService memberDashboardService;
 
-    @GetMapping("/me")
-    public ResponseEntity<UserDto> getCurrentUser(@AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(userService.getCurrentUser(user));
-    }
+  @GetMapping("/me")
+  public ResponseEntity<UserDto> getCurrentUser(@AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(userService.getCurrentUser(user));
+  }
 
-    @PatchMapping("/me")
-    public ResponseEntity<UserDto> updateProfile(
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody UpdateProfileRequest request
-    ) {
-        return ResponseEntity.ok(userService.updateProfile(user, request));
-    }
+  @PatchMapping("/me")
+  public ResponseEntity<UserDto> updateProfile(
+      @AuthenticationPrincipal User user, @Valid @RequestBody UpdateProfileRequest request) {
+    return ResponseEntity.ok(userService.updateProfile(user, request));
+  }
 
-    @DeleteMapping("/me")
-    public ResponseEntity<Void> deleteAccount(@AuthenticationPrincipal User user) {
-        userService.deleteAccount(user);
-        return ResponseEntity.noContent().build();
-    }
+  @DeleteMapping("/me")
+  public ResponseEntity<Void> deleteAccount(@AuthenticationPrincipal User user) {
+    userService.deleteAccount(user);
+    return ResponseEntity.noContent().build();
+  }
 
-    @PostMapping(value = "/me/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<UserDto> uploadAvatar(
-            @AuthenticationPrincipal User user,
-            @RequestParam("file") MultipartFile file
-    ) {
-        return ResponseEntity.ok(userService.uploadAvatar(user, file));
-    }
+  @PostMapping(value = "/me/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ResponseEntity<UserDto> uploadAvatar(
+      @AuthenticationPrincipal User user, @RequestParam("file") MultipartFile file) {
+    return ResponseEntity.ok(userService.uploadAvatar(user, file));
+  }
 
-    @DeleteMapping("/me/avatar")
-    public ResponseEntity<UserDto> deleteAvatar(@AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(userService.deleteAvatar(user));
-    }
+  @DeleteMapping("/me/avatar")
+  public ResponseEntity<UserDto> deleteAvatar(@AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(userService.deleteAvatar(user));
+  }
 
-    @GetMapping("/public/{publicId}")
-    public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String publicId) {
-        return ResponseEntity.ok(userService.getPublicProfile(publicId));
-    }
+  @GetMapping("/public/{publicId}")
+  public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String publicId) {
+    return ResponseEntity.ok(userService.getPublicProfile(publicId));
+  }
 
-    /** Personal analytics surface: memberships, spend, savings, reputation, recent activity. */
-    @GetMapping("/me/dashboard")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<MemberDashboardDto> getMyDashboard(@AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(memberDashboardService.getMyDashboard(user));
-    }
+  /** Personal analytics surface: memberships, spend, savings, reputation, recent activity. */
+  @GetMapping("/me/dashboard")
+  @PreAuthorize("isAuthenticated()")
+  public ResponseEntity<MemberDashboardDto> getMyDashboard(@AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(memberDashboardService.getMyDashboard(user));
+  }
 }

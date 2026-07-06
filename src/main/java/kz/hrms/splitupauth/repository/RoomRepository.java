@@ -1,12 +1,15 @@
 package kz.hrms.splitupauth.repository;
 
 import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 import kz.hrms.splitupauth.entity.Room;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
@@ -14,58 +17,60 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-
 @Repository
 public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificationExecutor<Room> {
-    List<Room> findByDeletedAtIsNullOrderByCreatedAtDesc();
-    Page<Room> findByDeletedAtIsNull(Pageable pageable);
+  List<Room> findByDeletedAtIsNullOrderByCreatedAtDesc();
 
-    Page<Room> findByDeletedAtIsNullAndStatus(RoomStatus status, Pageable pageable);
+  Page<Room> findByDeletedAtIsNull(Pageable pageable);
 
-    Page<Room> findByDeletedAtIsNullAndCategory_Id(Long categoryId, Pageable pageable);
+  Page<Room> findByDeletedAtIsNullAndStatus(RoomStatus status, Pageable pageable);
 
-    Page<Room> findByDeletedAtIsNullAndRoomType(RoomType roomType, Pageable pageable);
+  Page<Room> findByDeletedAtIsNullAndCategory_Id(Long categoryId, Pageable pageable);
 
-    Page<Room> findByDeletedAtIsNullAndStatusAndRoomType(RoomStatus status, RoomType roomType, Pageable pageable);
+  Page<Room> findByDeletedAtIsNullAndRoomType(RoomType roomType, Pageable pageable);
 
-    Page<Room> findByDeletedAtIsNullAndStatusAndCategory_Id(RoomStatus status, Long categoryId, Pageable pageable);
+  Page<Room> findByDeletedAtIsNullAndStatusAndRoomType(
+      RoomStatus status, RoomType roomType, Pageable pageable);
 
-    Page<Room> findByDeletedAtIsNullAndRoomTypeAndCategory_Id(RoomType roomType, Long categoryId, Pageable pageable);
+  Page<Room> findByDeletedAtIsNullAndStatusAndCategory_Id(
+      RoomStatus status, Long categoryId, Pageable pageable);
 
-    Page<Room> findByDeletedAtIsNullAndStatusAndRoomTypeAndCategory_Id(
-            RoomStatus status,
-            RoomType roomType,
-            Long categoryId,
-            Pageable pageable
-    );
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("""
+  Page<Room> findByDeletedAtIsNullAndRoomTypeAndCategory_Id(
+      RoomType roomType, Long categoryId, Pageable pageable);
+
+  Page<Room> findByDeletedAtIsNullAndStatusAndRoomTypeAndCategory_Id(
+      RoomStatus status, RoomType roomType, Long categoryId, Pageable pageable);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      """
        select r
        from Room r
        where r.id = :id
          and r.deletedAt is null
        """)
-    Optional<Room> findByIdForUpdate(@Param("id") Long id);
-    List<Room> findByOwnerAndDeletedAtIsNullOrderByCreatedAtDesc(User owner);
+  Optional<Room> findByIdForUpdate(@Param("id") Long id);
 
-    /** Count of an owner's live rooms in the given statuses — backs the per-user active-room cap. */
-    long countByOwnerAndDeletedAtIsNullAndStatusIn(User owner, java.util.Collection<RoomStatus> statuses);
-    List<Room> findByStatusAndDeletedAtIsNullOrderByCreatedAtDesc(RoomStatus status);
-    List<Room> findByStatusAndDeletedAtIsNullAndStartDateLessThanEqual(RoomStatus status, LocalDateTime startDate);
+  List<Room> findByOwnerAndDeletedAtIsNullOrderByCreatedAtDesc(User owner);
 
-    long countByOwnerAndDeletedAtIsNull(User owner);
+  /** Count of an owner's live rooms in the given statuses — backs the per-user active-room cap. */
+  long countByOwnerAndDeletedAtIsNullAndStatusIn(
+      User owner, java.util.Collection<RoomStatus> statuses);
 
-    long countByOwnerAndStatusAndDeletedAtIsNull(User owner, RoomStatus status);
+  List<Room> findByStatusAndDeletedAtIsNullOrderByCreatedAtDesc(RoomStatus status);
 
-    /**
-     * FIFO scan for {@code CatalogService#matchRoomForService}. Returns every
-     * OPEN, non-deleted room on the given service whose start_date is still in
-     * the future, ordered oldest-first. The caller picks the first one that
-     * has a free seat and isn't owned by the requesting user.
-     */
-    List<Room> findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
-            Long serviceId, RoomStatus status, LocalDateTime startDateAfter);
+  List<Room> findByStatusAndDeletedAtIsNullAndStartDateLessThanEqual(
+      RoomStatus status, LocalDateTime startDate);
+
+  long countByOwnerAndDeletedAtIsNull(User owner);
+
+  long countByOwnerAndStatusAndDeletedAtIsNull(User owner, RoomStatus status);
+
+  /**
+   * FIFO scan for {@code CatalogService#matchRoomForService}. Returns every OPEN, non-deleted room
+   * on the given service whose start_date is still in the future, ordered oldest-first. The caller
+   * picks the first one that has a free seat and isn't owned by the requesting user.
+   */
+  List<Room> findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+      Long serviceId, RoomStatus status, LocalDateTime startDateAfter);
 }

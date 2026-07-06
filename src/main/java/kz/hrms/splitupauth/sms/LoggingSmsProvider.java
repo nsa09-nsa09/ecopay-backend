@@ -7,15 +7,14 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @ConditionalOnProperty(
-        prefix = "ecopay.sms",
-        name = "provider",
-        havingValue = "logging",
-        matchIfMissing = true
-)
+    prefix = "ecopay.sms",
+    name = "provider",
+    havingValue = "logging",
+    matchIfMissing = true)
 public class LoggingSmsProvider implements SmsService {
 
-    @Override
-    public void sendVerificationCode(String phone, String code) {
-        log.warn("[SMS:LOGGING] Verification code for {} is {}", phone, code);
-    }
+  @Override
+  public void sendVerificationCode(String phone, String code) {
+    log.warn("[SMS:LOGGING] Verification code for {} is {}", phone, code);
+  }
 }

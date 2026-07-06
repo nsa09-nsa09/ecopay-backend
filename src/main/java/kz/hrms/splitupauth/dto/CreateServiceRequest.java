@@ -15,18 +15,16 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CreateServiceRequest {
 
-    @NotNull
-    private Long categoryId;
+  @NotNull private Long categoryId;
 
-    @NotBlank
-    @Size(max = 120)
-    private String name;
+  @NotBlank
+  @Size(max = 120)
+  private String name;
 
-    @Size(max = 120)
-    private String slug;
+  @Size(max = 120)
+  private String slug;
 
-    @NotNull
-    private ProviderType providerType;
+  @NotNull private ProviderType providerType;
 
-    private Boolean isActive;
+  private Boolean isActive;
 }

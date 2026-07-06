@@ -21,22 +21,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AdminLegalDocumentController {
 
-    private final LegalDocumentService service;
+  private final LegalDocumentService service;
 
-    @GetMapping("/{docType}")
-    public ResponseEntity<LegalDocumentDto> get(@PathVariable String docType) {
-        return ResponseEntity.ok(service.adminGet(service.parseDocType(docType)));
-    }
+  @GetMapping("/{docType}")
+  public ResponseEntity<LegalDocumentDto> get(@PathVariable String docType) {
+    return ResponseEntity.ok(service.adminGet(service.parseDocType(docType)));
+  }
 
-    @PutMapping("/{docType}")
-    public ResponseEntity<LegalDocumentDto> update(
-            @AuthenticationPrincipal User admin,
-            @PathVariable String docType,
-            @Valid @RequestBody UpdateLegalDocumentRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        return ResponseEntity.ok(
-                service.adminUpdate(admin, service.parseDocType(docType), request, httpRequest)
-        );
-    }
+  @PutMapping("/{docType}")
+  public ResponseEntity<LegalDocumentDto> update(
+      @AuthenticationPrincipal User admin,
+      @PathVariable String docType,
+      @Valid @RequestBody UpdateLegalDocumentRequest request,
+      HttpServletRequest httpRequest) {
+    return ResponseEntity.ok(
+        service.adminUpdate(admin, service.parseDocType(docType), request, httpRequest));
+  }
 }

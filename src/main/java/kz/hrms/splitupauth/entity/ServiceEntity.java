@@ -1,65 +1,64 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "services", indexes = {
-        @Index(name = "idx_services_category_id", columnList = "category_id")
-})
+@Table(
+    name = "services",
+    indexes = {@Index(name = "idx_services_category_id", columnList = "category_id")})
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class ServiceEntity {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "category_id", nullable = false)
-    private Category category;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "category_id", nullable = false)
+  private Category category;
 
-    @Column(nullable = false, length = 120)
-    private String name;
+  @Column(nullable = false, length = 120)
+  private String name;
 
-    @Column(nullable = false, unique = true, length = 120)
-    private String slug;
+  @Column(nullable = false, unique = true, length = 120)
+  private String slug;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "provider_type", nullable = false)
-    private ProviderType providerType;
+  @Enumerated(EnumType.STRING)
+  @Column(name = "provider_type", nullable = false)
+  private ProviderType providerType;
 
-    @Column(name = "is_active", nullable = false)
-    @Builder.Default
-    private Boolean isActive = true;
+  @Column(name = "is_active", nullable = false)
+  @Builder.Default
+  private Boolean isActive = true;
 
-    /** S3 object key under {@code service-logos/}; null when no logo uploaded. */
-    @Column(name = "logo_key", length = 255)
-    private String logoKey;
+  /** S3 object key under {@code service-logos/}; null when no logo uploaded. */
+  @Column(name = "logo_key", length = 255)
+  private String logoKey;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+  @Column(name = "created_at", nullable = false)
+  private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
+  @Column(name = "updated_at")
+  private LocalDateTime updatedAt;
 
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        if (isActive == null) {
-            isActive = true;
-        }
+  @PrePersist
+  protected void onCreate() {
+    createdAt = LocalDateTime.now();
+    if (isActive == null) {
+      isActive = true;
     }
+  }
 
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
+  @PreUpdate
+  protected void onUpdate() {
+    updatedAt = LocalDateTime.now();
+  }
 }

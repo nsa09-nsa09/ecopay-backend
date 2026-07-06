@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import java.math.BigDecimal;
 import kz.hrms.splitupauth.dto.CategoryDto;
 import kz.hrms.splitupauth.dto.ServiceDto;
 import kz.hrms.splitupauth.dto.TariffPlanDto;
@@ -9,65 +10,62 @@ import kz.hrms.splitupauth.entity.TariffPlan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
-
 @Component
 public class CatalogMapper {
 
-    /**
-     * Injected via field rather than constructor so existing call sites that
-     * still {@code new CatalogMapper()} (notably the Mockito-extension unit
-     * test) keep compiling. When the logo storage isn't wired in those tests,
-     * {@code logoUrl} comes back null — which is what the legacy contract
-     * expected anyway.
-     */
-    @Autowired(required = false)
-    private ServiceLogoStorageService logoStorage;
+  /**
+   * Injected via field rather than constructor so existing call sites that still {@code new
+   * CatalogMapper()} (notably the Mockito-extension unit test) keep compiling. When the logo
+   * storage isn't wired in those tests, {@code logoUrl} comes back null — which is what the legacy
+   * contract expected anyway.
+   */
+  @Autowired(required = false)
+  private ServiceLogoStorageService logoStorage;
 
-    public CategoryDto toDto(Category category) {
-        return CategoryDto.builder()
-                .id(category.getId())
-                .name(category.getName())
-                .slug(category.getSlug())
-                .sortOrder(category.getSortOrder())
-                .build();
-    }
+  public CategoryDto toDto(Category category) {
+    return CategoryDto.builder()
+        .id(category.getId())
+        .name(category.getName())
+        .slug(category.getSlug())
+        .sortOrder(category.getSortOrder())
+        .build();
+  }
 
-    public ServiceDto toDto(ServiceEntity service) {
-        return toDto(service, null, null, 0);
-    }
+  public ServiceDto toDto(ServiceEntity service) {
+    return toDto(service, null, null, 0);
+  }
 
-    public ServiceDto toDto(ServiceEntity service,
-                            BigDecimal minPricePerMember,
-                            String currency,
-                            int tariffCount) {
-        return ServiceDto.builder()
-                .id(service.getId())
-                .categoryId(service.getCategory().getId())
-                .categoryName(service.getCategory().getName())
-                .name(service.getName())
-                .slug(service.getSlug())
-                .providerType(service.getProviderType())
-                .minPricePerMember(minPricePerMember)
-                .currency(currency)
-                .tariffCount(tariffCount)
-                .logoUrl(logoStorage == null ? null : logoStorage.publicUrl(service.getLogoKey()))
-                .build();
-    }
+  public ServiceDto toDto(
+      ServiceEntity service, BigDecimal minPricePerMember, String currency, int tariffCount) {
+    return ServiceDto.builder()
+        .id(service.getId())
+        .categoryId(service.getCategory().getId())
+        .categoryName(service.getCategory().getName())
+        .name(service.getName())
+        .slug(service.getSlug())
+        .providerType(service.getProviderType())
+        .minPricePerMember(minPricePerMember)
+        .currency(currency)
+        .tariffCount(tariffCount)
+        .logoUrl(logoStorage == null ? null : logoStorage.publicUrl(service.getLogoKey()))
+        .build();
+  }
 
-    public TariffPlanDto toDto(TariffPlan tariffPlan) {
-        return TariffPlanDto.builder()
-                .id(tariffPlan.getId())
-                .serviceId(tariffPlan.getService().getId())
-                .name(tariffPlan.getName())
-                .periodType(tariffPlan.getPeriodType())
-                .maxMembers(tariffPlan.getMaxMembers())
-                .basePriceTotal(tariffPlan.getBasePriceTotal())
-                .currency(tariffPlan.getCurrency())
-                .connectionType(tariffPlan.getConnectionType())
-                .operatorRules(tariffPlan.getOperatorRules())
-                .features(tariffPlan.getFeatures() == null
-                        ? java.util.List.of() : java.util.List.copyOf(tariffPlan.getFeatures()))
-                .build();
-    }
+  public TariffPlanDto toDto(TariffPlan tariffPlan) {
+    return TariffPlanDto.builder()
+        .id(tariffPlan.getId())
+        .serviceId(tariffPlan.getService().getId())
+        .name(tariffPlan.getName())
+        .periodType(tariffPlan.getPeriodType())
+        .maxMembers(tariffPlan.getMaxMembers())
+        .basePriceTotal(tariffPlan.getBasePriceTotal())
+        .currency(tariffPlan.getCurrency())
+        .connectionType(tariffPlan.getConnectionType())
+        .operatorRules(tariffPlan.getOperatorRules())
+        .features(
+            tariffPlan.getFeatures() == null
+                ? java.util.List.of()
+                : java.util.List.copyOf(tariffPlan.getFeatures()))
+        .build();
+  }
 }

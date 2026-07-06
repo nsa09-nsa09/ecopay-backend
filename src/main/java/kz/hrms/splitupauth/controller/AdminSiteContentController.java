@@ -20,19 +20,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AdminSiteContentController {
 
-    private final SiteContentService service;
+  private final SiteContentService service;
 
-    @GetMapping("/about")
-    public ResponseEntity<SiteContentDto> getAbout() {
-        return ResponseEntity.ok(service.getAbout());
-    }
+  @GetMapping("/about")
+  public ResponseEntity<SiteContentDto> getAbout() {
+    return ResponseEntity.ok(service.getAbout());
+  }
 
-    @PutMapping("/about")
-    public ResponseEntity<SiteContentDto> updateAbout(
-            @AuthenticationPrincipal User admin,
-            @Valid @RequestBody UpdateSiteContentRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        return ResponseEntity.ok(service.updateAbout(admin, request, httpRequest));
-    }
+  @PutMapping("/about")
+  public ResponseEntity<SiteContentDto> updateAbout(
+      @AuthenticationPrincipal User admin,
+      @Valid @RequestBody UpdateSiteContentRequest request,
+      HttpServletRequest httpRequest) {
+    return ResponseEntity.ok(service.updateAbout(admin, request, httpRequest));
+  }
 }

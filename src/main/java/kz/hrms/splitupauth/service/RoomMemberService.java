@@ -1,768 +1,822 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.http.HttpServletRequest;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.*;
+import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.*;
 import kz.hrms.splitupauth.security.FieldEncryptionService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import kz.hrms.splitupauth.entity.Role;
-
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class RoomMemberService {
 
-    private final RoomRepository roomRepository;
-    private final RoomMemberRepository roomMemberRepository;
-    private final RoomMemberIdentifierRepository roomMemberIdentifierRepository;
-    private final RoomMemberMapper roomMemberMapper;
-    private final FieldEncryptionService fieldEncryptionService;
-    private final PaymentTransactionRepository paymentTransactionRepository;
-    private final RoomEventLogRepository roomEventLogRepository;
-    private final SupportTicketRepository supportTicketRepository;
-    private final ModerationService moderationService;
-    private final DisputeRepository disputeRepository;
-    private final ModerationQueueRepository moderationQueueRepository;
-    private final RoomEventLogger roomEventLogger;
-    private final NotificationService notificationService;
-    @Transactional
-    public RoomMemberDto joinRoom(Long roomId, User currentUser, JoinRoomRequest request) {
-        Room room = roomRepository.findByIdForUpdate(roomId)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+  private final RoomRepository roomRepository;
+  private final RoomMemberRepository roomMemberRepository;
+  private final RoomMemberIdentifierRepository roomMemberIdentifierRepository;
+  private final RoomMemberMapper roomMemberMapper;
+  private final FieldEncryptionService fieldEncryptionService;
+  private final PaymentTransactionRepository paymentTransactionRepository;
+  private final RoomEventLogRepository roomEventLogRepository;
+  private final SupportTicketRepository supportTicketRepository;
+  private final ModerationService moderationService;
+  private final DisputeRepository disputeRepository;
+  private final ModerationQueueRepository moderationQueueRepository;
+  private final RoomEventLogger roomEventLogger;
+  private final NotificationService notificationService;
 
+  @Transactional
+  public RoomMemberDto joinRoom(Long roomId, User currentUser, JoinRoomRequest request) {
+    Room room =
+        roomRepository
+            .findByIdForUpdate(roomId)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        validateJoin(room, currentUser, request);
+    validateJoin(room, currentUser, request);
 
-        RoomMember roomMember = RoomMember.builder()
-                .room(room)
-                .user(currentUser)
-                .status(MemberStatus.APPLIED)
-                .requiresAdminReview(false)
-                .consentAcceptedAt(LocalDateTime.now())
-                .build();
+    RoomMember roomMember =
+        RoomMember.builder()
+            .room(room)
+            .user(currentUser)
+            .status(MemberStatus.APPLIED)
+            .requiresAdminReview(false)
+            .consentAcceptedAt(LocalDateTime.now())
+            .build();
 
-        roomMember = roomMemberRepository.save(roomMember);
+    roomMember = roomMemberRepository.save(roomMember);
 
-        if (room.getRoomType() == RoomType.TELECOM) {
-            String rawIdentifier = request.getIdentifierValue();
+    if (room.getRoomType() == RoomType.TELECOM) {
+      String rawIdentifier = request.getIdentifierValue();
 
-            RoomMemberIdentifier identifier = RoomMemberIdentifier.builder()
-                    .roomMember(roomMember)
-                    .identifierType(request.getIdentifierType())
-                    .identifierEncrypted(fieldEncryptionService.encrypt(rawIdentifier))
-                    .identifierMasked(maskIdentifier(rawIdentifier))
-                    .isValidFormat(isValidIdentifierFormat(rawIdentifier))
-                    .build();
+      RoomMemberIdentifier identifier =
+          RoomMemberIdentifier.builder()
+              .roomMember(roomMember)
+              .identifierType(request.getIdentifierType())
+              .identifierEncrypted(fieldEncryptionService.encrypt(rawIdentifier))
+              .identifierMasked(maskIdentifier(rawIdentifier))
+              .isValidFormat(isValidIdentifierFormat(rawIdentifier))
+              .build();
 
-            roomMemberIdentifierRepository.save(identifier);
-        }
-
-        roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "member_joined",
-                java.util.Map.of("roomType", String.valueOf(room.getRoomType())));
-
-        // Notify the owner that someone applied to their room.
-        notificationService.notify(
-                room.getOwner(),
-                NotificationType.MEMBER_JOINED,
-                "Новая заявка в комнату",
-                currentUser.getDisplayName() + " подал(а) заявку в комнату «" + room.getTitle() + "».",
-                "/rooms/owner/" + room.getId(),
-                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
-
-        return roomMemberMapper.toDto(roomMember);
+      roomMemberIdentifierRepository.save(identifier);
     }
 
-    @Transactional(readOnly = true)
-    public PagedResponse<RoomMemberDto> getRoomMembers(Long roomId, int page, int size, User currentUser) {
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    roomEventLogger.log(
+        room,
+        roomMember,
+        currentUser,
+        "MEMBER",
+        "member_joined",
+        java.util.Map.of("roomType", String.valueOf(room.getRoomType())));
 
-        if (!room.getOwner().getId().equals(currentUser.getId())) {
-            throw new ForbiddenOperationException("Only room owner can view room members");
-        }
+    // Notify the owner that someone applied to their room.
+    notificationService.notify(
+        room.getOwner(),
+        NotificationType.MEMBER_JOINED,
+        "Новая заявка в комнату",
+        currentUser.getDisplayName() + " подал(а) заявку в комнату «" + room.getTitle() + "».",
+        "/rooms/owner/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
-        if (page < 0) {
-            page = 0;
-        }
+    return roomMemberMapper.toDto(roomMember);
+  }
 
-        if (size <= 0) {
-            size = 20;
-        }
+  @Transactional(readOnly = true)
+  public PagedResponse<RoomMemberDto> getRoomMembers(
+      Long roomId, int page, int size, User currentUser) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        if (size > 100) {
-            size = 100;
-        }
-
-        Pageable pageable = PageRequest.of(page, size);
-        Page<RoomMember> resultPage = roomMemberRepository
-                .findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room, pageable);
-
-        return PagedResponse.<RoomMemberDto>builder()
-                .items(resultPage.getContent().stream().map(roomMemberMapper::toDto).toList())
-                .page(resultPage.getNumber())
-                .size(resultPage.getSize())
-                .totalItems(resultPage.getTotalElements())
-                .totalPages(resultPage.getTotalPages())
-                .hasNext(resultPage.hasNext())
-                .hasPrevious(resultPage.hasPrevious())
-                .build();
+    if (!room.getOwner().getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("Only room owner can view room members");
     }
 
-    @Transactional(readOnly = true)
-    public MyRoomMembershipDto getMyMembership(Long roomId, User currentUser) {
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
-
-        RoomMember roomMember = roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
-                .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
-
-        RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                .orElse(null);
-
-        return roomMemberMapper.toMyDto(roomMember, identifier);
+    if (page < 0) {
+      page = 0;
     }
 
-    @Transactional(readOnly = true)
-    public List<JoinedRoomDto> getMyJoinedRooms(User currentUser) {
-        return roomMemberRepository.findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(currentUser).stream()
-                .filter(member -> member.getRoom() != null && member.getRoom().getDeletedAt() == null)
-                .map(member -> {
-                    Room room = member.getRoom();
-                    return JoinedRoomDto.builder()
-                            .roomId(room.getId())
-                            .memberId(member.getId())
-                            .title(room.getTitle())
-                            .roomType(room.getRoomType())
-                            .roomStatus(room.getStatus())
-                            .memberStatus(member.getStatus())
-                            .requiresAdminReview(member.getRequiresAdminReview())
-                            .maxMembers(room.getMaxMembers())
-                            .priceTotal(room.getPriceTotal())
-                            .pricePerMember(room.getPricePerMember())
-                            .currency(room.getCurrency())
-                            .startDate(room.getStartDate())
-                            .ownerUserId(room.getOwner().getId())
-                            .ownerDisplayName(room.getOwner().getDisplayName())
-                            .serviceId(room.getService().getId())
-                            .serviceName(room.getService().getName())
-                            .build();
-                })
-                .toList();
+    if (size <= 0) {
+      size = 20;
     }
 
-    @Transactional
-    public RoomMemberDto confirmOwnerAccess(
-            Long roomId,
-            Long memberId,
-            User currentUser,
-            ConfirmOwnerAccessRequest request
-    ) {
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
-
-        if (!room.getOwner().getId().equals(currentUser.getId())) {
-            throw new ForbiddenOperationException("Only room owner can confirm access");
-        }
-
-        RoomMember roomMember = roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(memberId, room)
-                .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
-
-        if (roomMember.getStatus() != MemberStatus.PENDING) {
-            throw new InvalidRequestException("Access can only be confirmed for PENDING membership");
-        }
-
-        if (roomMember.getOwnerAccessConfirmedAt() == null) {
-            roomMember.setOwnerAccessConfirmedAt(LocalDateTime.now());
-        }
-
-        roomMember.setAccessMethod(request.getAccessMethod());
-
-        roomEventLogger.log(room, roomMember, currentUser, "OWNER", "owner_access_granted",
-                java.util.Map.of("accessMethod", String.valueOf(request.getAccessMethod())));
-
-        // Notify the member that the owner granted access — their cue to confirm.
-        notificationService.notify(
-                roomMember.getUser(),
-                NotificationType.OWNER_ACCESS_GRANTED,
-                "Доступ предоставлен",
-                "Владелец комнаты «" + room.getTitle() + "» предоставил доступ. Подтвердите получение доступа.",
-                "/rooms/member/" + room.getId(),
-                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
-
-        tryActivateMembership(roomMember);
-
-        roomMemberRepository.save(roomMember);
-
-        return roomMemberMapper.toDto(roomMember);
+    if (size > 100) {
+      size = 100;
     }
 
-    @Transactional
-    public MyRoomMembershipDto confirmMemberAccess(Long roomId, User currentUser) {
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    Pageable pageable = PageRequest.of(page, size);
+    Page<RoomMember> resultPage =
+        roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room, pageable);
 
-        RoomMember roomMember = roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
-                .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+    return PagedResponse.<RoomMemberDto>builder()
+        .items(resultPage.getContent().stream().map(roomMemberMapper::toDto).toList())
+        .page(resultPage.getNumber())
+        .size(resultPage.getSize())
+        .totalItems(resultPage.getTotalElements())
+        .totalPages(resultPage.getTotalPages())
+        .hasNext(resultPage.hasNext())
+        .hasPrevious(resultPage.hasPrevious())
+        .build();
+  }
 
-        if (roomMember.getStatus() != MemberStatus.PENDING) {
-            throw new InvalidRequestException("Only PENDING membership can be confirmed");
-        }
+  @Transactional(readOnly = true)
+  public MyRoomMembershipDto getMyMembership(Long roomId, User currentUser) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        if (roomMember.getOwnerAccessConfirmedAt() == null) {
-            throw new InvalidRequestException("Owner has not confirmed access yet");
-        }
+    RoomMember roomMember =
+        roomMemberRepository
+            .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
 
-        if (roomMember.getMemberConfirmedAt() == null) {
-            roomMember.setMemberConfirmedAt(LocalDateTime.now());
-        }
+    RoomMemberIdentifier identifier =
+        roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
 
-        roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "member_confirmed",
-                java.util.Map.of());
+    return roomMemberMapper.toMyDto(roomMember, identifier);
+  }
 
-        // Notify the owner that the member confirmed they received access.
-        notificationService.notify(
-                room.getOwner(),
-                NotificationType.MEMBER_CONFIRMED,
-                "Участник подтвердил доступ",
-                currentUser.getDisplayName() + " подтвердил(а) получение доступа в комнате «" + room.getTitle() + "».",
-                "/rooms/owner/" + room.getId(),
-                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+  @Transactional(readOnly = true)
+  public List<JoinedRoomDto> getMyJoinedRooms(User currentUser) {
+    return roomMemberRepository
+        .findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(currentUser)
+        .stream()
+        .filter(member -> member.getRoom() != null && member.getRoom().getDeletedAt() == null)
+        .map(
+            member -> {
+              Room room = member.getRoom();
+              return JoinedRoomDto.builder()
+                  .roomId(room.getId())
+                  .memberId(member.getId())
+                  .title(room.getTitle())
+                  .roomType(room.getRoomType())
+                  .roomStatus(room.getStatus())
+                  .memberStatus(member.getStatus())
+                  .requiresAdminReview(member.getRequiresAdminReview())
+                  .maxMembers(room.getMaxMembers())
+                  .priceTotal(room.getPriceTotal())
+                  .pricePerMember(room.getPricePerMember())
+                  .currency(room.getCurrency())
+                  .startDate(room.getStartDate())
+                  .ownerUserId(room.getOwner().getId())
+                  .ownerDisplayName(room.getOwner().getDisplayName())
+                  .serviceId(room.getService().getId())
+                  .serviceName(room.getService().getName())
+                  .build();
+            })
+        .toList();
+  }
 
-        tryActivateMembership(roomMember);
+  @Transactional
+  public RoomMemberDto confirmOwnerAccess(
+      Long roomId, Long memberId, User currentUser, ConfirmOwnerAccessRequest request) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        roomMemberRepository.save(roomMember);
-
-        if (roomMember.getStatus() == MemberStatus.ACTIVE) {
-            roomEventLogger.log(room, roomMember, currentUser, "MEMBER", "membership_activated",
-                    java.util.Map.of());
-        }
-
-        RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                .orElse(null);
-
-        return roomMemberMapper.toMyDto(roomMember, identifier);
-    }
-    @Transactional
-    public void markMembershipAsPaid(RoomMember roomMember) {
-        if (roomMember.getDeletedAt() != null) {
-            throw new ResourceNotFoundException("Membership not found");
-        }
-
-        if (roomMember.getStatus() == MemberStatus.PENDING || roomMember.getStatus() == MemberStatus.ACTIVE) {
-            return;
-        }
-
-        if (roomMember.getStatus() != MemberStatus.APPLIED) {
-            throw new InvalidRequestException("Only APPLIED membership can be marked as paid");
-        }
-
-        roomMember.setStatus(MemberStatus.PENDING);
-
-        boolean requiresAdminReview = shouldRequireAdminReviewAfterPayment(roomMember);
-        roomMember.setRequiresAdminReview(requiresAdminReview);
-
-        roomMemberRepository.save(roomMember);
-
-        if (requiresAdminReview) {
-            moderationService.enqueueMembershipForReview(
-                    roomMember,
-                    resolveModerationReasonCode(roomMember),
-                    java.math.BigDecimal.ZERO
-            );
-        } else {
-            tryActivateMembership(roomMember);
-            roomMemberRepository.save(roomMember);
-        }
-    }
-    private void tryActivateMembership(RoomMember roomMember) {
-        if (roomMember.getStatus() != MemberStatus.PENDING) {
-            return;
-        }
-
-        if (Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
-            return;
-        }
-
-        if (roomMember.getRoom().getVerificationMode() == VerificationMode.ADMIN_REQUIRED) {
-            return;
-        }
-
-        if (roomMember.getOwnerAccessConfirmedAt() == null) {
-            return;
-        }
-
-        if (roomMember.getMemberConfirmedAt() == null) {
-            return;
-        }
-
-        if (roomMember.getUser().getStatus() == UserStatus.BANNED) {
-            return;
-        }
-
-        if (roomMember.getRoom().getOwner().getStatus() == UserStatus.BANNED) {
-            return;
-        }
-
-        if (hasOpenAutoActivationBlocker(roomMember)) {
-            return;
-        }
-
-        if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
-            RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                    .orElse(null);
-
-            if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
-                return;
-            }
-        }
-
-        roomMember.setStatus(MemberStatus.ACTIVE);
-
-        if (roomMember.getActivatedAt() == null) {
-            roomMember.setActivatedAt(LocalDateTime.now());
-        }
-
-        // Product rule: a room goes ACTIVE as soon as it has its first ACTIVE member.
-        // (Without this the room never left OPEN/IN_VERIFICATION → reviews and
-        // completion were unreachable.)
-        Room room = roomMember.getRoom();
-        boolean roomBecameActive = false;
-        if (room.getStatus() == RoomStatus.OPEN || room.getStatus() == RoomStatus.IN_VERIFICATION) {
-            room.setStatus(RoomStatus.ACTIVE);
-            roomRepository.save(room);
-            roomBecameActive = true;
-        }
-
-        // Central activation point — fired from every path that can flip a
-        // membership to ACTIVE (owner-confirm, member-confirm, paid-no-review).
-        notificationService.notify(
-                roomMember.getUser(),
-                NotificationType.MEMBERSHIP_ACTIVATED,
-                "Участие активировано",
-                "Ваше участие в комнате «" + room.getTitle() + "» активно. Доступ подтверждён.",
-                "/rooms/member/" + room.getId(),
-                java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
-
-        if (roomBecameActive) {
-            notificationService.notify(
-                    room.getOwner(),
-                    NotificationType.ROOM_ACTIVE,
-                    "Комната активна",
-                    "Комната «" + room.getTitle() + "» перешла в статус «Активна».",
-                    "/rooms/owner/" + room.getId(),
-                    java.util.Map.of("roomId", room.getId()));
-        }
-    }
-    private void validateJoin(Room room, User currentUser, JoinRoomRequest request) {
-        if (room.getOwner().getId().equals(currentUser.getId())) {
-            throw new InvalidRequestException("Room owner cannot join own room");
-        }
-
-        if (!(room.getStatus() == RoomStatus.OPEN)) {
-            throw new InvalidRequestException("Room is not available for joining");
-        }
-
-        if (!room.getStartDate().isAfter(LocalDateTime.now())) {
-            throw new InvalidRequestException("Cannot join room after start date");
-        }
-
-        boolean consentAccepted = Boolean.TRUE.equals(request.getConsentAccepted());
-        if (!consentAccepted) {
-            throw new InvalidRequestException("Consent must be accepted");
-        }
-
-        roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
-                .ifPresent(existing -> {
-                    throw new InvalidRequestException("User has already joined this room");
-                });
-
-        long occupiedSlots = roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
-                room,
-                List.of(MemberStatus.PENDING, MemberStatus.ACTIVE)
-        );
-
-        if (occupiedSlots >= room.getMaxMembers() - 1) {
-            throw new InvalidRequestException("No available slots in this room");
-        }
-
-        if (room.getRoomType() == RoomType.TELECOM) {
-            if (request.getIdentifierType() == null) {
-                throw new InvalidRequestException("Identifier type is required for TELECOM room");
-            }
-
-            if (request.getIdentifierValue() == null || request.getIdentifierValue().isBlank()) {
-                throw new InvalidRequestException("Identifier value is required for TELECOM room");
-            }
-        }
+    if (!room.getOwner().getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("Only room owner can confirm access");
     }
 
-    private String maskIdentifier(String value) {
-        if (value == null || value.length() < 4) {
-            return "****";
-        }
+    RoomMember roomMember =
+        roomMemberRepository
+            .findByIdAndRoomAndDeletedAtIsNull(memberId, room)
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
 
-        if (value.length() <= 6) {
-            return value.charAt(0) + "***" + value.charAt(value.length() - 1);
-        }
-
-        String start = value.substring(0, Math.min(4, value.length()));
-        String end = value.substring(value.length() - 2);
-        return start + "*****" + end;
+    if (roomMember.getStatus() != MemberStatus.PENDING) {
+      throw new InvalidRequestException("Access can only be confirmed for PENDING membership");
     }
-    @Transactional
-    public RevealedIdentifierDto revealIdentifierForOwner(
-            Long roomId,
-            Long memberId,
-            User currentUser,
-            RevealIdentifierRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        if (!room.getOwner().getId().equals(currentUser.getId())) {
-            throw new ForbiddenOperationException("Only room owner can reveal member identifier");
+    if (roomMember.getOwnerAccessConfirmedAt() == null) {
+      roomMember.setOwnerAccessConfirmedAt(LocalDateTime.now());
+    }
+
+    roomMember.setAccessMethod(request.getAccessMethod());
+
+    roomEventLogger.log(
+        room,
+        roomMember,
+        currentUser,
+        "OWNER",
+        "owner_access_granted",
+        java.util.Map.of("accessMethod", String.valueOf(request.getAccessMethod())));
+
+    // Notify the member that the owner granted access — their cue to confirm.
+    notificationService.notify(
+        roomMember.getUser(),
+        NotificationType.OWNER_ACCESS_GRANTED,
+        "Доступ предоставлен",
+        "Владелец комнаты «"
+            + room.getTitle()
+            + "» предоставил доступ. Подтвердите получение доступа.",
+        "/rooms/member/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
+    tryActivateMembership(roomMember);
+
+    roomMemberRepository.save(roomMember);
+
+    return roomMemberMapper.toDto(roomMember);
+  }
+
+  @Transactional
+  public MyRoomMembershipDto confirmMemberAccess(Long roomId, User currentUser) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    RoomMember roomMember =
+        roomMemberRepository
+            .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+
+    if (roomMember.getStatus() != MemberStatus.PENDING) {
+      throw new InvalidRequestException("Only PENDING membership can be confirmed");
+    }
+
+    if (roomMember.getOwnerAccessConfirmedAt() == null) {
+      throw new InvalidRequestException("Owner has not confirmed access yet");
+    }
+
+    if (roomMember.getMemberConfirmedAt() == null) {
+      roomMember.setMemberConfirmedAt(LocalDateTime.now());
+    }
+
+    roomEventLogger.log(
+        room, roomMember, currentUser, "MEMBER", "member_confirmed", java.util.Map.of());
+
+    // Notify the owner that the member confirmed they received access.
+    notificationService.notify(
+        room.getOwner(),
+        NotificationType.MEMBER_CONFIRMED,
+        "Участник подтвердил доступ",
+        currentUser.getDisplayName()
+            + " подтвердил(а) получение доступа в комнате «"
+            + room.getTitle()
+            + "».",
+        "/rooms/owner/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
+    tryActivateMembership(roomMember);
+
+    roomMemberRepository.save(roomMember);
+
+    if (roomMember.getStatus() == MemberStatus.ACTIVE) {
+      roomEventLogger.log(
+          room, roomMember, currentUser, "MEMBER", "membership_activated", java.util.Map.of());
+    }
+
+    RoomMemberIdentifier identifier =
+        roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
+
+    return roomMemberMapper.toMyDto(roomMember, identifier);
+  }
+
+  @Transactional
+  public void markMembershipAsPaid(RoomMember roomMember) {
+    if (roomMember.getDeletedAt() != null) {
+      throw new ResourceNotFoundException("Membership not found");
+    }
+
+    if (roomMember.getStatus() == MemberStatus.PENDING
+        || roomMember.getStatus() == MemberStatus.ACTIVE) {
+      return;
+    }
+
+    if (roomMember.getStatus() != MemberStatus.APPLIED) {
+      throw new InvalidRequestException("Only APPLIED membership can be marked as paid");
+    }
+
+    roomMember.setStatus(MemberStatus.PENDING);
+
+    boolean requiresAdminReview = shouldRequireAdminReviewAfterPayment(roomMember);
+    roomMember.setRequiresAdminReview(requiresAdminReview);
+
+    roomMemberRepository.save(roomMember);
+
+    if (requiresAdminReview) {
+      moderationService.enqueueMembershipForReview(
+          roomMember, resolveModerationReasonCode(roomMember), java.math.BigDecimal.ZERO);
+    } else {
+      tryActivateMembership(roomMember);
+      roomMemberRepository.save(roomMember);
+    }
+  }
+
+  private void tryActivateMembership(RoomMember roomMember) {
+    if (roomMember.getStatus() != MemberStatus.PENDING) {
+      return;
+    }
+
+    if (Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
+      return;
+    }
+
+    if (roomMember.getRoom().getVerificationMode() == VerificationMode.ADMIN_REQUIRED) {
+      return;
+    }
+
+    if (roomMember.getOwnerAccessConfirmedAt() == null) {
+      return;
+    }
+
+    if (roomMember.getMemberConfirmedAt() == null) {
+      return;
+    }
+
+    if (roomMember.getUser().getStatus() == UserStatus.BANNED) {
+      return;
+    }
+
+    if (roomMember.getRoom().getOwner().getStatus() == UserStatus.BANNED) {
+      return;
+    }
+
+    if (hasOpenAutoActivationBlocker(roomMember)) {
+      return;
+    }
+
+    if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
+      RoomMemberIdentifier identifier =
+          roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
+
+      if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
+        return;
+      }
+    }
+
+    roomMember.setStatus(MemberStatus.ACTIVE);
+
+    if (roomMember.getActivatedAt() == null) {
+      roomMember.setActivatedAt(LocalDateTime.now());
+    }
+
+    // Product rule: a room goes ACTIVE as soon as it has its first ACTIVE member.
+    // (Without this the room never left OPEN/IN_VERIFICATION → reviews and
+    // completion were unreachable.)
+    Room room = roomMember.getRoom();
+    boolean roomBecameActive = false;
+    if (room.getStatus() == RoomStatus.OPEN || room.getStatus() == RoomStatus.IN_VERIFICATION) {
+      room.setStatus(RoomStatus.ACTIVE);
+      roomRepository.save(room);
+      roomBecameActive = true;
+    }
+
+    // Central activation point — fired from every path that can flip a
+    // membership to ACTIVE (owner-confirm, member-confirm, paid-no-review).
+    notificationService.notify(
+        roomMember.getUser(),
+        NotificationType.MEMBERSHIP_ACTIVATED,
+        "Участие активировано",
+        "Ваше участие в комнате «" + room.getTitle() + "» активно. Доступ подтверждён.",
+        "/rooms/member/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
+    if (roomBecameActive) {
+      notificationService.notify(
+          room.getOwner(),
+          NotificationType.ROOM_ACTIVE,
+          "Комната активна",
+          "Комната «" + room.getTitle() + "» перешла в статус «Активна».",
+          "/rooms/owner/" + room.getId(),
+          java.util.Map.of("roomId", room.getId()));
+    }
+  }
+
+  private void validateJoin(Room room, User currentUser, JoinRoomRequest request) {
+    if (room.getOwner().getId().equals(currentUser.getId())) {
+      throw new InvalidRequestException("Room owner cannot join own room");
+    }
+
+    if (!(room.getStatus() == RoomStatus.OPEN)) {
+      throw new InvalidRequestException("Room is not available for joining");
+    }
+
+    if (!room.getStartDate().isAfter(LocalDateTime.now())) {
+      throw new InvalidRequestException("Cannot join room after start date");
+    }
+
+    boolean consentAccepted = Boolean.TRUE.equals(request.getConsentAccepted());
+    if (!consentAccepted) {
+      throw new InvalidRequestException("Consent must be accepted");
+    }
+
+    roomMemberRepository
+        .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+        .ifPresent(
+            existing -> {
+              throw new InvalidRequestException("User has already joined this room");
+            });
+
+    long occupiedSlots =
+        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+
+    if (occupiedSlots >= room.getMaxMembers() - 1) {
+      throw new InvalidRequestException("No available slots in this room");
+    }
+
+    if (room.getRoomType() == RoomType.TELECOM) {
+      if (request.getIdentifierType() == null) {
+        throw new InvalidRequestException("Identifier type is required for TELECOM room");
+      }
+
+      if (request.getIdentifierValue() == null || request.getIdentifierValue().isBlank()) {
+        throw new InvalidRequestException("Identifier value is required for TELECOM room");
+      }
+    }
+  }
+
+  private String maskIdentifier(String value) {
+    if (value == null || value.length() < 4) {
+      return "****";
+    }
+
+    if (value.length() <= 6) {
+      return value.charAt(0) + "***" + value.charAt(value.length() - 1);
+    }
+
+    String start = value.substring(0, Math.min(4, value.length()));
+    String end = value.substring(value.length() - 2);
+    return start + "*****" + end;
+  }
+
+  @Transactional
+  public RevealedIdentifierDto revealIdentifierForOwner(
+      Long roomId,
+      Long memberId,
+      User currentUser,
+      RevealIdentifierRequest request,
+      HttpServletRequest httpRequest) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    if (!room.getOwner().getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("Only room owner can reveal member identifier");
+    }
+
+    if (room.getRoomType() != RoomType.TELECOM) {
+      throw new InvalidRequestException("Identifier reveal is only available for TELECOM rooms");
+    }
+
+    RoomMember roomMember =
+        roomMemberRepository
+            .findByIdAndRoomAndDeletedAtIsNull(memberId, room)
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+
+    boolean hasSuccessfulPayment =
+        paymentTransactionRepository.existsByRoomMember_IdAndStatus(
+            roomMember.getId(), PaymentTransactionStatus.SUCCESS);
+
+    if (!hasSuccessfulPayment) {
+      throw new ForbiddenOperationException(
+          "Identifier can only be revealed after successful payment");
+    }
+
+    RoomMemberIdentifier identifier =
+        roomMemberIdentifierRepository
+            .findByRoomMember(roomMember)
+            .orElseThrow(() -> new ResourceNotFoundException("Identifier not found"));
+
+    String decryptedIdentifier =
+        fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
+    saveIdentifierRevealAudit(
+        room,
+        roomMember,
+        currentUser,
+        "OWNER",
+        "IDENTIFIER_REVEALED_OWNER",
+        request.getReason(),
+        identifier,
+        null,
+        null,
+        httpRequest);
+
+    return RevealedIdentifierDto.builder()
+        .roomId(room.getId())
+        .roomMemberId(roomMember.getId())
+        .identifierType(identifier.getIdentifierType().name())
+        .identifierValue(decryptedIdentifier)
+        .revealedForReason(request.getReason())
+        .build();
+  }
+
+  @Transactional
+  public RevealedIdentifierDto revealIdentifierForStaff(
+      Long roomId,
+      Long memberId,
+      User currentUser,
+      RevealIdentifierRequest request,
+      HttpServletRequest httpRequest) {
+    ensureStaffCanReveal(currentUser);
+
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    if (room.getRoomType() != RoomType.TELECOM) {
+      throw new InvalidRequestException("Identifier reveal is only available for TELECOM rooms");
+    }
+
+    RoomMember roomMember =
+        roomMemberRepository
+            .findByIdAndRoomAndDeletedAtIsNull(memberId, room)
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+
+    ensureSuccessfulPayment(roomMember);
+
+    RevealContextInfo revealContext = resolveRevealContext(roomMember, currentUser, request);
+
+    RoomMemberIdentifier identifier =
+        roomMemberIdentifierRepository
+            .findByRoomMember(roomMember)
+            .orElseThrow(() -> new ResourceNotFoundException("Identifier not found"));
+
+    String decryptedIdentifier =
+        fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
+    saveIdentifierRevealAudit(
+        room,
+        roomMember,
+        currentUser,
+        currentUser.getRole().name(),
+        "IDENTIFIER_REVEALED_STAFF",
+        request.getReason(),
+        identifier,
+        revealContext.type().name(),
+        revealContext.id(),
+        httpRequest);
+
+    return RevealedIdentifierDto.builder()
+        .roomId(room.getId())
+        .roomMemberId(roomMember.getId())
+        .identifierType(identifier.getIdentifierType().name())
+        .identifierValue(decryptedIdentifier)
+        .revealedForReason(request.getReason())
+        .build();
+  }
+
+  private boolean shouldRequireAdminReviewAfterPayment(RoomMember roomMember) {
+    Room room = roomMember.getRoom();
+
+    if (room.getVerificationMode() == VerificationMode.ADMIN_REQUIRED) {
+      return true;
+    }
+
+    if (room.getVerificationMode() == VerificationMode.RISK_BASED) {
+      if (room.getRoomType() == RoomType.TELECOM) {
+        RoomMemberIdentifier identifier =
+            roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
+
+        if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
+          return true;
         }
+      }
 
-        if (room.getRoomType() != RoomType.TELECOM) {
-            throw new InvalidRequestException("Identifier reveal is only available for TELECOM rooms");
-        }
+      if (hasOpenAutoActivationBlocker(roomMember)) {
+        return true;
+      }
+    }
 
-        RoomMember roomMember = roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(memberId, room)
-                .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+    return false;
+  }
 
-        boolean hasSuccessfulPayment = paymentTransactionRepository
-                .existsByRoomMember_IdAndStatus(roomMember.getId(), PaymentTransactionStatus.SUCCESS);
+  private String resolveModerationReasonCode(RoomMember roomMember) {
+    if (roomMember.getRoom().getVerificationMode() == VerificationMode.ADMIN_REQUIRED) {
+      return "ADMIN_REQUIRED";
+    }
 
-        if (!hasSuccessfulPayment) {
-            throw new ForbiddenOperationException("Identifier can only be revealed after successful payment");
-        }
+    if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
+      RoomMemberIdentifier identifier =
+          roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
 
-        RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                .orElseThrow(() -> new ResourceNotFoundException("Identifier not found"));
+      if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
+        return "INVALID_IDENTIFIER";
+      }
+    }
 
-        String decryptedIdentifier = fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
-        saveIdentifierRevealAudit(
-                room,
+    if (hasOpenDispute(roomMember)) {
+      return "OPEN_DISPUTE";
+    }
+
+    if (hasOpenSupportTicket(roomMember)) {
+      return "SUPPORT_TICKET";
+    }
+
+    return "RISK_REVIEW";
+  }
+
+  private void ensureSuccessfulPayment(RoomMember roomMember) {
+    boolean hasSuccessfulPayment =
+        paymentTransactionRepository.existsByRoomMember_IdAndStatus(
+            roomMember.getId(), PaymentTransactionStatus.SUCCESS);
+
+    if (!hasSuccessfulPayment) {
+      throw new ForbiddenOperationException(
+          "Identifier can only be revealed after successful payment");
+    }
+  }
+
+  private boolean hasOpenSupportTicket(RoomMember roomMember) {
+    return supportTicketRepository.existsByRoomMemberAndStatusIn(
+        roomMember,
+        List.of(
+            SupportTicketStatus.OPEN,
+            SupportTicketStatus.IN_PROGRESS,
+            SupportTicketStatus.WAITING_USER,
+            SupportTicketStatus.ESCALATED));
+  }
+
+  private boolean hasOpenDispute(RoomMember roomMember) {
+    return disputeRepository.existsByRoomMemberAndStatusIn(
+        roomMember, List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW));
+  }
+
+  private boolean hasOpenAutoActivationBlocker(RoomMember roomMember) {
+    return hasOpenSupportTicket(roomMember) || hasOpenDispute(roomMember);
+  }
+
+  private void ensureStaffCanReveal(User currentUser) {
+    if (currentUser == null
+        || (currentUser.getRole() != Role.ADMIN && currentUser.getRole() != Role.SUPPORT)) {
+      throw new ForbiddenOperationException("Support or admin access required");
+    }
+  }
+
+  private RevealContextInfo resolveRevealContext(
+      RoomMember roomMember, User currentUser, RevealIdentifierRequest request) {
+    if (request.getContextType() == null
+        || request.getContextType().isBlank()
+        || request.getContextId() == null) {
+      throw new ForbiddenOperationException(
+          "Admin/Support can reveal identifier only with moderation, support, or dispute context");
+    }
+
+    IdentifierRevealContextType contextType;
+    try {
+      contextType =
+          IdentifierRevealContextType.valueOf(request.getContextType().trim().toUpperCase());
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException("Unsupported identifier reveal context");
+    }
+
+    Long contextId = request.getContextId();
+
+    return switch (contextType) {
+      case MODERATION -> resolveModerationContext(roomMember, currentUser, contextId);
+      case SUPPORT -> resolveSupportContext(roomMember, currentUser, contextId);
+      case DISPUTE -> resolveDisputeContext(roomMember, currentUser, contextId);
+    };
+  }
+
+  private RevealContextInfo resolveModerationContext(
+      RoomMember roomMember, User currentUser, Long contextId) {
+    if (currentUser.getRole() != Role.ADMIN) {
+      throw new ForbiddenOperationException(
+          "Only admin can reveal identifier in moderation context");
+    }
+
+    ModerationQueue item =
+        moderationQueueRepository
+            .findByIdAndRoomMemberAndStatusIn(
+                contextId,
                 roomMember,
-                currentUser,
-                "OWNER",
-                "IDENTIFIER_REVEALED_OWNER",
-                request.getReason(),
-                identifier,
-                null,
-                null,
-                httpRequest
-        );
+                List.of(ModerationQueueStatus.OPEN, ModerationQueueStatus.IN_REVIEW))
+            .orElseThrow(
+                () ->
+                    new ForbiddenOperationException(
+                        "Moderation context is not active for this membership"));
 
-        return RevealedIdentifierDto.builder()
-                .roomId(room.getId())
-                .roomMemberId(roomMember.getId())
-                .identifierType(identifier.getIdentifierType().name())
-                .identifierValue(decryptedIdentifier)
-                .revealedForReason(request.getReason())
-                .build();
-    }
-    @Transactional
-    public RevealedIdentifierDto revealIdentifierForStaff(
-            Long roomId,
-            Long memberId,
-            User currentUser,
-            RevealIdentifierRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        ensureStaffCanReveal(currentUser);
+    ensureContextAssignment(item.getAssignedAdmin(), currentUser, "Moderation context");
+    return new RevealContextInfo(IdentifierRevealContextType.MODERATION, item.getId());
+  }
 
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
-
-        if (room.getRoomType() != RoomType.TELECOM) {
-            throw new InvalidRequestException("Identifier reveal is only available for TELECOM rooms");
-        }
-
-        RoomMember roomMember = roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(memberId, room)
-                .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
-
-        ensureSuccessfulPayment(roomMember);
-
-        RevealContextInfo revealContext = resolveRevealContext(roomMember, currentUser, request);
-
-        RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                .orElseThrow(() -> new ResourceNotFoundException("Identifier not found"));
-
-        String decryptedIdentifier = fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
-        saveIdentifierRevealAudit(
-                room,
-                roomMember,
-                currentUser,
-                currentUser.getRole().name(),
-                "IDENTIFIER_REVEALED_STAFF",
-                request.getReason(),
-                identifier,
-                revealContext.type().name(),
-                revealContext.id(),
-                httpRequest
-        );
-
-        return RevealedIdentifierDto.builder()
-                .roomId(room.getId())
-                .roomMemberId(roomMember.getId())
-                .identifierType(identifier.getIdentifierType().name())
-                .identifierValue(decryptedIdentifier)
-                .revealedForReason(request.getReason())
-                .build();
-    }
-    private boolean shouldRequireAdminReviewAfterPayment(RoomMember roomMember) {
-        Room room = roomMember.getRoom();
-
-        if (room.getVerificationMode() == VerificationMode.ADMIN_REQUIRED) {
-            return true;
-        }
-
-        if (room.getVerificationMode() == VerificationMode.RISK_BASED) {
-            if (room.getRoomType() == RoomType.TELECOM) {
-                RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                        .orElse(null);
-
-                if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
-                    return true;
-                }
-            }
-
-            if (hasOpenAutoActivationBlocker(roomMember)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private String resolveModerationReasonCode(RoomMember roomMember) {
-        if (roomMember.getRoom().getVerificationMode() == VerificationMode.ADMIN_REQUIRED) {
-            return "ADMIN_REQUIRED";
-        }
-
-        if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
-            RoomMemberIdentifier identifier = roomMemberIdentifierRepository.findByRoomMember(roomMember)
-                    .orElse(null);
-
-            if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
-                return "INVALID_IDENTIFIER";
-            }
-        }
-
-        if (hasOpenDispute(roomMember)) {
-            return "OPEN_DISPUTE";
-        }
-
-        if (hasOpenSupportTicket(roomMember)) {
-            return "SUPPORT_TICKET";
-        }
-
-        return "RISK_REVIEW";
-    }
-
-    private void ensureSuccessfulPayment(RoomMember roomMember) {
-        boolean hasSuccessfulPayment = paymentTransactionRepository
-                .existsByRoomMember_IdAndStatus(roomMember.getId(), PaymentTransactionStatus.SUCCESS);
-
-        if (!hasSuccessfulPayment) {
-            throw new ForbiddenOperationException("Identifier can only be revealed after successful payment");
-        }
-    }
-
-    private boolean hasOpenSupportTicket(RoomMember roomMember) {
-        return supportTicketRepository.existsByRoomMemberAndStatusIn(
+  private RevealContextInfo resolveSupportContext(
+      RoomMember roomMember, User currentUser, Long contextId) {
+    SupportTicket ticket =
+        supportTicketRepository
+            .findByIdAndRoomMemberAndStatusIn(
+                contextId,
                 roomMember,
                 List.of(
-                        SupportTicketStatus.OPEN,
-                        SupportTicketStatus.IN_PROGRESS,
-                        SupportTicketStatus.WAITING_USER,
-                        SupportTicketStatus.ESCALATED
-                )
-        );
+                    SupportTicketStatus.OPEN,
+                    SupportTicketStatus.IN_PROGRESS,
+                    SupportTicketStatus.WAITING_USER,
+                    SupportTicketStatus.ESCALATED))
+            .orElseThrow(
+                () ->
+                    new ForbiddenOperationException(
+                        "Support context is not active for this membership"));
+
+    ensureContextAssignment(ticket.getAssignedAdmin(), currentUser, "Support context");
+    return new RevealContextInfo(IdentifierRevealContextType.SUPPORT, ticket.getId());
+  }
+
+  private RevealContextInfo resolveDisputeContext(
+      RoomMember roomMember, User currentUser, Long contextId) {
+    Dispute dispute =
+        disputeRepository
+            .findByIdAndRoomMemberAndStatusIn(
+                contextId, roomMember, List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW))
+            .orElseThrow(
+                () ->
+                    new ForbiddenOperationException(
+                        "Dispute context is not active for this membership"));
+
+    ensureContextAssignment(dispute.getAssignedAdmin(), currentUser, "Dispute context");
+    return new RevealContextInfo(IdentifierRevealContextType.DISPUTE, dispute.getId());
+  }
+
+  private void ensureContextAssignment(User assignedUser, User currentUser, String contextLabel) {
+    if (assignedUser != null && !assignedUser.getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException(contextLabel + " is assigned to another staff member");
+    }
+  }
+
+  private void saveIdentifierRevealAudit(
+      Room room,
+      RoomMember roomMember,
+      User actor,
+      String actorRole,
+      String eventType,
+      String reason,
+      RoomMemberIdentifier identifier,
+      String contextType,
+      Long contextId,
+      HttpServletRequest httpRequest) {
+    LocalDateTime auditTimestamp = LocalDateTime.now();
+    ObjectNode newState = JsonNodeFactory.instance.objectNode();
+    newState.put("reason", reason);
+    newState.put("identifierType", identifier.getIdentifierType().name());
+    newState.put("revealedBy", actorRole);
+
+    if (contextType != null) {
+      newState.put("contextType", contextType);
     }
 
-    private boolean hasOpenDispute(RoomMember roomMember) {
-        return disputeRepository.existsByRoomMemberAndStatusIn(
-                roomMember,
-                List.of(
-                        DisputeStatus.OPEN,
-                        DisputeStatus.UNDER_REVIEW
-                )
-        );
+    if (contextId != null) {
+      newState.put("contextId", contextId);
     }
 
-    private boolean hasOpenAutoActivationBlocker(RoomMember roomMember) {
-        return hasOpenSupportTicket(roomMember) || hasOpenDispute(roomMember);
+    ObjectNode auditNode = newState.putObject("audit");
+    auditNode.put("actorId", actor.getId());
+    auditNode.put("role", actorRole);
+    auditNode.put("reason", reason);
+    auditNode.put("roomId", room.getId());
+    auditNode.put("memberId", roomMember.getId());
+    auditNode.put("timestamp", auditTimestamp.toString());
+
+    if (contextType != null) {
+      auditNode.put("contextType", contextType);
     }
 
-    private void ensureStaffCanReveal(User currentUser) {
-        if (currentUser == null || (currentUser.getRole() != Role.ADMIN && currentUser.getRole() != Role.SUPPORT)) {
-            throw new ForbiddenOperationException("Support or admin access required");
-        }
+    if (contextId != null) {
+      auditNode.put("contextId", contextId);
     }
 
-    private RevealContextInfo resolveRevealContext(
-            RoomMember roomMember,
-            User currentUser,
-            RevealIdentifierRequest request
-    ) {
-        if (request.getContextType() == null || request.getContextType().isBlank() || request.getContextId() == null) {
-            throw new ForbiddenOperationException(
-                    "Admin/Support can reveal identifier only with moderation, support, or dispute context"
-            );
-        }
+    roomEventLogRepository.save(
+        RoomEventLog.builder()
+            .eventId(UUID.randomUUID())
+            .actorUser(actor)
+            .actorRole(actorRole)
+            .room(room)
+            .roomMember(roomMember)
+            .eventType(eventType)
+            .newState(newState)
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .createdAt(auditTimestamp)
+            .build());
+  }
 
-        IdentifierRevealContextType contextType;
-        try {
-            contextType = IdentifierRevealContextType.valueOf(request.getContextType().trim().toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            throw new InvalidRequestException("Unsupported identifier reveal context");
-        }
+  private boolean isValidIdentifierFormat(String value) {
+    return value != null && value.length() >= 4;
+  }
 
-        Long contextId = request.getContextId();
-
-        return switch (contextType) {
-            case MODERATION -> resolveModerationContext(roomMember, currentUser, contextId);
-            case SUPPORT -> resolveSupportContext(roomMember, currentUser, contextId);
-            case DISPUTE -> resolveDisputeContext(roomMember, currentUser, contextId);
-        };
-    }
-
-    private RevealContextInfo resolveModerationContext(RoomMember roomMember, User currentUser, Long contextId) {
-        if (currentUser.getRole() != Role.ADMIN) {
-            throw new ForbiddenOperationException("Only admin can reveal identifier in moderation context");
-        }
-
-        ModerationQueue item = moderationQueueRepository.findByIdAndRoomMemberAndStatusIn(
-                        contextId,
-                        roomMember,
-                        List.of(ModerationQueueStatus.OPEN, ModerationQueueStatus.IN_REVIEW)
-                )
-                .orElseThrow(() -> new ForbiddenOperationException("Moderation context is not active for this membership"));
-
-        ensureContextAssignment(item.getAssignedAdmin(), currentUser, "Moderation context");
-        return new RevealContextInfo(IdentifierRevealContextType.MODERATION, item.getId());
-    }
-
-    private RevealContextInfo resolveSupportContext(RoomMember roomMember, User currentUser, Long contextId) {
-        SupportTicket ticket = supportTicketRepository.findByIdAndRoomMemberAndStatusIn(
-                        contextId,
-                        roomMember,
-                        List.of(
-                                SupportTicketStatus.OPEN,
-                                SupportTicketStatus.IN_PROGRESS,
-                                SupportTicketStatus.WAITING_USER,
-                                SupportTicketStatus.ESCALATED
-                        )
-                )
-                .orElseThrow(() -> new ForbiddenOperationException("Support context is not active for this membership"));
-
-        ensureContextAssignment(ticket.getAssignedAdmin(), currentUser, "Support context");
-        return new RevealContextInfo(IdentifierRevealContextType.SUPPORT, ticket.getId());
-    }
-
-    private RevealContextInfo resolveDisputeContext(RoomMember roomMember, User currentUser, Long contextId) {
-        Dispute dispute = disputeRepository.findByIdAndRoomMemberAndStatusIn(
-                        contextId,
-                        roomMember,
-                        List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW)
-                )
-                .orElseThrow(() -> new ForbiddenOperationException("Dispute context is not active for this membership"));
-
-        ensureContextAssignment(dispute.getAssignedAdmin(), currentUser, "Dispute context");
-        return new RevealContextInfo(IdentifierRevealContextType.DISPUTE, dispute.getId());
-    }
-
-    private void ensureContextAssignment(User assignedUser, User currentUser, String contextLabel) {
-        if (assignedUser != null && !assignedUser.getId().equals(currentUser.getId())) {
-            throw new ForbiddenOperationException(contextLabel + " is assigned to another staff member");
-        }
-    }
-
-    private void saveIdentifierRevealAudit(
-            Room room,
-            RoomMember roomMember,
-            User actor,
-            String actorRole,
-            String eventType,
-            String reason,
-            RoomMemberIdentifier identifier,
-            String contextType,
-            Long contextId,
-            HttpServletRequest httpRequest
-    ) {
-        LocalDateTime auditTimestamp = LocalDateTime.now();
-        ObjectNode newState = JsonNodeFactory.instance.objectNode();
-        newState.put("reason", reason);
-        newState.put("identifierType", identifier.getIdentifierType().name());
-        newState.put("revealedBy", actorRole);
-
-        if (contextType != null) {
-            newState.put("contextType", contextType);
-        }
-
-        if (contextId != null) {
-            newState.put("contextId", contextId);
-        }
-
-        ObjectNode auditNode = newState.putObject("audit");
-        auditNode.put("actorId", actor.getId());
-        auditNode.put("role", actorRole);
-        auditNode.put("reason", reason);
-        auditNode.put("roomId", room.getId());
-        auditNode.put("memberId", roomMember.getId());
-        auditNode.put("timestamp", auditTimestamp.toString());
-
-        if (contextType != null) {
-            auditNode.put("contextType", contextType);
-        }
-
-        if (contextId != null) {
-            auditNode.put("contextId", contextId);
-        }
-
-        roomEventLogRepository.save(
-                RoomEventLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .actorUser(actor)
-                        .actorRole(actorRole)
-                        .room(room)
-                        .roomMember(roomMember)
-                        .eventType(eventType)
-                        .newState(newState)
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .createdAt(auditTimestamp)
-                        .build()
-        );
-    }
-
-    private boolean isValidIdentifierFormat(String value) {
-        return value != null && value.length() >= 4;
-    }
-
-    private record RevealContextInfo(IdentifierRevealContextType type, Long id) {
-    }
+  private record RevealContextInfo(IdentifierRevealContextType type, Long id) {}
 }

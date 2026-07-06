@@ -7,7 +7,7 @@ import lombok.Data;
 @Data
 public class RequestPhoneCodeRequest {
 
-    @NotBlank(message = "Phone is required")
-    @Pattern(regexp = "^\\+7\\d{10}$", message = "Phone must be in +7XXXXXXXXXX format")
-    private String phone;
+  @NotBlank(message = "Phone is required")
+  @Pattern(regexp = "^\\+7\\d{10}$", message = "Phone must be in +7XXXXXXXXXX format")
+  private String phone;
 }

@@ -7,7 +7,7 @@ import lombok.Data;
 @Data
 @Builder
 public class PayoutCardBindingConfirmResponse {
-    private String status; // SUCCESS | PENDING | FAILED
-    private PayoutMethodDto method; // present when SUCCESS
-    private String message;
+  private String status; // SUCCESS | PENDING | FAILED
+  private PayoutMethodDto method; // present when SUCCESS
+  private String message;
 }

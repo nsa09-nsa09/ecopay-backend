@@ -12,29 +12,29 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CleanupScheduler {
 
-    private final RefreshTokenService refreshTokenService;
-    private final RateLimitService rateLimitService;
-    private final StaffTwoFactorService staffTwoFactorService;
-    private final PaymentService paymentService;
+  private final RefreshTokenService refreshTokenService;
+  private final RateLimitService rateLimitService;
+  private final StaffTwoFactorService staffTwoFactorService;
+  private final PaymentService paymentService;
 
-    @Scheduled(cron = "0 0 2 * * ?")
-    public void cleanupExpiredTokens() {
-        refreshTokenService.cleanupExpiredTokens();
-    }
+  @Scheduled(cron = "0 0 2 * * ?")
+  public void cleanupExpiredTokens() {
+    refreshTokenService.cleanupExpiredTokens();
+  }
 
-    @Scheduled(cron = "0 0 3 * * ?")
-    public void cleanupOldLoginAttempts() {
-        rateLimitService.cleanupOldAttempts();
-    }
+  @Scheduled(cron = "0 0 3 * * ?")
+  public void cleanupOldLoginAttempts() {
+    rateLimitService.cleanupOldAttempts();
+  }
 
-    @Scheduled(cron = "0 30 3 * * ?")
-    public void cleanupExpiredStaffTwoFactorChallenges() {
-        staffTwoFactorService.cleanupExpired();
-    }
+  @Scheduled(cron = "0 30 3 * * ?")
+  public void cleanupExpiredStaffTwoFactorChallenges() {
+    staffTwoFactorService.cleanupExpired();
+  }
 
-    /** Every 5 minutes: fail PENDING payment intents that passed their expiry. */
-    @Scheduled(fixedDelayString = "${app.scheduler.intent-expiry-delay-ms:300000}")
-    public void expireStalePaymentIntents() {
-        paymentService.expireStalePendingIntents();
-    }
+  /** Every 5 minutes: fail PENDING payment intents that passed their expiry. */
+  @Scheduled(fixedDelayString = "${app.scheduler.intent-expiry-delay-ms:300000}")
+  public void expireStalePaymentIntents() {
+    paymentService.expireStalePendingIntents();
+  }
 }

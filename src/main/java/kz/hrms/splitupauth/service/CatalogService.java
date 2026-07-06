@@ -1,5 +1,14 @@
 package kz.hrms.splitupauth.service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import kz.hrms.splitupauth.dto.CatalogSearchResultDto;
 import kz.hrms.splitupauth.dto.CategoryDto;
 import kz.hrms.splitupauth.dto.RoomMatchDto;
@@ -22,240 +31,230 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-
 @Service
 @RequiredArgsConstructor
 public class CatalogService {
 
-    /** Below this length we treat the query as too noisy to match meaningfully. */
-    private static final int SEARCH_MIN_QUERY_LENGTH = 2;
-    /** Default dropdown row count when the caller doesn't pass a limit. */
-    private static final int SEARCH_DEFAULT_LIMIT = 10;
-    /** Hard cap so a malicious caller can't ask for the whole catalog. */
-    private static final int SEARCH_MAX_LIMIT = 25;
+  /** Below this length we treat the query as too noisy to match meaningfully. */
+  private static final int SEARCH_MIN_QUERY_LENGTH = 2;
 
-    /** Membership states that occupy a seat (per CLAUDE.md "Slot occupied" rule). */
-    private static final List<MemberStatus> OCCUPYING_STATUSES =
-            List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
+  /** Default dropdown row count when the caller doesn't pass a limit. */
+  private static final int SEARCH_DEFAULT_LIMIT = 10;
 
-    private final CategoryRepository categoryRepository;
-    private final ServiceRepository serviceRepository;
-    private final TariffPlanRepository tariffPlanRepository;
-    private final RoomRepository roomRepository;
-    private final RoomMemberRepository roomMemberRepository;
-    private final CatalogMapper catalogMapper;
-    private final ServiceLogoStorageService logoStorage;
+  /** Hard cap so a malicious caller can't ask for the whole catalog. */
+  private static final int SEARCH_MAX_LIMIT = 25;
 
-    @Transactional(readOnly = true)
-    public List<CategoryDto> getCategories() {
-        return categoryRepository.findByIsActiveTrueOrderBySortOrderAscIdAsc()
-                .stream()
-                .map(catalogMapper::toDto)
-                .toList();
+  /** Membership states that occupy a seat (per CLAUDE.md "Slot occupied" rule). */
+  private static final List<MemberStatus> OCCUPYING_STATUSES =
+      List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
+
+  private final CategoryRepository categoryRepository;
+  private final ServiceRepository serviceRepository;
+  private final TariffPlanRepository tariffPlanRepository;
+  private final RoomRepository roomRepository;
+  private final RoomMemberRepository roomMemberRepository;
+  private final CatalogMapper catalogMapper;
+  private final ServiceLogoStorageService logoStorage;
+
+  @Transactional(readOnly = true)
+  public List<CategoryDto> getCategories() {
+    return categoryRepository.findByIsActiveTrueOrderBySortOrderAscIdAsc().stream()
+        .map(catalogMapper::toDto)
+        .toList();
+  }
+
+  @Transactional(readOnly = true)
+  public List<ServiceDto> getServices(Long categoryId, String sort) {
+    List<ServiceEntity> services =
+        (categoryId != null)
+            ? serviceRepository.findByCategoryIdAndIsActiveTrueOrderByIdAsc(categoryId)
+            : serviceRepository.findByIsActiveTrueOrderByIdAsc();
+
+    if (services.isEmpty()) {
+      return List.of();
     }
 
-    @Transactional(readOnly = true)
-    public List<ServiceDto> getServices(Long categoryId, String sort) {
-        List<ServiceEntity> services = (categoryId != null)
-                ? serviceRepository.findByCategoryIdAndIsActiveTrueOrderByIdAsc(categoryId)
-                : serviceRepository.findByIsActiveTrueOrderByIdAsc();
+    Map<Long, TariffStats> statsByService = loadTariffStats(services);
 
-        if (services.isEmpty()) {
-            return List.of();
-        }
-
-        Map<Long, TariffStats> statsByService = loadTariffStats(services);
-
-        List<ServiceDto> dtos = new ArrayList<>(services.size());
-        for (ServiceEntity s : services) {
-            TariffStats stats = statsByService.getOrDefault(s.getId(), TariffStats.EMPTY);
-            dtos.add(catalogMapper.toDto(s, stats.minPricePerMember, stats.cheapestCurrency, stats.count));
-        }
-
-        sortServices(dtos, sort);
-        return dtos;
+    List<ServiceDto> dtos = new ArrayList<>(services.size());
+    for (ServiceEntity s : services) {
+      TariffStats stats = statsByService.getOrDefault(s.getId(), TariffStats.EMPTY);
+      dtos.add(
+          catalogMapper.toDto(s, stats.minPricePerMember, stats.cheapestCurrency, stats.count));
     }
 
-    @Transactional(readOnly = true)
-    public ServiceDto getService(Long id) {
-        ServiceEntity service = serviceRepository.findById(id)
-                .filter(ServiceEntity::getIsActive)
-                .orElseThrow(() -> new ResourceNotFoundException("Service not found"));
+    sortServices(dtos, sort);
+    return dtos;
+  }
 
-        Map<Long, TariffStats> statsByService = loadTariffStats(List.of(service));
-        TariffStats stats = statsByService.getOrDefault(service.getId(), TariffStats.EMPTY);
-        return catalogMapper.toDto(service, stats.minPricePerMember, stats.cheapestCurrency, stats.count);
+  @Transactional(readOnly = true)
+  public ServiceDto getService(Long id) {
+    ServiceEntity service =
+        serviceRepository
+            .findById(id)
+            .filter(ServiceEntity::getIsActive)
+            .orElseThrow(() -> new ResourceNotFoundException("Service not found"));
+
+    Map<Long, TariffStats> statsByService = loadTariffStats(List.of(service));
+    TariffStats stats = statsByService.getOrDefault(service.getId(), TariffStats.EMPTY);
+    return catalogMapper.toDto(
+        service, stats.minPricePerMember, stats.cheapestCurrency, stats.count);
+  }
+
+  /**
+   * Compact ILIKE search by service name, scoped to active services. Backs the public navbar "Поиск
+   * планов…" dropdown. Returns an empty list on blank or too-short queries (under {@value
+   * #SEARCH_MIN_QUERY_LENGTH} chars) so the FE can call this on every keystroke without bursts of
+   * 1-letter scans. The {@code limit} arg is clamped to {@value #SEARCH_MAX_LIMIT}.
+   */
+  @Transactional(readOnly = true)
+  public List<CatalogSearchResultDto> searchServices(String q, int limit) {
+    if (q == null) return List.of();
+    String trimmed = q.trim();
+    if (trimmed.length() < SEARCH_MIN_QUERY_LENGTH) return List.of();
+
+    int effective = limit <= 0 ? SEARCH_DEFAULT_LIMIT : Math.min(limit, SEARCH_MAX_LIMIT);
+    String qLower = trimmed.toLowerCase(Locale.ROOT);
+
+    return serviceRepository.searchActiveByName(qLower, PageRequest.of(0, effective)).stream()
+        .map(
+            s ->
+                CatalogSearchResultDto.builder()
+                    .serviceId(s.getId())
+                    .name(s.getName())
+                    .slug(s.getSlug())
+                    .categoryName(s.getCategory() != null ? s.getCategory().getName() : null)
+                    .logoUrl(logoStorage.publicUrl(s.getLogoKey()))
+                    .build())
+        .toList();
+  }
+
+  /**
+   * FIFO subscription matcher: returns the oldest still-OPEN room on this service that the caller
+   * can join, falling back to "CREATE" when none fits. "Fits" means the room has at least one free
+   * seat (owner counts as one occupied seat per CLAUDE.md), the caller is not the owner, the
+   * start_date is still in the future, and the room isn't soft-deleted.
+   *
+   * <p>The repository pre-filters by {@code status=OPEN, deleted_at IS NULL, start_date > now};
+   * this method does the seat math in-process. Volume of OPEN rooms per service stays small in
+   * practice, so the seat-count round-trip per row is acceptable; if it ever isn't, swap to the
+   * batch {@code RoomMemberRepository#countOccupiedByRoomIds} projection.
+   */
+  @Transactional(readOnly = true)
+  public RoomMatchDto matchRoomForService(Long serviceId, User currentUser) {
+    if (!serviceRepository.existsById(serviceId)) {
+      throw new ResourceNotFoundException("Service not found");
     }
 
-    /**
-     * Compact ILIKE search by service name, scoped to active services. Backs
-     * the public navbar "Поиск планов…" dropdown. Returns an empty list on
-     * blank or too-short queries (under {@value #SEARCH_MIN_QUERY_LENGTH} chars)
-     * so the FE can call this on every keystroke without bursts of 1-letter
-     * scans. The {@code limit} arg is clamped to {@value #SEARCH_MAX_LIMIT}.
-     */
-    @Transactional(readOnly = true)
-    public List<CatalogSearchResultDto> searchServices(String q, int limit) {
-        if (q == null) return List.of();
-        String trimmed = q.trim();
-        if (trimmed.length() < SEARCH_MIN_QUERY_LENGTH) return List.of();
+    List<Room> candidates =
+        roomRepository
+            .findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+                serviceId, RoomStatus.OPEN, LocalDateTime.now());
 
-        int effective = limit <= 0 ? SEARCH_DEFAULT_LIMIT : Math.min(limit, SEARCH_MAX_LIMIT);
-        String qLower = trimmed.toLowerCase(Locale.ROOT);
+    for (Room room : candidates) {
+      if (currentUser != null
+          && room.getOwner() != null
+          && currentUser.getId().equals(room.getOwner().getId())) {
+        // Owner already holds one seat — they can't "join" their own room.
+        continue;
+      }
+      if (room.getMaxMembers() == null || room.getMaxMembers() < 2) {
+        // Defensive: malformed rooms (V1 enforces >=2 at DB level too).
+        continue;
+      }
 
-        return serviceRepository
-                .searchActiveByName(qLower, PageRequest.of(0, effective))
-                .stream()
-                .map(s -> CatalogSearchResultDto.builder()
-                        .serviceId(s.getId())
-                        .name(s.getName())
-                        .slug(s.getSlug())
-                        .categoryName(s.getCategory() != null ? s.getCategory().getName() : null)
-                        .logoUrl(logoStorage.publicUrl(s.getLogoKey()))
-                        .build())
-                .toList();
+      long occupied =
+          roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
+      // Owner = 1, plus PENDING/ACTIVE members. Free = max - 1 - occupied.
+      long free = room.getMaxMembers() - 1L - occupied;
+      if (free >= 1L) {
+        return RoomMatchDto.builder().action("JOIN").roomId(room.getId()).build();
+      }
     }
 
-    /**
-     * FIFO subscription matcher: returns the oldest still-OPEN room on this
-     * service that the caller can join, falling back to "CREATE" when none
-     * fits. "Fits" means the room has at least one free seat (owner counts as
-     * one occupied seat per CLAUDE.md), the caller is not the owner, the
-     * start_date is still in the future, and the room isn't soft-deleted.
-     *
-     * <p>The repository pre-filters by {@code status=OPEN, deleted_at IS NULL,
-     * start_date > now}; this method does the seat math in-process. Volume of
-     * OPEN rooms per service stays small in practice, so the seat-count
-     * round-trip per row is acceptable; if it ever isn't, swap to the batch
-     * {@code RoomMemberRepository#countOccupiedByRoomIds} projection.</p>
-     */
-    @Transactional(readOnly = true)
-    public RoomMatchDto matchRoomForService(Long serviceId, User currentUser) {
-        if (!serviceRepository.existsById(serviceId)) {
-            throw new ResourceNotFoundException("Service not found");
-        }
+    return RoomMatchDto.builder().action("CREATE").roomId(null).build();
+  }
 
-        List<Room> candidates = roomRepository
-                .findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
-                        serviceId, RoomStatus.OPEN, LocalDateTime.now());
+  @Transactional(readOnly = true)
+  public List<TariffPlanDto> getTariffs(Long serviceId) {
+    return tariffPlanRepository.findByServiceIdAndIsActiveTrueOrderByIdAsc(serviceId).stream()
+        .map(catalogMapper::toDto)
+        .toList();
+  }
 
-        for (Room room : candidates) {
-            if (currentUser != null
-                    && room.getOwner() != null
-                    && currentUser.getId().equals(room.getOwner().getId())) {
-                // Owner already holds one seat — they can't "join" their own room.
-                continue;
-            }
-            if (room.getMaxMembers() == null || room.getMaxMembers() < 2) {
-                // Defensive: malformed rooms (V1 enforces >=2 at DB level too).
-                continue;
-            }
+  private Map<Long, TariffStats> loadTariffStats(List<ServiceEntity> services) {
+    List<Long> ids = services.stream().map(ServiceEntity::getId).toList();
+    List<TariffPlan> tariffs = tariffPlanRepository.findByServiceIdInAndIsActiveTrue(ids);
 
-            long occupied = roomMemberRepository
-                    .countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
-            // Owner = 1, plus PENDING/ACTIVE members. Free = max - 1 - occupied.
-            long free = room.getMaxMembers() - 1L - occupied;
-            if (free >= 1L) {
-                return RoomMatchDto.builder()
-                        .action("JOIN")
-                        .roomId(room.getId())
-                        .build();
-            }
-        }
-
-        return RoomMatchDto.builder()
-                .action("CREATE")
-                .roomId(null)
-                .build();
+    Map<Long, TariffStats> result = new HashMap<>();
+    for (TariffPlan t : tariffs) {
+      if (t.getBasePriceTotal() == null || t.getMaxMembers() == null || t.getMaxMembers() <= 0) {
+        // Treat as "no usable price"; still bump the tariff count below.
+        BigDecimal perMember = null;
+        result.compute(
+            t.getService().getId(), (id, prev) -> bumpStats(prev, perMember, t.getCurrency()));
+        continue;
+      }
+      BigDecimal perMember =
+          t.getBasePriceTotal()
+              .divide(BigDecimal.valueOf(t.getMaxMembers()), 2, RoundingMode.HALF_UP);
+      result.compute(
+          t.getService().getId(), (id, prev) -> bumpStats(prev, perMember, t.getCurrency()));
     }
+    return result;
+  }
 
-    @Transactional(readOnly = true)
-    public List<TariffPlanDto> getTariffs(Long serviceId) {
-        return tariffPlanRepository.findByServiceIdAndIsActiveTrueOrderByIdAsc(serviceId)
-                .stream()
-                .map(catalogMapper::toDto)
-                .toList();
+  private TariffStats bumpStats(TariffStats prev, BigDecimal perMember, String currency) {
+    if (prev == null) {
+      return new TariffStats(perMember, perMember != null ? currency : null, 1);
     }
-
-    private Map<Long, TariffStats> loadTariffStats(List<ServiceEntity> services) {
-        List<Long> ids = services.stream().map(ServiceEntity::getId).toList();
-        List<TariffPlan> tariffs = tariffPlanRepository.findByServiceIdInAndIsActiveTrue(ids);
-
-        Map<Long, TariffStats> result = new HashMap<>();
-        for (TariffPlan t : tariffs) {
-            if (t.getBasePriceTotal() == null || t.getMaxMembers() == null || t.getMaxMembers() <= 0) {
-                // Treat as "no usable price"; still bump the tariff count below.
-                BigDecimal perMember = null;
-                result.compute(t.getService().getId(), (id, prev) -> bumpStats(prev, perMember, t.getCurrency()));
-                continue;
-            }
-            BigDecimal perMember = t.getBasePriceTotal()
-                    .divide(BigDecimal.valueOf(t.getMaxMembers()), 2, RoundingMode.HALF_UP);
-            result.compute(t.getService().getId(),
-                    (id, prev) -> bumpStats(prev, perMember, t.getCurrency()));
-        }
-        return result;
+    int newCount = prev.count + 1;
+    if (perMember == null) {
+      return new TariffStats(prev.minPricePerMember, prev.cheapestCurrency, newCount);
     }
-
-    private TariffStats bumpStats(TariffStats prev, BigDecimal perMember, String currency) {
-        if (prev == null) {
-            return new TariffStats(perMember, perMember != null ? currency : null, 1);
-        }
-        int newCount = prev.count + 1;
-        if (perMember == null) {
-            return new TariffStats(prev.minPricePerMember, prev.cheapestCurrency, newCount);
-        }
-        if (prev.minPricePerMember == null
-                || perMember.compareTo(prev.minPricePerMember) < 0) {
-            return new TariffStats(perMember, currency, newCount);
-        }
-        return new TariffStats(prev.minPricePerMember, prev.cheapestCurrency, newCount);
+    if (prev.minPricePerMember == null || perMember.compareTo(prev.minPricePerMember) < 0) {
+      return new TariffStats(perMember, currency, newCount);
     }
+    return new TariffStats(prev.minPricePerMember, prev.cheapestCurrency, newCount);
+  }
 
-    private void sortServices(List<ServiceDto> dtos, String sort) {
-        String key = sort == null ? "name_asc" : sort.toLowerCase(Locale.ROOT);
-        Comparator<ServiceDto> byNameAsc = Comparator
-                .comparing(ServiceDto::getName, String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(ServiceDto::getId);
-        Comparator<ServiceDto> byNameDesc = Comparator
-                .comparing(ServiceDto::getName, String.CASE_INSENSITIVE_ORDER).reversed()
-                .thenComparing(ServiceDto::getId);
+  private void sortServices(List<ServiceDto> dtos, String sort) {
+    String key = sort == null ? "name_asc" : sort.toLowerCase(Locale.ROOT);
+    Comparator<ServiceDto> byNameAsc =
+        Comparator.comparing(ServiceDto::getName, String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(ServiceDto::getId);
+    Comparator<ServiceDto> byNameDesc =
+        Comparator.comparing(ServiceDto::getName, String.CASE_INSENSITIVE_ORDER)
+            .reversed()
+            .thenComparing(ServiceDto::getId);
 
-        // Per contract: services without an active tariff (and hence null min price)
-        // go to the end regardless of asc/desc direction.
-        Comparator<ServiceDto> byPriceAsc = Comparator
-                .comparing(ServiceDto::getMinPricePerMember,
-                        Comparator.nullsLast(Comparator.naturalOrder()))
-                .thenComparing(ServiceDto::getId);
-        Comparator<ServiceDto> byPriceDesc = Comparator
-                .comparing(ServiceDto::getMinPricePerMember,
-                        Comparator.nullsLast(Comparator.reverseOrder()))
-                .thenComparing(ServiceDto::getId);
+    // Per contract: services without an active tariff (and hence null min price)
+    // go to the end regardless of asc/desc direction.
+    Comparator<ServiceDto> byPriceAsc =
+        Comparator.comparing(
+                ServiceDto::getMinPricePerMember, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(ServiceDto::getId);
+    Comparator<ServiceDto> byPriceDesc =
+        Comparator.comparing(
+                ServiceDto::getMinPricePerMember, Comparator.nullsLast(Comparator.reverseOrder()))
+            .thenComparing(ServiceDto::getId);
 
-        // Newest = highest id, since we don't expose createdAt in ServiceDto and IDs are sequential.
-        Comparator<ServiceDto> byNewest = Comparator
-                .comparing(ServiceDto::getId, Comparator.reverseOrder());
+    // Newest = highest id, since we don't expose createdAt in ServiceDto and IDs are sequential.
+    Comparator<ServiceDto> byNewest =
+        Comparator.comparing(ServiceDto::getId, Comparator.reverseOrder());
 
-        Comparator<ServiceDto> chosen = switch (key) {
-            case "name_desc" -> byNameDesc;
-            case "price_asc" -> byPriceAsc;
-            case "price_desc" -> byPriceDesc;
-            case "newest" -> byNewest;
-            default -> byNameAsc;
+    Comparator<ServiceDto> chosen =
+        switch (key) {
+          case "name_desc" -> byNameDesc;
+          case "price_asc" -> byPriceAsc;
+          case "price_desc" -> byPriceDesc;
+          case "newest" -> byNewest;
+          default -> byNameAsc;
         };
-        dtos.sort(chosen);
-    }
+    dtos.sort(chosen);
+  }
 
-    private record TariffStats(BigDecimal minPricePerMember, String cheapestCurrency, int count) {
-        static final TariffStats EMPTY = new TariffStats(null, null, 0);
-    }
+  private record TariffStats(BigDecimal minPricePerMember, String cheapestCurrency, int count) {
+    static final TariffStats EMPTY = new TariffStats(null, null, 0);
+  }
 }

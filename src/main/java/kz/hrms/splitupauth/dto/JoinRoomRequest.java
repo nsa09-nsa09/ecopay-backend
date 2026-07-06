@@ -7,10 +7,10 @@ import lombok.Data;
 @Data
 public class JoinRoomRequest {
 
-    @NotNull(message = "Consent must be accepted")
-    private Boolean consentAccepted;
+  @NotNull(message = "Consent must be accepted")
+  private Boolean consentAccepted;
 
-    private IdentifierType identifierType;
+  private IdentifierType identifierType;
 
-    private String identifierValue;
+  private String identifierValue;
 }

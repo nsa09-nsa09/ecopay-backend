@@ -1,5 +1,16 @@
 package kz.hrms.splitupauth.service;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.UUID;
+import java.util.regex.Pattern;
+import javax.imageio.ImageIO;
 import kz.hrms.splitupauth.config.S3Properties;
 import kz.hrms.splitupauth.config.ServiceLogoUploadProperties;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
@@ -19,236 +30,219 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
-import javax.imageio.ImageIO;
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.UUID;
-import java.util.regex.Pattern;
-
 /**
- * Handles the service-logo upload pipeline end-to-end (cloned from
- * {@link NewsImageStorageService}): input validation, decoding, downscaling,
- * re-encoding as JPEG, and persistence to S3-compatible object storage. Only
- * the <b>object key</b> (e.g. {@code service-logos/ab12...jpg}) is returned
- * and persisted on {@code ServiceEntity.logoKey} — never an absolute URL.
- * Logos are served through the backend host so credentials never leak.
+ * Handles the service-logo upload pipeline end-to-end (cloned from {@link
+ * NewsImageStorageService}): input validation, decoding, downscaling, re-encoding as JPEG, and
+ * persistence to S3-compatible object storage. Only the <b>object key</b> (e.g. {@code
+ * service-logos/ab12...jpg}) is returned and persisted on {@code ServiceEntity.logoKey} — never an
+ * absolute URL. Logos are served through the backend host so credentials never leak.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ServiceLogoStorageService {
 
-    /** Object-key "folder" for service logos within the bucket. */
-    private static final String LOGO_PREFIX = "service-logos/";
+  /** Object-key "folder" for service logos within the bucket. */
+  private static final String LOGO_PREFIX = "service-logos/";
 
-    /** Public path the backend serves logos from; pairs with {@link #LOGO_PREFIX}. */
-    public static final String LOGO_URL_PATH = "/api/v1/catalog/services/logos/";
+  /** Public path the backend serves logos from; pairs with {@link #LOGO_PREFIX}. */
+  public static final String LOGO_URL_PATH = "/api/v1/catalog/services/logos/";
 
-    /** Filenames are UUID hex + ".jpg"; anything else can't be one of ours. */
-    private static final Pattern ALLOWED_FILENAME =
-            Pattern.compile("^[a-zA-Z0-9._-]+\\.jpg$");
+  /** Filenames are UUID hex + ".jpg"; anything else can't be one of ours. */
+  private static final Pattern ALLOWED_FILENAME = Pattern.compile("^[a-zA-Z0-9._-]+\\.jpg$");
 
-    private final ServiceLogoUploadProperties properties;
-    private final S3Properties s3Properties;
-    private final S3Client s3Client;
+  private final ServiceLogoUploadProperties properties;
+  private final S3Properties s3Properties;
+  private final S3Client s3Client;
 
-    @Value("${app.base-url:http://localhost:8080}")
-    private String baseUrl;
+  @Value("${app.base-url:http://localhost:8080}")
+  private String baseUrl;
 
-    public String store(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            throw new InvalidRequestException("Файл не передан");
-        }
-        if (file.getSize() > properties.getServiceLogo().getMaxSizeBytes()) {
-            throw new InvalidRequestException(
-                    "Файл превышает лимит "
-                            + (properties.getServiceLogo().getMaxSizeBytes() / (1024 * 1024))
-                            + " МБ");
-        }
-
-        String original = file.getOriginalFilename();
-        String extension = sniffExtension(original);
-        if (!isExtensionAllowed(extension)) {
-            throw new InvalidRequestException(
-                    "Разрешены только файлы png, jpg, jpeg");
-        }
-
-        byte[] bytes;
-        try {
-            bytes = file.getBytes();
-        } catch (IOException ex) {
-            throw new InvalidRequestException("Не удалось прочитать файл");
-        }
-
-        if (!magicBytesMatch(bytes)) {
-            throw new InvalidRequestException(
-                    "Файл не похож на изображение (неверная сигнатура)");
-        }
-
-        BufferedImage decoded;
-        try (InputStream in = new ByteArrayInputStream(bytes)) {
-            decoded = ImageIO.read(in);
-        } catch (IOException ex) {
-            throw new InvalidRequestException("Не удалось декодировать изображение");
-        }
-        if (decoded == null) {
-            throw new InvalidRequestException("Не удалось декодировать изображение");
-        }
-
-        int maxDim = properties.getServiceLogo().getMaxDecodedDimension();
-        if (decoded.getWidth() > maxDim || decoded.getHeight() > maxDim) {
-            throw new InvalidRequestException(
-                    "Изображение слишком большое (" + decoded.getWidth()
-                            + "x" + decoded.getHeight() + ")");
-        }
-
-        BufferedImage normalized = downscale(decoded, properties.getServiceLogo().getTargetWidth());
-        byte[] jpeg = encodeJpeg(normalized);
-
-        String key = LOGO_PREFIX + UUID.randomUUID().toString().replace("-", "") + ".jpg";
-        try {
-            s3Client.putObject(
-                    PutObjectRequest.builder()
-                            .bucket(s3Properties.getBucket())
-                            .key(key)
-                            .contentType("image/jpeg")
-                            .build(),
-                    RequestBody.fromBytes(jpeg));
-        } catch (S3Exception ex) {
-            log.error("Failed to upload service logo to bucket {} key {}",
-                    s3Properties.getBucket(), key, ex);
-            throw new InvalidRequestException("Не удалось сохранить файл в хранилище");
-        }
-
-        return key;
+  public String store(MultipartFile file) {
+    if (file == null || file.isEmpty()) {
+      throw new InvalidRequestException("Файл не передан");
+    }
+    if (file.getSize() > properties.getServiceLogo().getMaxSizeBytes()) {
+      throw new InvalidRequestException(
+          "Файл превышает лимит "
+              + (properties.getServiceLogo().getMaxSizeBytes() / (1024 * 1024))
+              + " МБ");
     }
 
-    public String publicUrl(String storedValue) {
-        if (!isManaged(storedValue)) {
-            return null;
-        }
-        String filename = storedValue.substring(LOGO_PREFIX.length());
-        return resolveHost() + LOGO_URL_PATH + filename;
+    String original = file.getOriginalFilename();
+    String extension = sniffExtension(original);
+    if (!isExtensionAllowed(extension)) {
+      throw new InvalidRequestException("Разрешены только файлы png, jpg, jpeg");
     }
 
-    public byte[] loadImageBytes(String filename) {
-        if (filename == null || !ALLOWED_FILENAME.matcher(filename).matches()) {
-            throw new ResourceNotFoundException("Service logo not found");
-        }
-        String key = LOGO_PREFIX + filename;
-        try {
-            return s3Client.getObjectAsBytes(GetObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(key)
-                    .build()).asByteArray();
-        } catch (NoSuchKeyException ex) {
-            throw new ResourceNotFoundException("Service logo not found");
-        } catch (S3Exception ex) {
-            log.warn("Failed to read service logo {} from bucket {}: {}",
-                    key, s3Properties.getBucket(), ex.getMessage());
-            throw new ResourceNotFoundException("Service logo not found");
-        }
+    byte[] bytes;
+    try {
+      bytes = file.getBytes();
+    } catch (IOException ex) {
+      throw new InvalidRequestException("Не удалось прочитать файл");
     }
 
-    public void deleteIfManaged(String storedValue) {
-        if (!isManaged(storedValue)) {
-            return;
-        }
-        try {
-            s3Client.deleteObject(DeleteObjectRequest.builder()
-                    .bucket(s3Properties.getBucket())
-                    .key(storedValue)
-                    .build());
-        } catch (S3Exception ex) {
-            log.warn("Failed to delete service logo {} from bucket {}: {}",
-                    storedValue, s3Properties.getBucket(), ex.getMessage());
-        }
+    if (!magicBytesMatch(bytes)) {
+      throw new InvalidRequestException("Файл не похож на изображение (неверная сигнатура)");
     }
 
-    private boolean isManaged(String storedValue) {
-        return storedValue != null
-                && !storedValue.isBlank()
-                && storedValue.startsWith(LOGO_PREFIX);
+    BufferedImage decoded;
+    try (InputStream in = new ByteArrayInputStream(bytes)) {
+      decoded = ImageIO.read(in);
+    } catch (IOException ex) {
+      throw new InvalidRequestException("Не удалось декодировать изображение");
+    }
+    if (decoded == null) {
+      throw new InvalidRequestException("Не удалось декодировать изображение");
     }
 
-    private String resolveHost() {
-        if (RequestContextHolder.getRequestAttributes() != null) {
-            try {
-                return ServletUriComponentsBuilder.fromCurrentContextPath()
-                        .build().toUriString().replaceAll("/+$", "");
-            } catch (IllegalStateException ignored) {
-            }
-        }
-        return (baseUrl == null ? "" : baseUrl).replaceAll("/+$", "");
+    int maxDim = properties.getServiceLogo().getMaxDecodedDimension();
+    if (decoded.getWidth() > maxDim || decoded.getHeight() > maxDim) {
+      throw new InvalidRequestException(
+          "Изображение слишком большое (" + decoded.getWidth() + "x" + decoded.getHeight() + ")");
     }
 
-    private byte[] encodeJpeg(BufferedImage image) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try {
-            if (!ImageIO.write(image, "jpg", out)) {
-                throw new IOException("ImageIO returned no JPEG writer");
-            }
-        } catch (IOException ex) {
-            log.error("Failed to encode service logo JPEG", ex);
-            throw new InvalidRequestException("Не удалось обработать изображение");
-        }
-        return out.toByteArray();
+    BufferedImage normalized = downscale(decoded, properties.getServiceLogo().getTargetWidth());
+    byte[] jpeg = encodeJpeg(normalized);
+
+    String key = LOGO_PREFIX + UUID.randomUUID().toString().replace("-", "") + ".jpg";
+    try {
+      s3Client.putObject(
+          PutObjectRequest.builder()
+              .bucket(s3Properties.getBucket())
+              .key(key)
+              .contentType("image/jpeg")
+              .build(),
+          RequestBody.fromBytes(jpeg));
+    } catch (S3Exception ex) {
+      log.error(
+          "Failed to upload service logo to bucket {} key {}", s3Properties.getBucket(), key, ex);
+      throw new InvalidRequestException("Не удалось сохранить файл в хранилище");
     }
 
-    private String sniffExtension(String filename) {
-        if (filename == null) return "";
-        int dot = filename.lastIndexOf('.');
-        return dot < 0 ? "" : filename.substring(dot + 1).toLowerCase();
-    }
+    return key;
+  }
 
-    private boolean isExtensionAllowed(String ext) {
-        return "png".equals(ext) || "jpg".equals(ext) || "jpeg".equals(ext);
+  public String publicUrl(String storedValue) {
+    if (!isManaged(storedValue)) {
+      return null;
     }
+    String filename = storedValue.substring(LOGO_PREFIX.length());
+    return resolveHost() + LOGO_URL_PATH + filename;
+  }
 
-    private boolean magicBytesMatch(byte[] bytes) {
-        if (bytes.length < 4) return false;
-        if ((bytes[0] & 0xFF) == 0x89
-                && (bytes[1] & 0xFF) == 0x50
-                && (bytes[2] & 0xFF) == 0x4E
-                && (bytes[3] & 0xFF) == 0x47) {
-            return true;
-        }
-        if ((bytes[0] & 0xFF) == 0xFF
-                && (bytes[1] & 0xFF) == 0xD8
-                && (bytes[2] & 0xFF) == 0xFF) {
-            return true;
-        }
-        return false;
+  public byte[] loadImageBytes(String filename) {
+    if (filename == null || !ALLOWED_FILENAME.matcher(filename).matches()) {
+      throw new ResourceNotFoundException("Service logo not found");
     }
-
-    private BufferedImage downscale(BufferedImage src, int targetWidth) {
-        int width = src.getWidth();
-        int height = src.getHeight();
-        double scale = Math.min(1.0, (double) targetWidth / width);
-        int newW = Math.max(1, (int) Math.round(width * scale));
-        int newH = Math.max(1, (int) Math.round(height * scale));
-
-        BufferedImage out = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = out.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                    RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.setRenderingHint(RenderingHints.KEY_RENDERING,
-                    RenderingHints.VALUE_RENDER_QUALITY);
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setColor(Color.WHITE);
-            g.fillRect(0, 0, newW, newH);
-            g.drawImage(src, 0, 0, newW, newH, null);
-        } finally {
-            g.dispose();
-        }
-        return out;
+    String key = LOGO_PREFIX + filename;
+    try {
+      return s3Client
+          .getObjectAsBytes(
+              GetObjectRequest.builder().bucket(s3Properties.getBucket()).key(key).build())
+          .asByteArray();
+    } catch (NoSuchKeyException ex) {
+      throw new ResourceNotFoundException("Service logo not found");
+    } catch (S3Exception ex) {
+      log.warn(
+          "Failed to read service logo {} from bucket {}: {}",
+          key,
+          s3Properties.getBucket(),
+          ex.getMessage());
+      throw new ResourceNotFoundException("Service logo not found");
     }
+  }
+
+  public void deleteIfManaged(String storedValue) {
+    if (!isManaged(storedValue)) {
+      return;
+    }
+    try {
+      s3Client.deleteObject(
+          DeleteObjectRequest.builder().bucket(s3Properties.getBucket()).key(storedValue).build());
+    } catch (S3Exception ex) {
+      log.warn(
+          "Failed to delete service logo {} from bucket {}: {}",
+          storedValue,
+          s3Properties.getBucket(),
+          ex.getMessage());
+    }
+  }
+
+  private boolean isManaged(String storedValue) {
+    return storedValue != null && !storedValue.isBlank() && storedValue.startsWith(LOGO_PREFIX);
+  }
+
+  private String resolveHost() {
+    if (RequestContextHolder.getRequestAttributes() != null) {
+      try {
+        return ServletUriComponentsBuilder.fromCurrentContextPath()
+            .build()
+            .toUriString()
+            .replaceAll("/+$", "");
+      } catch (IllegalStateException ignored) {
+      }
+    }
+    return (baseUrl == null ? "" : baseUrl).replaceAll("/+$", "");
+  }
+
+  private byte[] encodeJpeg(BufferedImage image) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try {
+      if (!ImageIO.write(image, "jpg", out)) {
+        throw new IOException("ImageIO returned no JPEG writer");
+      }
+    } catch (IOException ex) {
+      log.error("Failed to encode service logo JPEG", ex);
+      throw new InvalidRequestException("Не удалось обработать изображение");
+    }
+    return out.toByteArray();
+  }
+
+  private String sniffExtension(String filename) {
+    if (filename == null) return "";
+    int dot = filename.lastIndexOf('.');
+    return dot < 0 ? "" : filename.substring(dot + 1).toLowerCase();
+  }
+
+  private boolean isExtensionAllowed(String ext) {
+    return "png".equals(ext) || "jpg".equals(ext) || "jpeg".equals(ext);
+  }
+
+  private boolean magicBytesMatch(byte[] bytes) {
+    if (bytes.length < 4) return false;
+    if ((bytes[0] & 0xFF) == 0x89
+        && (bytes[1] & 0xFF) == 0x50
+        && (bytes[2] & 0xFF) == 0x4E
+        && (bytes[3] & 0xFF) == 0x47) {
+      return true;
+    }
+    if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF) {
+      return true;
+    }
+    return false;
+  }
+
+  private BufferedImage downscale(BufferedImage src, int targetWidth) {
+    int width = src.getWidth();
+    int height = src.getHeight();
+    double scale = Math.min(1.0, (double) targetWidth / width);
+    int newW = Math.max(1, (int) Math.round(width * scale));
+    int newH = Math.max(1, (int) Math.round(height * scale));
+
+    BufferedImage out = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_RGB);
+    Graphics2D g = out.createGraphics();
+    try {
+      g.setRenderingHint(
+          RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+      g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+      g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+      g.setColor(Color.WHITE);
+      g.fillRect(0, 0, newW, newH);
+      g.drawImage(src, 0, 0, newW, newH, null);
+    } finally {
+      g.dispose();
+    }
+    return out;
+  }
 }

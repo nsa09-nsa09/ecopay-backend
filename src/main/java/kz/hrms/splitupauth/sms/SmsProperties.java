@@ -9,8 +9,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.sms")
 public class SmsProperties {
 
-    private int codeTtlSeconds = 300;
-    private int resendCooldownSeconds = 60;
-    private int maxAttemptsPerHour = 3;
-    private int maxVerifyAttempts = 5;
+  private int codeTtlSeconds = 300;
+  private int resendCooldownSeconds = 60;
+  private int maxAttemptsPerHour = 3;
+  private int maxVerifyAttempts = 5;
 }

@@ -16,18 +16,16 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class StaffRoomMemberController {
 
-    private final RoomMemberService roomMemberService;
+  private final RoomMemberService roomMemberService;
 
-    @PostMapping("/{roomId}/members/{memberId}/reveal-identifier")
-    public ResponseEntity<RevealedIdentifierDto> revealIdentifierForStaff(
-            @PathVariable Long roomId,
-            @PathVariable Long memberId,
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody RevealIdentifierRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        return ResponseEntity.ok(
-                roomMemberService.revealIdentifierForStaff(roomId, memberId, user, request, httpRequest)
-        );
-    }
+  @PostMapping("/{roomId}/members/{memberId}/reveal-identifier")
+  public ResponseEntity<RevealedIdentifierDto> revealIdentifierForStaff(
+      @PathVariable Long roomId,
+      @PathVariable Long memberId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody RevealIdentifierRequest request,
+      HttpServletRequest httpRequest) {
+    return ResponseEntity.ok(
+        roomMemberService.revealIdentifierForStaff(roomId, memberId, user, request, httpRequest));
+  }
 }

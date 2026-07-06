@@ -6,9 +6,9 @@ import lombok.Data;
 @Data
 @Builder
 public class RevealedIdentifierDto {
-    private Long roomId;
-    private Long roomMemberId;
-    private String identifierType;
-    private String identifierValue;
-    private String revealedForReason;
+  private Long roomId;
+  private Long roomMemberId;
+  private String identifierType;
+  private String identifierValue;
+  private String revealedForReason;
 }

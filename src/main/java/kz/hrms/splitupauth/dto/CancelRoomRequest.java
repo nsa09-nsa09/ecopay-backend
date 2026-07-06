@@ -4,5 +4,5 @@ import lombok.Data;
 
 @Data
 public class CancelRoomRequest {
-    private String reason;
+  private String reason;
 }

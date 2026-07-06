@@ -12,6 +12,5 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class SetFeaturedRequest {
 
-    @NotNull
-    private Boolean featured;
+  @NotNull private Boolean featured;
 }

@@ -1,5 +1,16 @@
 package kz.hrms.splitupauth.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+import java.util.Optional;
 import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.Role;
@@ -17,124 +28,115 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
-    @Mock private UserRepository userRepository;
-    @Mock private ReviewRepository reviewRepository;
-    @Mock private ServiceReviewRepository serviceReviewRepository;
-    @Mock private TokenRevocationService tokenRevocationService;
-    @Mock private AvatarStorageService avatarStorageService;
-    @Mock private ReputationService reputationService;
+  @Mock private UserRepository userRepository;
+  @Mock private ReviewRepository reviewRepository;
+  @Mock private ServiceReviewRepository serviceReviewRepository;
+  @Mock private TokenRevocationService tokenRevocationService;
+  @Mock private AvatarStorageService avatarStorageService;
+  @Mock private ReputationService reputationService;
 
-    private UserService service;
+  private UserService service;
 
-    @BeforeEach
-    void setUp() {
-        service = new UserService(
-                userRepository, new UserMapper(avatarStorageService),
-                reviewRepository, serviceReviewRepository, tokenRevocationService,
-                avatarStorageService, reputationService);
-        // Real impl never returns null; the mock would, so give it a sane default.
-        lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.NEWCOMER);
-        lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);
-    }
+  @BeforeEach
+  void setUp() {
+    service =
+        new UserService(
+            userRepository,
+            new UserMapper(avatarStorageService),
+            reviewRepository,
+            serviceReviewRepository,
+            tokenRevocationService,
+            avatarStorageService,
+            reputationService);
+    // Real impl never returns null; the mock would, so give it a sane default.
+    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.NEWCOMER);
+    lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);
+  }
 
-    private User activeUser(long id) {
-        return User.builder()
-                .id(id)
-                .email("u" + id + "@e.kz")
-                .displayName("Айдар К.")
-                .phone("+77001234567")
-                .publicId("publ" + id)
-                .role(Role.USER)
-                .reputation(80)
-                .emailVerified(true)
-                .status(UserStatus.ACTIVE)
-                .build();
-    }
+  private User activeUser(long id) {
+    return User.builder()
+        .id(id)
+        .email("u" + id + "@e.kz")
+        .displayName("Айдар К.")
+        .phone("+77001234567")
+        .publicId("publ" + id)
+        .role(Role.USER)
+        .reputation(80)
+        .emailVerified(true)
+        .status(UserStatus.ACTIVE)
+        .build();
+  }
 
-    @Test
-    void getPublicProfile_omitsPII_andReturnsAverageRating() {
-        User u = activeUser(10L);
-        when(userRepository.findByPublicId("publ10")).thenReturn(Optional.of(u));
-        when(reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(u))
-                .thenReturn(List.of(
-                        kz.hrms.splitupauth.entity.Review.builder().rating(5).build(),
-                        kz.hrms.splitupauth.entity.Review.builder().rating(4).build()
-                ));
+  @Test
+  void getPublicProfile_omitsPII_andReturnsAverageRating() {
+    User u = activeUser(10L);
+    when(userRepository.findByPublicId("publ10")).thenReturn(Optional.of(u));
+    when(reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(u))
+        .thenReturn(
+            List.of(
+                kz.hrms.splitupauth.entity.Review.builder().rating(5).build(),
+                kz.hrms.splitupauth.entity.Review.builder().rating(4).build()));
 
-        PublicProfileDto dto = service.getPublicProfile("publ10");
+    PublicProfileDto dto = service.getPublicProfile("publ10");
 
-        assertEquals(10L, dto.getId());
-        assertEquals("publ10", dto.getPublicId());
-        assertEquals("Айдар К.", dto.getDisplayName());
-        assertEquals(4.5, dto.getAverageRating());
-        assertEquals(2L, dto.getReviewsCount());
-        assertEquals(UserStatus.ACTIVE, dto.getStatus());
-    }
+    assertEquals(10L, dto.getId());
+    assertEquals("publ10", dto.getPublicId());
+    assertEquals("Айдар К.", dto.getDisplayName());
+    assertEquals(4.5, dto.getAverageRating());
+    assertEquals(2L, dto.getReviewsCount());
+    assertEquals(UserStatus.ACTIVE, dto.getStatus());
+  }
 
-    @Test
-    void getPublicProfile_404WhenDeleted() {
-        User u = activeUser(11L);
-        u.setStatus(UserStatus.DELETED);
-        when(userRepository.findByPublicId("publ11")).thenReturn(Optional.of(u));
+  @Test
+  void getPublicProfile_404WhenDeleted() {
+    User u = activeUser(11L);
+    u.setStatus(UserStatus.DELETED);
+    when(userRepository.findByPublicId("publ11")).thenReturn(Optional.of(u));
 
-        assertThrows(ResourceNotFoundException.class,
-                () -> service.getPublicProfile("publ11"));
-    }
+    assertThrows(ResourceNotFoundException.class, () -> service.getPublicProfile("publ11"));
+  }
 
-    @Test
-    void getPublicProfile_404WhenMissing() {
-        when(userRepository.findByPublicId("nope")).thenReturn(Optional.empty());
-        assertThrows(ResourceNotFoundException.class,
-                () -> service.getPublicProfile("nope"));
-    }
+  @Test
+  void getPublicProfile_404WhenMissing() {
+    when(userRepository.findByPublicId("nope")).thenReturn(Optional.empty());
+    assertThrows(ResourceNotFoundException.class, () -> service.getPublicProfile("nope"));
+  }
 
-    @Test
-    void deleteAccount_anonymizesPII_revokesTokens_andRemovesTestimonial() {
-        User u = activeUser(42L);
-        ServiceReview testimonial = ServiceReview.builder().id(1L).author(u).text("x").rating(5).build();
-        when(serviceReviewRepository.findByAuthor(u)).thenReturn(Optional.of(testimonial));
+  @Test
+  void deleteAccount_anonymizesPII_revokesTokens_andRemovesTestimonial() {
+    User u = activeUser(42L);
+    ServiceReview testimonial =
+        ServiceReview.builder().id(1L).author(u).text("x").rating(5).build();
+    when(serviceReviewRepository.findByAuthor(u)).thenReturn(Optional.of(testimonial));
 
-        service.deleteAccount(u);
+    service.deleteAccount(u);
 
-        verify(serviceReviewRepository).delete(testimonial);
+    verify(serviceReviewRepository).delete(testimonial);
 
-        ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(cap.capture());
-        User saved = cap.getValue();
-        assertEquals(UserStatus.DELETED, saved.getStatus());
-        assertNotNull(saved.getDeletedAt());
-        assertEquals("deleted-42@ecopay.local", saved.getEmail());
-        assertEquals("Удалённый пользователь", saved.getDisplayName());
-        assertNull(saved.getPhone());
-        assertNull(saved.getAvatar());
+    ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
+    verify(userRepository).save(cap.capture());
+    User saved = cap.getValue();
+    assertEquals(UserStatus.DELETED, saved.getStatus());
+    assertNotNull(saved.getDeletedAt());
+    assertEquals("deleted-42@ecopay.local", saved.getEmail());
+    assertEquals("Удалённый пользователь", saved.getDisplayName());
+    assertNull(saved.getPhone());
+    assertNull(saved.getAvatar());
 
-        verify(tokenRevocationService).revokeAllUserTokens(u);
-    }
+    verify(tokenRevocationService).revokeAllUserTokens(u);
+  }
 
-    @Test
-    void deleteAccount_succeedsEvenWithoutTestimonial() {
-        User u = activeUser(43L);
-        when(serviceReviewRepository.findByAuthor(u)).thenReturn(Optional.empty());
+  @Test
+  void deleteAccount_succeedsEvenWithoutTestimonial() {
+    User u = activeUser(43L);
+    when(serviceReviewRepository.findByAuthor(u)).thenReturn(Optional.empty());
 
-        service.deleteAccount(u);
+    service.deleteAccount(u);
 
-        verify(userRepository).save(any(User.class));
-        verify(tokenRevocationService).revokeAllUserTokens(u);
-    }
+    verify(userRepository).save(any(User.class));
+    verify(tokenRevocationService).revokeAllUserTokens(u);
+  }
 }

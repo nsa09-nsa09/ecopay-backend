@@ -7,7 +7,7 @@ import lombok.Data;
 @Data
 public class TwoFactorResendRequest {
 
-    @NotBlank(message = "Challenge id is required")
-    @Size(max = 64)
-    private String challengeId;
+  @NotBlank(message = "Challenge id is required")
+  @Size(max = 64)
+  private String challengeId;
 }

@@ -1,8 +1,8 @@
 package kz.hrms.splitupauth.entity;
 
 public enum PaymentIntentStatus {
-    PENDING,
-    SUCCESS,
-    FAILED,
-    CANCELLED
+  PENDING,
+  SUCCESS,
+  FAILED,
+  CANCELLED
 }

@@ -7,7 +7,7 @@ import lombok.Data;
 @Data
 public class ConfirmOwnerAccessRequest {
 
-    @NotBlank(message = "Access method is required")
-    @Size(max = 50, message = "Access method must be at most 50 characters")
-    private String accessMethod;
+  @NotBlank(message = "Access method is required")
+  @Size(max = 50, message = "Access method must be at most 50 characters")
+  private String accessMethod;
 }

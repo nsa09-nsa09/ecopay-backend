@@ -9,9 +9,10 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface FeedbackRepository extends JpaRepository<Feedback, Long>, JpaSpecificationExecutor<Feedback> {
+public interface FeedbackRepository
+    extends JpaRepository<Feedback, Long>, JpaSpecificationExecutor<Feedback> {
 
-    Page<Feedback> findByUserOrderByCreatedAtDesc(User user, Pageable pageable);
+  Page<Feedback> findByUserOrderByCreatedAtDesc(User user, Pageable pageable);
 
-    long countByUserAndCreatedAtAfter(User user, java.time.LocalDateTime threshold);
+  long countByUserAndCreatedAtAfter(User user, java.time.LocalDateTime threshold);
 }

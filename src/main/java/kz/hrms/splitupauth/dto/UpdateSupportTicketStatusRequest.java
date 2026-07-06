@@ -6,6 +6,6 @@ import lombok.Data;
 @Data
 public class UpdateSupportTicketStatusRequest {
 
-    @NotBlank(message = "Status is required")
-    private String status;
+  @NotBlank(message = "Status is required")
+  private String status;
 }
