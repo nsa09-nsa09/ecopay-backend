@@ -6,6 +6,8 @@ import kz.hrms.splitupauth.dto.CreatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.dto.PriceChangeDto;
 import kz.hrms.splitupauth.dto.PriceSnapshotDto;
 import kz.hrms.splitupauth.dto.PriceWatchProviderDto;
+import kz.hrms.splitupauth.dto.TestPriceExtractionRequest;
+import kz.hrms.splitupauth.dto.TestPriceExtractionResponse;
 import kz.hrms.splitupauth.dto.UpdatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.pricing.AdminPricingService;
 import lombok.RequiredArgsConstructor;
@@ -61,14 +63,25 @@ public class AdminPricingController {
     return ResponseEntity.noContent().build();
   }
 
-  /** Async — returns 202 immediately; the check runs on the background executor. */
+  /**
+   * Synchronous "check now" — runs one fetch/extract cycle and returns the fresh provider row so
+   * the admin table can render the new price/status immediately. Bounded by
+   * {@code app.pricing.timeout-seconds}. The old async firehose is still available via
+   * {@link AdminPricingService#triggerCheck} for the scheduler.
+   */
   @PostMapping("/providers/{id}/check")
-  public ResponseEntity<Void> checkProvider(@PathVariable Long id) {
-    // Confirm the provider exists so a bad id returns 404 instead of silently
-    // dropping into the async task and failing there.
-    adminPricingService.getProvider(id);
-    adminPricingService.triggerCheck(id);
-    return ResponseEntity.accepted().build();
+  public ResponseEntity<PriceWatchProviderDto> checkProvider(@PathVariable Long id) {
+    return ResponseEntity.ok(adminPricingService.checkNow(id));
+  }
+
+  /**
+   * Dry-run an extractor recipe against a URL — no side effects. Powers the "Test URL" button in
+   * the admin's Upsert modal so a bad selector/regex can be caught before the row is saved.
+   */
+  @PostMapping("/providers/test")
+  public ResponseEntity<TestPriceExtractionResponse> testExtraction(
+      @Valid @RequestBody TestPriceExtractionRequest req) {
+    return ResponseEntity.ok(adminPricingService.testExtraction(req));
   }
 
   @GetMapping("/providers/{id}/history")

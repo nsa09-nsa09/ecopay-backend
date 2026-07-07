@@ -7,6 +7,8 @@ import kz.hrms.splitupauth.dto.CreatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.dto.PriceChangeDto;
 import kz.hrms.splitupauth.dto.PriceSnapshotDto;
 import kz.hrms.splitupauth.dto.PriceWatchProviderDto;
+import kz.hrms.splitupauth.dto.TestPriceExtractionRequest;
+import kz.hrms.splitupauth.dto.TestPriceExtractionResponse;
 import kz.hrms.splitupauth.dto.UpdatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.entity.PriceChange;
 import kz.hrms.splitupauth.entity.PriceExtractorType;
@@ -138,8 +140,27 @@ public class AdminPricingService {
   }
 
   /**
-   * Fire-and-forget check — used by the "check now" button. Runs on Spring's default async
-   * executor so the HTTP request returns 202 immediately.
+   * Synchronous "check now" for the admin table: runs one fetch → extract → persist cycle and
+   * echoes the fresh provider row so the UI can render the new price/status without a second GET.
+   * Bounded by {@code app.pricing.timeout-seconds} inside {@link PageFetcher}, so an unresponsive
+   * upstream can't hang the request longer than that.
+   */
+  @Transactional
+  public PriceWatchProviderDto checkNow(Long id) {
+    // Existence check up front so a bad id fails 404 before we go on the network.
+    loadProvider(id);
+    return mapper.toDto(priceWatchService.checkProvider(id));
+  }
+
+  /** Dry-run the recipe against a URL without writing anything. Powers "Test URL" in the modal. */
+  public TestPriceExtractionResponse testExtraction(TestPriceExtractionRequest req) {
+    return priceWatchService.testExtraction(req);
+  }
+
+  /**
+   * Fire-and-forget check — kept for the scheduler seam and any background caller. Runs on
+   * Spring's default async executor. The admin "check now" endpoint uses {@link #checkNow} instead
+   * so it can hand back the fresh row.
    */
   @Async
   public void triggerCheck(Long id) {

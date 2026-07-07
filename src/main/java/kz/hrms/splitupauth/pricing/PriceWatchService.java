@@ -1,10 +1,13 @@
 package kz.hrms.splitupauth.pricing;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import kz.hrms.splitupauth.dto.TestPriceExtractionRequest;
+import kz.hrms.splitupauth.dto.TestPriceExtractionResponse;
 import kz.hrms.splitupauth.entity.PriceChange;
 import kz.hrms.splitupauth.entity.PriceExtractorType;
 import kz.hrms.splitupauth.entity.PriceSnapshot;
@@ -142,6 +145,82 @@ public class PriceWatchService {
     provider.setStatus(PriceWatchStatus.OK);
     provider.setNextCheckAt(scheduleNext(provider, now));
     return providerRepository.save(provider);
+  }
+
+  /**
+   * Dry-run the fetch + extract pipeline for a URL without touching any table. Same code paths as
+   * {@link #check(PriceWatchProvider)}: builds a transient provider, delegates to the same
+   * {@link PageFetcher} and the same extractor strategies, then reports back a compact verdict for
+   * the admin's "Test URL" button.
+   *
+   * <p>Never persists a snapshot, change or provider row — the admin uses this to iterate on the
+   * recipe until the parsed price looks right, then clicks Save.
+   */
+  public TestPriceExtractionResponse testExtraction(TestPriceExtractionRequest req) {
+    PriceWatchProvider probe = new PriceWatchProvider();
+    probe.setUrl(req.getUrl());
+    probe.setExtractorType(req.getExtractorType());
+    probe.setExtractorConfig(
+        req.getExtractorConfig() != null
+            ? req.getExtractorConfig()
+            : JsonNodeFactory.instance.objectNode());
+    probe.setRequiresJs(Boolean.TRUE.equals(req.getRequiresJs()));
+    probe.setExpectedCurrency(req.getExpectedCurrency());
+    probe.setLocale(req.getLocale());
+
+    if (req.getExtractorType() == PriceExtractorType.MANUAL) {
+      // No URL to hit — MANUAL prices come from the admin's keyboard, not a page.
+      // Surface that as PARSE_FAILED with a clear message so the UI can explain
+      // why the button is a no-op in this mode.
+      return TestPriceExtractionResponse.builder()
+          .outcome(TestPriceExtractionResponse.Outcome.PARSE_FAILED)
+          .message("MANUAL extractor cannot be tested against a URL")
+          .build();
+    }
+
+    FetchResult fetch = pageFetcher.fetch(probe, null, null);
+    if (fetch.notModified()) {
+      // 304 without a body: no number to show, but the page is reachable. Treat
+      // as success so the admin knows the URL + conditional headers are wired,
+      // even if they can't see a price yet.
+      return TestPriceExtractionResponse.builder()
+          .outcome(TestPriceExtractionResponse.Outcome.SUCCESS)
+          .httpStatus(fetch.httpStatus())
+          .message("304 Not Modified — page unchanged")
+          .build();
+    }
+    if (fetch.outcome() == PriceSnapshotOutcome.BLOCKED) {
+      return TestPriceExtractionResponse.builder()
+          .outcome(TestPriceExtractionResponse.Outcome.BLOCKED)
+          .httpStatus(fetch.httpStatus())
+          .message(fetch.errorMessage())
+          .build();
+    }
+    if (fetch.outcome() == PriceSnapshotOutcome.FETCH_FAILED) {
+      return TestPriceExtractionResponse.builder()
+          .outcome(TestPriceExtractionResponse.Outcome.FETCH_FAILED)
+          .httpStatus(fetch.httpStatus())
+          .message(fetch.errorMessage())
+          .build();
+    }
+
+    FetchedPage page = fetch.page();
+    Optional<ParsedPrice> parsed = runExtractor(probe, page);
+    if (parsed.isEmpty()) {
+      return TestPriceExtractionResponse.builder()
+          .outcome(TestPriceExtractionResponse.Outcome.PARSE_FAILED)
+          .httpStatus(page.status())
+          .message("no price found by extractor " + req.getExtractorType())
+          .build();
+    }
+    ParsedPrice p = parsed.get();
+    return TestPriceExtractionResponse.builder()
+        .outcome(TestPriceExtractionResponse.Outcome.SUCCESS)
+        .price(p.price())
+        .currency(p.currency())
+        .httpStatus(page.status())
+        .source(p.source())
+        .build();
   }
 
   private Optional<ParsedPrice> runExtractor(PriceWatchProvider provider, FetchedPage page) {
