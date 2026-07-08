@@ -14,6 +14,7 @@ public class AdminActionLogDto {
   private Long id;
   private String eventId;
   private Long adminUserId;
+  private String adminDisplayName;
   private String actionType;
   private String entityType;
   private Long entityId;

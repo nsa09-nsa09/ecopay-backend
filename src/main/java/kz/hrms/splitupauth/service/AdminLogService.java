@@ -40,6 +40,8 @@ public class AdminLogService {
                     .id(log.getId())
                     .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
                     .adminUserId(log.getAdminUser() != null ? log.getAdminUser().getId() : null)
+                    .adminDisplayName(
+                        log.getAdminUser() != null ? log.getAdminUser().getDisplayName() : null)
                     .actionType(log.getActionType().name())
                     .entityType(log.getEntityType())
                     .entityId(log.getEntityId())
@@ -89,6 +91,8 @@ public class AdminLogService {
                         .id(log.getId())
                         .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
                         .adminUserId(log.getAdminUser() != null ? log.getAdminUser().getId() : null)
+                        .adminDisplayName(
+                            log.getAdminUser() != null ? log.getAdminUser().getDisplayName() : null)
                         .actionType(log.getActionType().name())
                         .entityType(log.getEntityType())
                         .entityId(log.getEntityId())
@@ -113,8 +117,18 @@ public class AdminLogService {
                     .id(log.getId())
                     .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
                     .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
+                    .actorDisplayName(
+                        log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
                     .actorRole(log.getActorRole())
                     .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
+                    .roomOwnerUserId(
+                        log.getRoom() != null && log.getRoom().getOwner() != null
+                            ? log.getRoom().getOwner().getId()
+                            : null)
+                    .roomOwnerDisplayName(
+                        log.getRoom() != null && log.getRoom().getOwner() != null
+                            ? log.getRoom().getOwner().getDisplayName()
+                            : null)
                     .roomMemberId(log.getRoomMember() != null ? log.getRoomMember().getId() : null)
                     .eventType(log.getEventType())
                     .oldState(log.getOldState())
@@ -142,8 +156,18 @@ public class AdminLogService {
                     .id(log.getId())
                     .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
                     .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
+                    .actorDisplayName(
+                        log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
                     .actorRole(log.getActorRole())
                     .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
+                    .roomOwnerUserId(
+                        log.getRoom() != null && log.getRoom().getOwner() != null
+                            ? log.getRoom().getOwner().getId()
+                            : null)
+                    .roomOwnerDisplayName(
+                        log.getRoom() != null && log.getRoom().getOwner() != null
+                            ? log.getRoom().getOwner().getDisplayName()
+                            : null)
                     .roomMemberId(log.getRoomMember() != null ? log.getRoomMember().getId() : null)
                     .eventType(log.getEventType())
                     .oldState(log.getOldState())
@@ -196,8 +220,18 @@ public class AdminLogService {
                         .id(log.getId())
                         .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
                         .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
+                        .actorDisplayName(
+                            log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
                         .actorRole(log.getActorRole())
                         .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
+                        .roomOwnerUserId(
+                            log.getRoom() != null && log.getRoom().getOwner() != null
+                                ? log.getRoom().getOwner().getId()
+                                : null)
+                        .roomOwnerDisplayName(
+                            log.getRoom() != null && log.getRoom().getOwner() != null
+                                ? log.getRoom().getOwner().getDisplayName()
+                                : null)
                         .roomMemberId(
                             log.getRoomMember() != null ? log.getRoomMember().getId() : null)
                         .eventType(log.getEventType())

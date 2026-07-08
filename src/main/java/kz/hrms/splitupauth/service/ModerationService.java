@@ -256,6 +256,51 @@ public class ModerationService {
   }
 
   @Transactional
+  public void unblockRoom(
+      Long roomId, User currentUser, AdminDecisionRequest request, HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
+
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    if (room.getStatus() != RoomStatus.BLOCKED) {
+      throw new InvalidRequestException("Room is not blocked");
+    }
+
+    room.setStatus(RoomStatus.ACTIVE);
+    room.setBlockedAt(null);
+    room.setBlockReason(null);
+    roomRepository.save(room);
+
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(currentUser)
+            .actionType(AdminActionType.ROOM_UNBLOCKED)
+            .entityType("ROOM")
+            .entityId(room.getId())
+            .reason(request.getReason())
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+
+    roomEventLogRepository.save(
+        RoomEventLog.builder()
+            .eventId(UUID.randomUUID())
+            .actorUser(currentUser)
+            .actorRole("ADMIN")
+            .room(room)
+            .eventType("ROOM_UNBLOCKED")
+            .newState(statusState("ACTIVE"))
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+  }
+
+  @Transactional
   public void banUser(
       Long userId, User currentUser, AdminDecisionRequest request, HttpServletRequest httpRequest) {
     ensureAdmin(currentUser);

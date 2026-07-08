@@ -15,8 +15,11 @@ public class RoomEventLogDto {
   private Long id;
   private String eventId;
   private Long actorUserId;
+  private String actorDisplayName;
   private String actorRole;
   private Long roomId;
+  private Long roomOwnerUserId;
+  private String roomOwnerDisplayName;
   private Long roomMemberId;
   private String eventType;
   private JsonNode oldState;

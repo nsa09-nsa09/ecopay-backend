@@ -62,6 +62,16 @@ public class AdminModerationController {
     return ResponseEntity.noContent().build();
   }
 
+  @PatchMapping("/rooms/{roomId}/unblock")
+  public ResponseEntity<Void> unblockRoom(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody AdminDecisionRequest request,
+      HttpServletRequest httpRequest) {
+    moderationService.unblockRoom(roomId, user, request, httpRequest);
+    return ResponseEntity.noContent().build();
+  }
+
   @PostMapping("/queue/batch-confirm")
   public ResponseEntity<List<ModerationQueueItemDto>> batchConfirm(
       @AuthenticationPrincipal User user,

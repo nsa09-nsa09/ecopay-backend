@@ -77,6 +77,7 @@ public class AdminUserController {
   public ResponseEntity<PagedResponse<AdminUserDto>> list(
       @RequestParam(required = false) String search,
       @RequestParam(required = false) UserStatus status,
+      @RequestParam(required = false) Role role,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       @RequestParam(required = false) String sort,
@@ -95,6 +96,10 @@ public class AdminUserController {
     if (status != null) {
       final UserStatus s = status;
       spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), s));
+    }
+    if (role != null) {
+      final Role r = role;
+      spec = spec.and((root, q, cb) -> cb.equal(root.get("role"), r));
     }
     if (search != null && !search.isBlank()) {
       final String trimmed = search.trim();
