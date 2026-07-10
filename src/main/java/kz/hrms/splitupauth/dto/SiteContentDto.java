@@ -20,6 +20,7 @@ public class SiteContentDto {
 
   private String contactEmail;
   private String contactPhone;
+  private String apexLink;
   private LocalDateTime updatedAt;
 
   // ----- Tri-lingual variants (V30) -----
@@ -59,6 +60,7 @@ public class SiteContentDto {
         .description(c.getDescription())
         .contactEmail(c.getContactEmail())
         .contactPhone(c.getContactPhone())
+        .apexLink(c.getApexLink())
         .updatedAt(c.getUpdatedAt())
         .titleKz(c.getTitleKz())
         .titleRu(c.getTitleRu())

@@ -49,6 +49,9 @@ public class SiteContent {
   @Column(name = "contact_phone")
   private String contactPhone;
 
+  @Column(name = "apex_link", length = 512)
+  private String apexLink;
+
   // ----- Tri-lingual copy (V30). The legacy {title,mission,description}
   // columns above stay populated (mirrored from *_ru) for backward compat
   // with anything still reading them. -----
