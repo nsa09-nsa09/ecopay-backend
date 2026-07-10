@@ -27,6 +27,7 @@ import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,6 +58,7 @@ public class CatalogService {
   private final ServiceLogoStorageService logoStorage;
 
   @Transactional(readOnly = true)
+  @Cacheable("catalogCategories")
   public List<CategoryDto> getCategories() {
     return categoryRepository.findByIsActiveTrueOrderBySortOrderAscIdAsc().stream()
         .map(catalogMapper::toDto)
@@ -64,6 +66,7 @@ public class CatalogService {
   }
 
   @Transactional(readOnly = true)
+  @Cacheable(value = "catalogServices", key = "#categoryId + '|' + #sort")
   public List<ServiceDto> getServices(Long categoryId, String sort) {
     List<ServiceEntity> services =
         (categoryId != null)
@@ -88,6 +91,7 @@ public class CatalogService {
   }
 
   @Transactional(readOnly = true)
+  @Cacheable(value = "catalogService", key = "#id")
   public ServiceDto getService(Long id) {
     ServiceEntity service =
         serviceRepository
@@ -176,6 +180,7 @@ public class CatalogService {
   }
 
   @Transactional(readOnly = true)
+  @Cacheable(value = "catalogTariffs", key = "#serviceId")
   public List<TariffPlanDto> getTariffs(Long serviceId) {
     return tariffPlanRepository.findByServiceIdAndIsActiveTrueOrderByIdAsc(serviceId).stream()
         .map(catalogMapper::toDto)
