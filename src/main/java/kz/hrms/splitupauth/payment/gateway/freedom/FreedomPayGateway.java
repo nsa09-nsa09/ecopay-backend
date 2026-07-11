@@ -226,9 +226,9 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_merchant_id", merchantId);
     params.put("pg_user_id", userId);
     params.put("pg_salt", randomSalt());
-    // Signature script name for the v1 cardstorage endpoint (path without scheme/host/leading
-    // slash).
-    String script = "v1/merchant/" + merchantId + "/cardstorage/list";
+    // FreedomPay cardstorage endpoints sign with just the operation name ("list"), not the URL
+    // path — confirmed against docs.freedompay.kz's cardstorage/list signature example.
+    String script = "list";
     params.put("pg_sig", signatureService.signWithMerchantSecret(script, params));
 
     String xml;

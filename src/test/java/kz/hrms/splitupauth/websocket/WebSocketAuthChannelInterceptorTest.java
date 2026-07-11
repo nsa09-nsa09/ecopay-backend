@@ -3,11 +3,21 @@ package kz.hrms.splitupauth.websocket;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+
 import java.util.List;
+import java.util.Optional;
+import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Role;
+import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,12 +35,16 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 class WebSocketAuthChannelInterceptorTest {
 
   @Mock private SupportTicketRepository supportTicketRepository;
+  @Mock private RoomRepository roomRepository;
+  @Mock private RoomMemberRepository roomMemberRepository;
 
   private WebSocketAuthChannelInterceptor interceptor;
 
   @BeforeEach
   void setUp() {
-    interceptor = new WebSocketAuthChannelInterceptor(supportTicketRepository);
+    interceptor =
+        new WebSocketAuthChannelInterceptor(
+            supportTicketRepository, roomRepository, roomMemberRepository);
   }
 
   private User user(long id, Role role) {
@@ -81,5 +95,66 @@ class WebSocketAuthChannelInterceptorTest {
     assertThrows(
         ForbiddenOperationException.class,
         () -> interceptor.preSend(subscribe(u, "/topic/totally/random"), null));
+  }
+
+  private Room room(long id, User owner) {
+    return Room.builder().id(id).owner(owner).build();
+  }
+
+  @Test
+  void subscription_roomChat_byOwner_isAllowed() {
+    User owner = user(7L, Role.USER);
+    Room room = room(100L, owner);
+    lenient().when(roomRepository.findById(100L)).thenReturn(Optional.of(room));
+
+    assertDoesNotThrow(
+        () -> interceptor.preSend(subscribe(owner, "/topic/rooms/100/chat"), null));
+  }
+
+  @Test
+  void subscription_roomChat_byPaidMember_isAllowed() {
+    User owner = user(7L, Role.USER);
+    User member = user(8L, Role.USER);
+    Room room = room(100L, owner);
+    lenient().when(roomRepository.findById(100L)).thenReturn(Optional.of(room));
+    lenient()
+        .when(
+            roomMemberRepository.findByRoomAndUserAndStatusIn(
+                eq(room), eq(member), any()))
+        .thenReturn(
+            Optional.of(RoomMember.builder().status(MemberStatus.ACTIVE).build()));
+
+    assertDoesNotThrow(
+        () -> interceptor.preSend(subscribe(member, "/topic/rooms/100/chat"), null));
+  }
+
+  @Test
+  void subscription_roomChat_byNonParticipant_isRejected() {
+    User outsider = user(9L, Role.USER);
+    Room room = room(100L, user(7L, Role.USER));
+    lenient().when(roomRepository.findById(100L)).thenReturn(Optional.of(room));
+    lenient()
+        .when(roomMemberRepository.findByRoomAndUserAndStatusIn(any(), any(), any()))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> interceptor.preSend(subscribe(outsider, "/topic/rooms/100/chat"), null));
+  }
+
+  @Test
+  void subscription_roomChat_appliedMember_isRejected() {
+    // APPLIED (not yet paid) never matches the PENDING/ACTIVE query, so the
+    // repository returns empty and the subscribe is refused.
+    User applied = user(8L, Role.USER);
+    Room room = room(100L, user(7L, Role.USER));
+    lenient().when(roomRepository.findById(100L)).thenReturn(Optional.of(room));
+    lenient()
+        .when(roomMemberRepository.findByRoomAndUserAndStatusIn(any(), any(), any()))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> interceptor.preSend(subscribe(applied, "/topic/rooms/100/chat"), null));
   }
 }

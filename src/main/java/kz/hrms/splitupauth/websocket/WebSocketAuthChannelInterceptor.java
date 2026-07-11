@@ -3,10 +3,14 @@ package kz.hrms.splitupauth.websocket;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Role;
+import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.SupportTicket;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.Message;
@@ -27,8 +31,15 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
   private static final Pattern ACCOUNT_TOPIC = Pattern.compile("^/topic/users/(\\d+)/account$");
   private static final Pattern NOTIFICATIONS_TOPIC =
       Pattern.compile("^/topic/users/(\\d+)/notifications$");
+  private static final Pattern ROOM_CHAT_TOPIC = Pattern.compile("^/topic/rooms/(\\d+)/chat$");
+
+  /** Member statuses that count as "has paid" and therefore grant room-chat access. */
+  private static final List<MemberStatus> PAID_STATUSES =
+      List.of(MemberStatus.PENDING, MemberStatus.ACTIVE);
 
   private final SupportTicketRepository supportTicketRepository;
+  private final RoomRepository roomRepository;
+  private final RoomMemberRepository roomMemberRepository;
 
   @Override
   public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -102,6 +113,12 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
       return;
     }
 
+    Matcher roomChatMatcher = ROOM_CHAT_TOPIC.matcher(destination);
+    if (roomChatMatcher.matches()) {
+      validateRoomChatTopic(user, Long.parseLong(roomChatMatcher.group(1)));
+      return;
+    }
+
     Matcher matcher = TICKET_TOPIC.matcher(destination);
     if (matcher.matches()) {
       Long ticketId = Long.parseLong(matcher.group(1));
@@ -130,6 +147,37 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
       throw new ForbiddenOperationException(
           "Not allowed to subscribe to another user's account topic");
     }
+  }
+
+  /**
+   * A room's chat is for its paid participants only: the owner, or a member whose status is
+   * PENDING/ACTIVE (i.e. past APPLIED via payment SUCCESS). Staff get no backdoor here — this
+   * mirrors {@code RoomChatService.isParticipant}, kept inline so the interceptor depends only on
+   * leaf repositories and can't form a startup cycle with the message broker.
+   */
+  private void validateRoomChatTopic(User user, Long roomId) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ForbiddenOperationException("Room not found"));
+
+    if (room.getOwner() != null
+        && user.getId() != null
+        && user.getId().equals(room.getOwner().getId())) {
+      return;
+    }
+
+    boolean paidMember =
+        roomMemberRepository
+            .findByRoomAndUserAndStatusIn(room, user, PAID_STATUSES)
+            .filter(m -> m.getDeletedAt() == null)
+            .isPresent();
+    if (paidMember) {
+      return;
+    }
+
+    throw new ForbiddenOperationException("Not allowed to subscribe to this room's chat");
   }
 
   private boolean isStaff(User user) {
