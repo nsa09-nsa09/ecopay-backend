@@ -59,6 +59,7 @@ public class SiteContentService {
     content.setDescription(legacyDescription);
     content.setContactEmail(TextSanitizer.sanitize(req.getContactEmail()));
     content.setContactPhone(TextSanitizer.sanitize(req.getContactPhone()));
+    if (req.getApexLink() != null) content.setApexLink(TextSanitizer.sanitize(req.getApexLink()));
     content.setUpdatedBy(admin);
 
     // Per-language fields: when present, sanitize + assign; when absent,
@@ -117,6 +118,7 @@ public class SiteContentService {
     node.put("description", c.getDescription());
     node.put("contactEmail", c.getContactEmail());
     node.put("contactPhone", c.getContactPhone());
+    node.put("apexLink", c.getApexLink());
     node.put("titleKz", c.getTitleKz());
     node.put("titleRu", c.getTitleRu());
     node.put("titleEn", c.getTitleEn());

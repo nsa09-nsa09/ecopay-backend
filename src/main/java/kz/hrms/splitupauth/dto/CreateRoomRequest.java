@@ -22,7 +22,6 @@ public class CreateRoomRequest {
   @NotNull(message = "Tariff plan is required")
   private Long tariffPlanId;
 
-  @NotNull(message = "Room type is required")
   private RoomType roomType;
 
   @NotBlank(message = "Title is required")
@@ -31,8 +30,6 @@ public class CreateRoomRequest {
 
   private String description;
 
-  @NotNull(message = "Start date is required")
-  @Future(message = "Start date must be in the future")
   private LocalDateTime startDate;
 
   private String cancellationPolicy;

@@ -27,6 +27,7 @@ import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PeriodType;
+import kz.hrms.splitupauth.entity.ProviderType;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
@@ -206,6 +207,15 @@ public class RoomService {
       throw new InvalidRequestException("Tariff plan does not belong to the selected service");
     }
 
+    // Тип комнаты определяется каталогом сервиса, а не клиентом.
+    RoomType derivedType =
+        service.getProviderType() == ProviderType.DIGITAL ? RoomType.DIGITAL : RoomType.TELECOM;
+    request.setRoomType(derivedType);
+    // Способ подключения задаёт админ на тарифе — наследуем, если клиент не прислал.
+    if (derivedType == RoomType.TELECOM && request.getConnectionType() == null) {
+      request.setConnectionType(tariffPlan.getConnectionType());
+    }
+
     validateCreateRequest(request);
 
     // Hybrid access/restrictions: request value wins, else inherit tariff defaults.
@@ -281,7 +291,7 @@ public class RoomService {
             .priceTotalKzt(priceTotalKzt)
             .pricePerMemberKzt(pricePerMemberKzt)
             .periodType(periodType)
-            .startDate(request.getStartDate())
+            .startDate(request.getStartDate() != null ? request.getStartDate() : LocalDateTime.now().plusYears(1))
             .cancellationPolicy(request.getCancellationPolicy())
             .providerName(request.getProviderName())
             .tariffNameSnapshot(request.getTariffNameSnapshot())
@@ -695,7 +705,7 @@ public class RoomService {
     // Price/currency/period/seat count are validated on the tariff plan itself
     // (admin-managed) and snapshotted onto the room — nothing to validate here.
 
-    if (request.getStartDate().isBefore(LocalDateTime.now())) {
+    if (request.getStartDate() != null && request.getStartDate().isBefore(LocalDateTime.now())) {
       throw new InvalidRequestException("Start date must be in the future");
     }
 
@@ -920,9 +930,18 @@ public class RoomService {
       room = roomRepository.save(room);
     }
 
-    String base = frontendUrl == null ? "" : frontendUrl.replaceAll("/+$", "");
+    String base = sanitizeFrontendBase(frontendUrl);
     String url = base + "/room/" + room.getId() + "?invite=" + room.getInviteToken();
 
     return RoomInviteLinkDto.builder().url(url).token(room.getInviteToken()).build();
+  }
+
+  /**
+   * Strips the Vite dev port (:5173) from a configured frontend base so it never leaks into any
+   * user-facing link (invite URLs, email links, etc.). Also trims trailing slashes.
+   */
+  private static String sanitizeFrontendBase(String url) {
+    if (url == null) return "";
+    return url.replaceAll("/+$", "").replaceFirst(":5173(?=/|$)", "");
   }
 }

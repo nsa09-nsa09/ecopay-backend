@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -35,6 +36,10 @@ public class UpdateSiteContentRequest {
 
   @Size(max = 64)
   private String contactPhone;
+
+  @Size(max = 512)
+  @Pattern(regexp = "^(https?://.*)?$", message = "Apex link must be an http(s) URL")
+  private String apexLink;
 
   // ----- Tri-lingual fields (V30). All optional; absent ones leave the
   // corresponding column unchanged. Sized generously to match TEXT columns

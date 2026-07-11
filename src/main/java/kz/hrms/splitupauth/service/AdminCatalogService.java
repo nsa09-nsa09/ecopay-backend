@@ -30,6 +30,7 @@ import kz.hrms.splitupauth.repository.ServiceRepository;
 import kz.hrms.splitupauth.repository.TariffPlanRepository;
 import kz.hrms.splitupauth.util.Slugifier;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -56,6 +57,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminCategoryDto createCategory(
       User admin, CreateCategoryRequest req, HttpServletRequest http) {
     String slug = resolveCategorySlug(req.getSlug(), req.getName(), null);
@@ -87,6 +91,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminCategoryDto updateCategory(
       Long id, User admin, UpdateCategoryRequest req, HttpServletRequest http) {
     Category category =
@@ -140,6 +147,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public void deleteCategory(Long id, User admin, HttpServletRequest http) {
     Category category =
         categoryRepository
@@ -189,6 +199,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminServiceDto createService(
       User admin, CreateServiceRequest req, HttpServletRequest http) {
     Category category =
@@ -228,6 +241,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminServiceDto updateService(
       Long id, User admin, UpdateServiceRequest req, HttpServletRequest http) {
     ServiceEntity service =
@@ -290,6 +306,9 @@ public class AdminCatalogService {
    * still reads as "an admin edited a service field".
    */
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminServiceDto uploadServiceLogo(
       Long id, User admin, MultipartFile file, HttpServletRequest http) {
     ServiceEntity service =
@@ -324,6 +343,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public void deleteService(Long id, User admin, HttpServletRequest http) {
     ServiceEntity service =
         serviceRepository
@@ -366,6 +388,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminTariffDto createTariff(
       Long serviceId, User admin, CreateTariffRequest req, HttpServletRequest http) {
     ServiceEntity service =
@@ -418,6 +443,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public AdminTariffDto updateTariff(
       Long id, User admin, UpdateTariffRequest req, HttpServletRequest http) {
     TariffPlan tariff =
@@ -490,6 +518,9 @@ public class AdminCatalogService {
   }
 
   @Transactional
+  @CacheEvict(
+      cacheNames = {"catalogCategories", "catalogServices", "catalogService", "catalogTariffs"},
+      allEntries = true)
   public void deleteTariff(Long id, User admin, HttpServletRequest http) {
     TariffPlan tariff =
         tariffPlanRepository

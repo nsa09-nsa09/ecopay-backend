@@ -32,7 +32,8 @@ public class EmailService {
       helper.setTo(to);
       helper.setSubject("Password Reset Request");
 
-      String resetLink = frontendUrl + "/reset-password/confirm?token=" + token;
+      String resetLink =
+          sanitizeFrontendBase(frontendUrl) + "/reset-password/confirm?token=" + token;
       String htmlContent = buildPasswordResetEmail(resetLink);
 
       helper.setText(htmlContent, true);
@@ -126,7 +127,7 @@ public class EmailService {
         .append(escape(body))
         .append("</p>");
     if (link != null && !link.isBlank()) {
-      String absolute = link.startsWith("http") ? link : frontendUrl + link;
+      String absolute = link.startsWith("http") ? link : sanitizeFrontendBase(frontendUrl) + link;
       html.append("<p><a href=\"").append(absolute).append("\">View details</a></p>");
     }
     html.append("<hr><p style=\"color:#888;font-size:12px;\">")
@@ -134,6 +135,15 @@ public class EmailService {
         .append("</p>")
         .append("</body></html>");
     return html.toString();
+  }
+
+  /**
+   * Strips the Vite dev port (:5173) from the configured frontend base so it never leaks into any
+   * user-facing link (password-reset, notification links, etc.). Also trims trailing slashes.
+   */
+  private static String sanitizeFrontendBase(String url) {
+    if (url == null) return "";
+    return url.replaceAll("/+$", "").replaceFirst(":5173(?=/|$)", "");
   }
 
   /** Minimal HTML-escaping so user-derived title/body can't inject markup. */

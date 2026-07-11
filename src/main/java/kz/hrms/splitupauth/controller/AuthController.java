@@ -1,12 +1,18 @@
 package kz.hrms.splitupauth.controller;
 
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import java.time.Duration;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.service.AuthService;
 import kz.hrms.splitupauth.service.PhoneVerificationService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -16,8 +22,24 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class AuthController {
 
+  /** Name of the httpOnly cookie that carries the refresh token to /auth/refresh and /logout. */
+  private static final String REFRESH_COOKIE_NAME = "ecopay_rt";
+
+  /**
+   * Scoped to /api/v1/auth so the cookie is only ever attached to the two endpoints that read it.
+   * Keeps it out of every unrelated backend request.
+   */
+  private static final String REFRESH_COOKIE_PATH = "/api/v1/auth";
+
   private final AuthService authService;
   private final PhoneVerificationService phoneVerificationService;
+
+  /**
+   * Refresh-token TTL from application config, in milliseconds (matches RefreshTokenService). We
+   * convert to seconds for cookie maxAge below.
+   */
+  @Value("${jwt.refresh-expiration}")
+  private long refreshExpirationMs;
 
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
@@ -25,8 +47,15 @@ public class AuthController {
   }
 
   @PostMapping("/login")
-  public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
-    return ResponseEntity.ok(authService.login(request));
+  public ResponseEntity<AuthResponse> login(
+      @Valid @RequestBody LoginRequest request, HttpServletResponse response) {
+    AuthResponse auth = authService.login(request);
+    // Staff 2FA path does not issue tokens yet — only set the cookie when a
+    // real refresh token was minted (regular users, or the second 2FA step).
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.ok(auth);
   }
 
   /**
@@ -35,8 +64,12 @@ public class AuthController {
    */
   @PostMapping("/login/2fa/verify")
   public ResponseEntity<AuthResponse> verifyTwoFactor(
-      @Valid @RequestBody TwoFactorVerifyRequest request) {
-    return ResponseEntity.ok(authService.verifyStaffTwoFactor(request));
+      @Valid @RequestBody TwoFactorVerifyRequest request, HttpServletResponse response) {
+    AuthResponse auth = authService.verifyStaffTwoFactor(request);
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.ok(auth);
   }
 
   /**
@@ -49,15 +82,43 @@ public class AuthController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * Refresh the access token. The refresh token is preferred from the httpOnly cookie (new
+   * client), but we still accept it in the request body so an older frontend that hasn't been
+   * redeployed yet keeps working.
+   */
   @PostMapping("/refresh")
   public ResponseEntity<AuthResponse> refreshToken(
-      @Valid @RequestBody RefreshTokenRequest request) {
-    return ResponseEntity.ok(authService.refreshToken(request));
+      @CookieValue(name = REFRESH_COOKIE_NAME, required = false) String cookieToken,
+      @RequestBody(required = false) RefreshTokenRequest body,
+      HttpServletResponse response) {
+    String token = pickRefreshToken(cookieToken, body);
+    if (token == null) {
+      throw new InvalidRequestException("Refresh token is required");
+    }
+    RefreshTokenRequest req = new RefreshTokenRequest();
+    req.setRefreshToken(token);
+    AuthResponse auth = authService.refreshToken(req);
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.ok(auth);
   }
 
+  /**
+   * Revoke the refresh token and clear the cookie. Accepts the token from cookie first, body
+   * second, and no-ops silently if neither is present (client already forgot it).
+   */
   @PostMapping("/logout")
-  public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
-    authService.logout(request.getRefreshToken());
+  public ResponseEntity<Void> logout(
+      @CookieValue(name = REFRESH_COOKIE_NAME, required = false) String cookieToken,
+      @RequestBody(required = false) RefreshTokenRequest body,
+      HttpServletResponse response) {
+    String token = pickRefreshToken(cookieToken, body);
+    if (token != null) {
+      authService.logout(token);
+    }
+    clearRefreshCookie(response);
     return ResponseEntity.noContent().build();
   }
 
@@ -100,5 +161,39 @@ public class AuthController {
       @AuthenticationPrincipal User user, @Valid @RequestBody VerifyPhoneRequest request) {
     phoneVerificationService.verifyCode(user, request.getPhone(), request.getCode());
     return ResponseEntity.noContent().build();
+  }
+
+  private String pickRefreshToken(String cookieToken, RefreshTokenRequest body) {
+    if (cookieToken != null && !cookieToken.isBlank()) {
+      return cookieToken;
+    }
+    if (body != null && body.getRefreshToken() != null && !body.getRefreshToken().isBlank()) {
+      return body.getRefreshToken();
+    }
+    return null;
+  }
+
+  private void addRefreshCookie(HttpServletResponse response, String refreshToken) {
+    ResponseCookie cookie =
+        ResponseCookie.from(REFRESH_COOKIE_NAME, refreshToken)
+            .httpOnly(true)
+            .secure(true)
+            .sameSite("Lax")
+            .path(REFRESH_COOKIE_PATH)
+            .maxAge(Duration.ofSeconds(refreshExpirationMs / 1000))
+            .build();
+    response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+  }
+
+  private void clearRefreshCookie(HttpServletResponse response) {
+    ResponseCookie cookie =
+        ResponseCookie.from(REFRESH_COOKIE_NAME, "")
+            .httpOnly(true)
+            .secure(true)
+            .sameSite("Lax")
+            .path(REFRESH_COOKIE_PATH)
+            .maxAge(0)
+            .build();
+    response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
   }
 }
