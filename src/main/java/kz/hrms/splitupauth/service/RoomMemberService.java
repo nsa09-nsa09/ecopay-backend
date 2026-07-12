@@ -315,12 +315,54 @@ public class RoomMemberService {
 
     roomMemberRepository.save(roomMember);
 
+    notifyOwnerOfMemberPayment(roomMember);
+
     if (requiresAdminReview) {
       moderationService.enqueueMembershipForReview(
           roomMember, resolveModerationReasonCode(roomMember), java.math.BigDecimal.ZERO);
     } else {
       tryActivateMembership(roomMember);
       roomMemberRepository.save(roomMember);
+    }
+  }
+
+  /**
+   * On a member's payment (APPLIED → PENDING): tell the owner that member has paid and is now
+   * requesting connection. If this payment filled the last free seat, additionally emit the major
+   * "room full — everyone has paid" notification, which is email-eligible so the owner is emailed.
+   */
+  private void notifyOwnerOfMemberPayment(RoomMember roomMember) {
+    Room room = roomMember.getRoom();
+    User owner = room.getOwner();
+    String memberName = roomMember.getUser().getDisplayName();
+
+    notificationService.notify(
+        owner,
+        NotificationType.ROOM_MEMBER_PAID,
+        "Участник оплатил",
+        "Участник "
+            + memberName
+            + " оплатил участие в комнате «"
+            + room.getTitle()
+            + "» и ожидает подключения. Предоставьте доступ.",
+        "/rooms/owner/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
+    // A room's member seats = maxMembers - 1 (the owner holds one). When the paid
+    // members reach that count, every seat is filled and awaiting access.
+    long occupiedSlots =
+        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+    if (occupiedSlots >= room.getMaxMembers() - 1) {
+      notificationService.notify(
+          owner,
+          NotificationType.ROOM_FULL_AWAITING_ACCESS,
+          "Комната заполнена",
+          "Все участники комнаты «"
+              + room.getTitle()
+              + "» оплатили и ожидают подключения. Предоставьте доступ каждому.",
+          "/rooms/owner/" + room.getId(),
+          java.util.Map.of("roomId", room.getId()));
     }
   }
 

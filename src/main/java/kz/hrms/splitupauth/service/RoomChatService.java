@@ -1,11 +1,14 @@
 package kz.hrms.splitupauth.service;
 
 import java.util.List;
+import java.util.Map;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.RoomChatMessageDto;
 import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.NotificationType;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomChatMessage;
+import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
@@ -39,6 +42,7 @@ public class RoomChatService {
   private final RoomMemberRepository roomMemberRepository;
   private final RoomChatMessageRepository chatMessageRepository;
   private final RoomChatRealtimeService realtimeService;
+  private final NotificationService notificationService;
 
   /** Newest-first page of a room's chat history, for the caller if they are a participant. */
   @Transactional(readOnly = true)
@@ -80,7 +84,38 @@ public class RoomChatService {
 
     RoomChatMessageDto dto = RoomChatMessageDto.from(saved);
     realtimeService.broadcast(roomId, dto);
+    notifyOtherParticipants(room, currentUser, dto);
     return dto;
+  }
+
+  /**
+   * In-app notification of a new chat message to every other participant (owner + PENDING/ACTIVE
+   * members), so it reaches them even when the room page isn't open. The live STOMP broadcast
+   * handles anyone currently viewing; this is the persistent bell entry. In-app only.
+   */
+  private void notifyOtherParticipants(Room room, User sender, RoomChatMessageDto dto) {
+    String title = "Новое сообщение";
+    String body = dto.getSenderName() + " написал(а) в чате комнаты «" + room.getTitle() + "».";
+    Map<String, Object> metadata = Map.of("roomId", room.getId());
+
+    User owner = room.getOwner();
+    if (owner != null && owner.getId() != null && !owner.getId().equals(sender.getId())) {
+      notificationService.notify(
+          owner, NotificationType.CHAT_MESSAGE, title, body, "/rooms/owner/" + room.getId(), metadata);
+    }
+
+    for (RoomMember member :
+        roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
+      if (member.getStatus() != MemberStatus.PENDING && member.getStatus() != MemberStatus.ACTIVE) {
+        continue;
+      }
+      User u = member.getUser();
+      if (u == null || u.getId() == null || u.getId().equals(sender.getId())) {
+        continue;
+      }
+      notificationService.notify(
+          u, NotificationType.CHAT_MESSAGE, title, body, "/rooms/member/" + room.getId(), metadata);
+    }
   }
 
   private Room loadRoom(Long roomId) {

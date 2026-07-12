@@ -21,6 +21,9 @@ public enum NotificationType {
   MEMBER_JOINED(NotificationCategory.MEMBERSHIP, false),
   PAYMENT_SUCCESS(NotificationCategory.PAYMENTS, true),
   PAYMENT_FAILED(NotificationCategory.PAYMENTS, true),
+  // Owner-facing: a member completed payment and is now requesting connection/access.
+  // In-app only — one per member payment would be too noisy over email.
+  ROOM_MEMBER_PAID(NotificationCategory.MEMBERSHIP, false),
   OWNER_ACCESS_GRANTED(NotificationCategory.MEMBERSHIP, true),
   MEMBER_CONFIRMED(NotificationCategory.MEMBERSHIP, false),
   MEMBERSHIP_ACTIVATED(NotificationCategory.MEMBERSHIP, true),
@@ -29,6 +32,10 @@ public enum NotificationType {
 
   // ---- room lifecycle ----
   ROOM_ACTIVE(NotificationCategory.ROOM, false),
+  // Major owner-facing event: every seat is now paid and awaiting access — also emailed.
+  ROOM_FULL_AWAITING_ACCESS(NotificationCategory.ROOM, true),
+  // A new message in a room chat, to the other participants. In-app only.
+  CHAT_MESSAGE(NotificationCategory.ROOM, false),
   ROOM_COMPLETED(NotificationCategory.ROOM, false),
   ROOM_BLOCKED(NotificationCategory.ROOM, true),
   ROOM_CANCELLED(NotificationCategory.ROOM, true),
