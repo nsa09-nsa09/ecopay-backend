@@ -45,6 +45,11 @@ public abstract class AbstractIntegrationTest {
     registry.add("ecopay.payments.provider", () -> "mock");
     registry.add("ecopay.sms.provider", () -> "logging");
     registry.add("app.phone.dev-bypass-code", () -> "000000");
+    // Auto-verify email on registration so the sign-up path never reaches the
+    // SMTP send (there is no mail server in the test env). This keeps the
+    // "mail is never sent in tests" guarantee below intact now that regular
+    // registration emails a confirmation code.
+    registry.add("app.dev.auto-verify-email", () -> "true");
     // Dummy mail config so MailSenderAutoConfiguration can resolve (mail is never sent in tests).
     registry.add("spring.mail.host", () -> "localhost");
     registry.add("spring.mail.port", () -> "1025");
