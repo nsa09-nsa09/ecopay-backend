@@ -42,8 +42,29 @@ public class AuthController {
   private long refreshExpirationMs;
 
   @PostMapping("/register")
-  public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
+  public ResponseEntity<AuthResponse> register(
+      @Valid @RequestBody RegisterRequest request, HttpServletResponse response) {
+    AuthResponse auth = authService.register(request);
+    // Regular sign-up issues no tokens — the account must confirm the emailed
+    // code first. Only the dev auto-verify path returns a refresh token here.
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.status(HttpStatus.CREATED).body(auth);
+  }
+
+  /**
+   * Final step of regular registration: caller submits their email plus the 6-digit code that was
+   * emailed to them. On success the account is verified and logged in (tokens + cookie issued).
+   */
+  @PostMapping("/verify-email-code")
+  public ResponseEntity<AuthResponse> verifyEmailCode(
+      @Valid @RequestBody VerifyEmailCodeRequest request, HttpServletResponse response) {
+    AuthResponse auth = authService.verifyEmailCode(request);
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.ok(auth);
   }
 
   @PostMapping("/login")

@@ -28,6 +28,18 @@ public class EmailVerificationToken {
   @JoinColumn(name = "user_id", nullable = false)
   private User user;
 
+  /**
+   * BCrypt hash of the 6-digit code emailed to the user. Nullable for legacy rows created before
+   * the code flow existed (those can still be confirmed via the {@link #token} link).
+   */
+  @Column(name = "code_hash")
+  private String codeHash;
+
+  /** Failed code attempts; the challenge is rejected once it reaches the service-layer limit. */
+  @Column(nullable = false)
+  @Builder.Default
+  private Integer attempts = 0;
+
   @Column(name = "expires_at", nullable = false)
   private LocalDateTime expiresAt;
 
