@@ -26,10 +26,10 @@ import tools.jackson.databind.ser.std.ToStringSerializer;
  *       suffix that removes timezone ambiguity for the frontend.
  *   <li>Every 64-bit id (a {@code Long}/{@code long} property named {@code id} or ending in {@code
  *       Id}) is serialized as a JSON <em>string</em>. The database is CockroachDB, whose {@code
- *       unique_rowid()} primary keys exceed 2^53; parsed as a JavaScript Number they lose precision,
- *       so an id round-tripped back into a URL no longer matches the stored row (the "Membership not
- *       found" class of bugs). Numeric counts/metrics are untouched because they are named {@code
- *       *Count} / are primitive metrics, never {@code *Id}.
+ *       unique_rowid()} primary keys exceed 2^53; parsed as a JavaScript Number they lose
+ *       precision, so an id round-tripped back into a URL no longer matches the stored row (the
+ *       "Membership not found" class of bugs). Numeric counts/metrics are untouched because they
+ *       are named {@code *Count} / are primitive metrics, never {@code *Id}.
  * </ol>
  *
  * <p>The legacy 2.x mapper in {@link JacksonLegacyConfig} is deliberately NOT given the id-string
@@ -53,8 +53,8 @@ public class JacksonAlmatyConfig {
   }
 
   /**
-   * Module that stringifies 64-bit id properties. Exposed statically so tests can exercise the exact
-   * production behavior on a standalone mapper.
+   * Module that stringifies 64-bit id properties. Exposed statically so tests can exercise the
+   * exact production behavior on a standalone mapper.
    */
   public static SimpleModule bigIntIdAsStringModule() {
     SimpleModule module = new SimpleModule("BigIntIdAsString");

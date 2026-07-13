@@ -15,9 +15,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Drill-down endpoints backing the admin dashboard "Финансы" cards. Each card on
- * /admin/dashboard links here with a preselected tab; the controller returns row-level
- * transaction / refund data so the operator can see "who / what / when" behind the KPI totals.
+ * Drill-down endpoints backing the admin dashboard "Финансы" cards. Each card on /admin/dashboard
+ * links here with a preselected tab; the controller returns row-level transaction / refund data so
+ * the operator can see "who / what / when" behind the KPI totals.
  *
  * <p>All routes sit under {@code /api/v1/admin/**} which SecurityConfig restricts to ADMIN; the
  * per-method {@link PreAuthorize} is defense-in-depth in case that config is ever loosened.

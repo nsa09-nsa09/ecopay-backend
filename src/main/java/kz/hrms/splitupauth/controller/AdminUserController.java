@@ -59,6 +59,7 @@ public class AdminUserController {
   private final AccountRealtimeService accountRealtimeService;
   private final kz.hrms.splitupauth.service.NotificationService notificationService;
   private final AvatarStorageService avatarStorageService;
+  private final kz.hrms.splitupauth.service.SlugService slugService;
 
   // Whitelist of API sort fields → entity property names.
   // Note: User entity does not currently have a dedicated riskScore column,
@@ -175,11 +176,12 @@ public class AdminUserController {
             .phone(phone)
             .role(request.getRole())
             .status(UserStatus.ACTIVE)
-            .reputation(0)
+            .reputation(100)
             .emailVerified(true) // created by admin → bypass email verification
             .ownerVerified(false)
             .build();
 
+    slugService.assignInitialSlug(newUser);
     newUser = userRepository.save(newUser);
 
     ObjectNode newState = objectMapper.createObjectNode();

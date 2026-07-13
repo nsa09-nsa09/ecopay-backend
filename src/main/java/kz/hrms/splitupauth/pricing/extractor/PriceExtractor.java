@@ -9,8 +9,8 @@ import kz.hrms.splitupauth.pricing.ParsedPrice;
  * Strategy for lifting a single {@link ParsedPrice} out of a fetched HTML page.
  *
  * <p>Implementations should be stateless and return {@link Optional#empty()} rather than throwing
- * on parse failure — the caller records the outcome as {@code PARSE_FAILED} once every strategy
- * has been tried.
+ * on parse failure — the caller records the outcome as {@code PARSE_FAILED} once every strategy has
+ * been tried.
  */
 public interface PriceExtractor {
 

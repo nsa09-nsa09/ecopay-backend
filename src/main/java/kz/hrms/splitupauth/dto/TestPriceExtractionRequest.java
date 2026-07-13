@@ -19,8 +19,7 @@ public class TestPriceExtractionRequest {
   @Size(max = 2000)
   private String url;
 
-  @NotNull
-  private PriceExtractorType extractorType;
+  @NotNull private PriceExtractorType extractorType;
 
   /** Extractor-specific knobs; same shape as {@code price_watch_provider.extractor_config}. */
   private JsonNode extractorConfig;

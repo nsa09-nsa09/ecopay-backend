@@ -8,8 +8,8 @@ import lombok.NoArgsConstructor;
 
 /**
  * Dry-run result: what the same fetch + extract pipeline would have produced. No side effects on
- * providers, snapshots or the change feed — the admin can iterate on the recipe until it lights
- * up green, then hit Save.
+ * providers, snapshots or the change feed — the admin can iterate on the recipe until it lights up
+ * green, then hit Save.
  */
 @Data
 @Builder

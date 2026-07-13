@@ -23,9 +23,9 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * One tracked subscription price: platform, plan, the URL that carries the price and the recipe
- * for lifting it out of the HTML. Health fields ({@code status}, {@code consecutiveFailures},
- * {@code nextCheckAt}) are owned by the scheduler and mutate as observations come in.
+ * One tracked subscription price: platform, plan, the URL that carries the price and the recipe for
+ * lifting it out of the HTML. Health fields ({@code status}, {@code consecutiveFailures}, {@code
+ * nextCheckAt}) are owned by the scheduler and mutate as observations come in.
  *
  * <p>See {@code PriceWatchService} for the state machine and {@code PriceExtractor} for the
  * extraction strategies keyed by {@link #extractorType}.

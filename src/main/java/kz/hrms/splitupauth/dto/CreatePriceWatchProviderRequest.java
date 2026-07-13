@@ -35,16 +35,14 @@ public class CreatePriceWatchProviderRequest {
   @Size(max = 10)
   private String expectedCurrency;
 
-  @NotNull
-  private PriceExtractorType extractorType;
+  @NotNull private PriceExtractorType extractorType;
 
   /** Extractor-specific knobs; see the extractor javadocs. Optional. */
   private JsonNode extractorConfig;
 
   private Boolean requiresJs;
 
-  @Positive
-  private Integer checkIntervalMinutes;
+  @Positive private Integer checkIntervalMinutes;
 
   private Boolean active;
 

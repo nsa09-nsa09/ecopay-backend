@@ -22,4 +22,8 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
   Optional<User> findByPublicId(String publicId);
 
   boolean existsByPublicId(String publicId);
+
+  Optional<User> findBySlug(String slug);
+
+  boolean existsBySlugAndIdNot(String slug, Long id);
 }

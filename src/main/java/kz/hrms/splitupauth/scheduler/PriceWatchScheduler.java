@@ -23,13 +23,13 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 /**
- * Price Watch scheduler — the Price Watch analogue of {@link FxRateScheduler}. Every
- * {@code app.pricing.tick-minutes} it selects providers whose {@code nextCheckAt} has come due
- * and dispatches each one to a bounded {@link ThreadPoolTaskExecutor}, with a per-domain
- * semaphore preventing multiple concurrent hits on the same host.
+ * Price Watch scheduler — the Price Watch analogue of {@link FxRateScheduler}. Every {@code
+ * app.pricing.tick-minutes} it selects providers whose {@code nextCheckAt} has come due and
+ * dispatches each one to a bounded {@link ThreadPoolTaskExecutor}, with a per-domain semaphore
+ * preventing multiple concurrent hits on the same host.
  *
- * <p>Startup refresh is off by default so a boot never accidentally scrapes third-party sites;
- * flip {@code app.pricing.startup-refresh=true} in dev if you want the queue drained on start.
+ * <p>Startup refresh is off by default so a boot never accidentally scrapes third-party sites; flip
+ * {@code app.pricing.startup-refresh=true} in dev if you want the queue drained on start.
  */
 @Slf4j
 @Component
@@ -79,8 +79,10 @@ public class PriceWatchScheduler {
   @EventListener(ApplicationReadyEvent.class)
   public void onStartup() {
     if (!enabled || !startupRefresh) {
-      log.debug("PriceWatch startup refresh disabled (enabled={}, startupRefresh={})",
-          enabled, startupRefresh);
+      log.debug(
+          "PriceWatch startup refresh disabled (enabled={}, startupRefresh={})",
+          enabled,
+          startupRefresh);
       return;
     }
     log.info("PriceWatch startup: draining due queue");
@@ -116,8 +118,8 @@ public class PriceWatchScheduler {
   }
 
   private void runOne(PriceWatchProvider provider, String host, long delayMs) {
-    Semaphore limiter = perDomainLimit.computeIfAbsent(host,
-        h -> new Semaphore(perDomainConcurrency));
+    Semaphore limiter =
+        perDomainLimit.computeIfAbsent(host, h -> new Semaphore(perDomainConcurrency));
     try {
       if (delayMs > 0) Thread.sleep(delayMs);
       limiter.acquire();
@@ -128,8 +130,7 @@ public class PriceWatchScheduler {
     try {
       priceWatchService.checkProvider(provider.getId());
     } catch (Exception ex) {
-      log.warn("PriceWatch tick failed for provider {}: {}",
-          provider.getId(), ex.getMessage());
+      log.warn("PriceWatch tick failed for provider {}: {}", provider.getId(), ex.getMessage());
     } finally {
       limiter.release();
     }

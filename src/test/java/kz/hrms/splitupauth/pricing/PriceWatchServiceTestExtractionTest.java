@@ -56,8 +56,9 @@ class PriceWatchServiceTestExtractionTest {
     RegexExtractor regex = new RegexExtractor();
     AutoExtractor auto = new AutoExtractor(jsonLd, meta, css, regex);
 
-    service = new PriceWatchService(providerRepo, snapshotRepo, changeRepo, fetcher, jsonLd, meta,
-        css, regex, auto);
+    service =
+        new PriceWatchService(
+            providerRepo, snapshotRepo, changeRepo, fetcher, jsonLd, meta, css, regex, auto);
     ReflectionTestUtils.setField(service, "failureThreshold", 3);
     ReflectionTestUtils.setField(service, "defaultIntervalMinutes", 720);
   }
@@ -122,8 +123,7 @@ class PriceWatchServiceTestExtractionTest {
 
   @Test
   void blocked_isReported_withHttpStatus() {
-    when(fetcher.fetch(any(), any(), any()))
-        .thenReturn(FetchResult.blocked(403, "http 403"));
+    when(fetcher.fetch(any(), any(), any())).thenReturn(FetchResult.blocked(403, "http 403"));
 
     TestPriceExtractionResponse out = service.testExtraction(request(PriceExtractorType.AUTO));
 

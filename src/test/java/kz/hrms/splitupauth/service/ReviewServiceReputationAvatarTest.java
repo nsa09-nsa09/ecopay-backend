@@ -53,7 +53,7 @@ class ReviewServiceReputationAvatarTest {
     when(userRepository.findById(42L)).thenReturn(Optional.of(user));
     when(reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user))
         .thenReturn(List.of());
-    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.NEWCOMER);
+    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.EXCELLENT);
     lenient().when(reputationService.completedRoomsCount(user)).thenReturn(0L);
     when(avatarStorageService.publicUrl("avatars/abc.jpg"))
         .thenReturn("https://api.example.com/api/v1/users/avatars/abc.jpg");
@@ -70,7 +70,7 @@ class ReviewServiceReputationAvatarTest {
     when(userRepository.findById(7L)).thenReturn(Optional.of(user));
     when(reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user))
         .thenReturn(List.of());
-    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.NEWCOMER);
+    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.EXCELLENT);
     lenient().when(reputationService.completedRoomsCount(user)).thenReturn(0L);
     // Storage returns null for a null key — same as the production publicUrl contract.
     when(avatarStorageService.publicUrl(null)).thenReturn(null);

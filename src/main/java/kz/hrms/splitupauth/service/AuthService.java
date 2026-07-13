@@ -45,6 +45,7 @@ public class AuthService {
   private final UserMapper userMapper;
   private final StaffTwoFactorService staffTwoFactorService;
   private final LegalDocumentService legalDocumentService;
+  private final SlugService slugService;
 
   // Dev/test only: auto-verify email on registration so login works without SMTP.
   @Value("${app.dev.auto-verify-email:false}")
@@ -78,13 +79,16 @@ public class AuthService {
             .displayName(request.getDisplayName())
             .status(UserStatus.ACTIVE)
             .role(Role.USER)
-            .reputation(0)
+            .reputation(100)
             .emailVerified(false)
             .termsAcceptedAt(LocalDateTime.now())
             .acceptedTermsVersion(termsVersion)
             .acceptedPrivacyVersion(privacyVersion)
             .build();
 
+    // Assign a unique human-readable slug before the row is persisted so the
+    // returned DTO already carries it.
+    slugService.assignInitialSlug(user);
     user = userRepository.save(user);
 
     if (devAutoVerifyEmail) {

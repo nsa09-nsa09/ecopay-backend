@@ -291,7 +291,10 @@ public class RoomService {
             .priceTotalKzt(priceTotalKzt)
             .pricePerMemberKzt(pricePerMemberKzt)
             .periodType(periodType)
-            .startDate(request.getStartDate() != null ? request.getStartDate() : LocalDateTime.now().plusYears(1))
+            .startDate(
+                request.getStartDate() != null
+                    ? request.getStartDate()
+                    : LocalDateTime.now().plusYears(1))
             .cancellationPolicy(request.getCancellationPolicy())
             .providerName(request.getProviderName())
             .tariffNameSnapshot(request.getTariffNameSnapshot())

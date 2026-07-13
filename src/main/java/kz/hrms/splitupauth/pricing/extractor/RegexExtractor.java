@@ -17,8 +17,8 @@ import org.springframework.stereotype.Component;
  * { "pattern": "price\\\":\\s*\\\"(\\d+[.,]\\d+)", "currency": "USD" }
  * }</pre>
  *
- * The pattern is applied to the whole page body, so a very loose regex will happily match the
- * wrong thing — that's on the admin. We keep the first capturing group.
+ * The pattern is applied to the whole page body, so a very loose regex will happily match the wrong
+ * thing — that's on the admin. We keep the first capturing group.
  */
 @Component
 public class RegexExtractor implements PriceExtractor {
@@ -45,7 +45,7 @@ public class RegexExtractor implements PriceExtractor {
     String currencyHint = config.has("currency") ? config.get("currency").asText(null) : null;
     if (currencyHint == null) currencyHint = page.expectedCurrency();
     String detected = PriceNumberParser.guessCurrency(hit).orElse(currencyHint);
-    return Optional.of(new ParsedPrice(num.get(),
-        detected == null ? null : detected.toUpperCase(), "regex"));
+    return Optional.of(
+        new ParsedPrice(num.get(), detected == null ? null : detected.toUpperCase(), "regex"));
   }
 }

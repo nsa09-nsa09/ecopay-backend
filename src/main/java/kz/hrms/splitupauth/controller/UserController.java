@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.controller;
 import jakarta.validation.Valid;
 import kz.hrms.splitupauth.dto.MemberDashboardDto;
 import kz.hrms.splitupauth.dto.PublicProfileDto;
+import kz.hrms.splitupauth.dto.SlugAvailabilityDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
 import kz.hrms.splitupauth.entity.User;
@@ -52,9 +53,20 @@ public class UserController {
     return ResponseEntity.ok(userService.deleteAvatar(user));
   }
 
-  @GetMapping("/public/{publicId}")
-  public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String publicId) {
-    return ResponseEntity.ok(userService.getPublicProfile(publicId));
+  @GetMapping("/public/{handle}")
+  public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String handle) {
+    return ResponseEntity.ok(userService.getPublicProfile(handle));
+  }
+
+  /**
+   * Live availability probe used by the profile editor: normalizes the requested slug and reports
+   * whether the caller could claim it. Requires auth so unauthenticated callers can't scrape the
+   * slug namespace.
+   */
+  @GetMapping("/me/slug-available")
+  public ResponseEntity<SlugAvailabilityDto> checkSlugAvailability(
+      @AuthenticationPrincipal User user, @RequestParam("slug") String slug) {
+    return ResponseEntity.ok(userService.checkSlugAvailability(user, slug));
   }
 
   /** Personal analytics surface: memberships, spend, savings, reputation, recent activity. */

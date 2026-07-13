@@ -7,28 +7,28 @@ import org.junit.jupiter.api.Test;
 class ReputationLevelTest {
 
   @Test
-  void mapsScoresToTiersAtBoundaries() {
-    // Lower bounds (inclusive) of each tier.
-    assertEquals(ReputationLevel.NEWCOMER, ReputationLevel.fromScore(0));
-    assertEquals(ReputationLevel.NEWCOMER, ReputationLevel.fromScore(19));
-    assertEquals(ReputationLevel.BRONZE, ReputationLevel.fromScore(20));
-    assertEquals(ReputationLevel.BRONZE, ReputationLevel.fromScore(39));
-    assertEquals(ReputationLevel.SILVER, ReputationLevel.fromScore(40));
-    assertEquals(ReputationLevel.SILVER, ReputationLevel.fromScore(59));
-    assertEquals(ReputationLevel.GOLD, ReputationLevel.fromScore(60));
-    assertEquals(ReputationLevel.GOLD, ReputationLevel.fromScore(79));
-    assertEquals(ReputationLevel.PLATINUM, ReputationLevel.fromScore(80));
-    assertEquals(ReputationLevel.PLATINUM, ReputationLevel.fromScore(100));
+  void mapsScoresToBandsAtBoundaries() {
+    // Lower bounds (inclusive) of each trust band.
+    assertEquals(ReputationLevel.CRITICAL, ReputationLevel.fromScore(0));
+    assertEquals(ReputationLevel.CRITICAL, ReputationLevel.fromScore(19));
+    assertEquals(ReputationLevel.LOW, ReputationLevel.fromScore(20));
+    assertEquals(ReputationLevel.LOW, ReputationLevel.fromScore(39));
+    assertEquals(ReputationLevel.FAIR, ReputationLevel.fromScore(40));
+    assertEquals(ReputationLevel.FAIR, ReputationLevel.fromScore(69));
+    assertEquals(ReputationLevel.GOOD, ReputationLevel.fromScore(70));
+    assertEquals(ReputationLevel.GOOD, ReputationLevel.fromScore(89));
+    assertEquals(ReputationLevel.EXCELLENT, ReputationLevel.fromScore(90));
+    assertEquals(ReputationLevel.EXCELLENT, ReputationLevel.fromScore(100));
   }
 
   @Test
-  void treatsNullAndNegativeAsNewcomer() {
-    assertEquals(ReputationLevel.NEWCOMER, ReputationLevel.fromScore(null));
-    assertEquals(ReputationLevel.NEWCOMER, ReputationLevel.fromScore(-5));
+  void treatsNullAndNegativeAsCritical() {
+    assertEquals(ReputationLevel.CRITICAL, ReputationLevel.fromScore(null));
+    assertEquals(ReputationLevel.CRITICAL, ReputationLevel.fromScore(-5));
   }
 
   @Test
-  void scoresAboveTopBandStayPlatinum() {
-    assertEquals(ReputationLevel.PLATINUM, ReputationLevel.fromScore(150));
+  void scoresAboveTopBandStayExcellent() {
+    assertEquals(ReputationLevel.EXCELLENT, ReputationLevel.fromScore(150));
   }
 }

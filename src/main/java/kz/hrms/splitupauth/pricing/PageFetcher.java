@@ -26,38 +26,38 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>Explicit User-Agent (default: a real recent Chrome string) and {@code Accept-Encoding:
  *       gzip} so upstreams don't gate us as a bot on the User-Agent alone.
- *   <li>Configurable connect + read timeout; no follow-redirects to arbitrary hosts (only
- *       same-host or a well-known checkout host per provider) to avoid getting bounced onto an
- *       unrelated landing page or tracker.
+ *   <li>Configurable connect + read timeout; no follow-redirects to arbitrary hosts (only same-host
+ *       or a well-known checkout host per provider) to avoid getting bounced onto an unrelated
+ *       landing page or tracker.
  *   <li>Conditional GET when the caller supplies an ETag or Last-Modified from the previous
  *       observation — a 304 response is returned as a distinguished {@link FetchResult}.
- *   <li>{@code requiresJs=true} providers short-circuit to {@link FetchResult#blocked}: v1 does
- *       not run a headless browser. The extension point for a Playwright sidecar in v2 lives
- *       here (see {@link #fetch}).
+ *   <li>{@code requiresJs=true} providers short-circuit to {@link FetchResult#blocked}: v1 does not
+ *       run a headless browser. The extension point for a Playwright sidecar in v2 lives here (see
+ *       {@link #fetch}).
  * </ul>
  */
 @Slf4j
 @Component
 public class PageFetcher {
 
-  @Value("${app.pricing.user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-      + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}")
+  @Value(
+      "${app.pricing.user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+          + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36}")
   private String userAgent;
 
   @Value("${app.pricing.timeout-seconds:8}")
   private long timeoutSeconds;
 
   /**
-   * Perform one fetch. {@code etag} / {@code lastModified} may come from the last snapshot to
-   * make the request conditional; either may be {@code null}.
+   * Perform one fetch. {@code etag} / {@code lastModified} may come from the last snapshot to make
+   * the request conditional; either may be {@code null}.
    */
   public FetchResult fetch(PriceWatchProvider provider, String etag, String lastModified) {
     if (Boolean.TRUE.equals(provider.getRequiresJs())) {
       // v2 hook: swap this branch for a Playwright/headless call. Until then, we
       // record a BLOCKED snapshot so the admin sees the row and can drop in a
       // MANUAL price without the scheduler eating retries.
-      return FetchResult.blocked(null,
-          "requires_js=true; headless renderer not enabled (v2)");
+      return FetchResult.blocked(null, "requires_js=true; headless renderer not enabled (v2)");
     }
 
     URI uri;
@@ -82,10 +82,8 @@ public class PageFetcher {
           HttpRequest.newBuilder(uri)
               .timeout(Duration.ofSeconds(timeoutSeconds))
               .header("User-Agent", userAgent)
-              .header("Accept",
-                  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-              .header("Accept-Language",
-                  Optional.ofNullable(provider.getLocale()).orElse("en"))
+              .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+              .header("Accept-Language", Optional.ofNullable(provider.getLocale()).orElse("en"))
               .header("Accept-Encoding", "gzip")
               .GET();
 
@@ -96,8 +94,8 @@ public class PageFetcher {
         rq.header("If-Modified-Since", lastModified);
       }
 
-      HttpResponse<byte[]> response = client.send(rq.build(),
-          HttpResponse.BodyHandlers.ofByteArray());
+      HttpResponse<byte[]> response =
+          client.send(rq.build(), HttpResponse.BodyHandlers.ofByteArray());
 
       int status = response.statusCode();
       String respEtag = firstHeader(response, "ETag");
@@ -130,8 +128,7 @@ public class PageFetcher {
                 .timeout(Duration.ofSeconds(timeoutSeconds))
                 .header("User-Agent", userAgent)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .header("Accept-Language",
-                    Optional.ofNullable(provider.getLocale()).orElse("en"))
+                .header("Accept-Language", Optional.ofNullable(provider.getLocale()).orElse("en"))
                 .header("Accept-Encoding", "gzip")
                 .GET();
         response = client.send(hop.build(), HttpResponse.BodyHandlers.ofByteArray());
@@ -152,16 +149,29 @@ public class PageFetcher {
       String body = decode(rawBytes, gzipped, firstHeader(response, "Content-Type"));
 
       Map<String, String> headers = new LinkedHashMap<>();
-      response.headers().map().forEach((k, v) -> {
-        if (v != null && !v.isEmpty()) headers.put(k, v.get(0));
-      });
+      response
+          .headers()
+          .map()
+          .forEach(
+              (k, v) -> {
+                if (v != null && !v.isEmpty()) headers.put(k, v.get(0));
+              });
 
-      FetchedPage page = new FetchedPage(uri.toString(), status, body, headers,
-          provider.getExpectedCurrency(), provider.getLocale());
+      FetchedPage page =
+          new FetchedPage(
+              uri.toString(),
+              status,
+              body,
+              headers,
+              provider.getExpectedCurrency(),
+              provider.getLocale());
       return FetchResult.ok(page, respEtag, respLastMod);
     } catch (Exception ex) {
-      log.debug("Price fetch failed for provider {} ({}): {}",
-          provider.getId(), provider.getUrl(), ex.getMessage());
+      log.debug(
+          "Price fetch failed for provider {} ({}): {}",
+          provider.getId(),
+          provider.getUrl(),
+          ex.getMessage());
       return FetchResult.fetchFailed(null, ex.getClass().getSimpleName() + ": " + ex.getMessage());
     }
   }
