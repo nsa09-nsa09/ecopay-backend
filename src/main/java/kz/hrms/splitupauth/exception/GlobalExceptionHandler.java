@@ -112,6 +112,11 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(EmailNotVerifiedException.class)
   public ResponseEntity<ErrorResponse> handleEmailNotVerified(EmailNotVerifiedException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+    error.setCode("EMAIL_NOT_VERIFIED");
+    // Also expose the marker inside the errors map: the web client only parses
+    // `message` + `errors`, so this is how the login screen reliably detects
+    // "unverified" and switches to the code-entry step.
+    error.setErrors(Map.of("code", "EMAIL_NOT_VERIFIED"));
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
   }
 

@@ -75,7 +75,11 @@ public class EmailService {
         + "</html>";
   }
 
-  public void sendVerificationEmail(String to, String token) {
+  /**
+   * Confirmation email carrying the 6-digit code the user types on the registration screen. The
+   * click-through link is kept as a fallback for users who prefer it.
+   */
+  public void sendVerificationEmail(String to, String token, String code) {
     try {
       MimeMessage message = mailSender.createMimeMessage();
       MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -85,7 +89,7 @@ public class EmailService {
       helper.setSubject("Verify your email address");
 
       String verifyLink = baseUrl + "/api/v1/auth/verify-email?token=" + token;
-      String htmlContent = buildVerificationEmail(verifyLink);
+      String htmlContent = buildVerificationEmail(verifyLink, code);
 
       helper.setText(htmlContent, true);
 
@@ -168,15 +172,20 @@ public class EmailService {
         + "</html>";
   }
 
-  private String buildVerificationEmail(String verifyLink) {
+  private String buildVerificationEmail(String verifyLink, String code) {
     return "<html>"
         + "<body>"
         + "<h2>Verify your email address</h2>"
-        + "<p>Thanks for signing up! Click the link below to confirm your email and activate your account:</p>"
+        + "<p>Thanks for signing up! Enter the code below on the EcoPay registration screen to"
+        + " confirm your email and activate your account:</p>"
+        + "<p style=\"font-size:24px;font-weight:bold;letter-spacing:6px;\">"
+        + code
+        + "</p>"
+        + "<p>This code expires in 24 hours.</p>"
+        + "<p>Prefer a link? You can also confirm here: "
         + "<a href=\""
         + verifyLink
-        + "\">Verify Email</a>"
-        + "<p>This link will expire in 24 hours.</p>"
+        + "\">Verify Email</a></p>"
         + "<p>If you didn't create an account, please ignore this email.</p>"
         + "</body>"
         + "</html>";

@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.*;
@@ -27,6 +28,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Slf4j
 public class AuthService {
+
+  private static final SecureRandom RANDOM = new SecureRandom();
+
+  /** Wrong-code attempts allowed before the confirmation must be restarted (resent). */
+  private static final int MAX_CODE_ATTEMPTS = 5;
 
   private final UserRepository userRepository;
   private final PasswordResetTokenRepository passwordResetTokenRepository;
@@ -83,13 +89,16 @@ public class AuthService {
 
     if (devAutoVerifyEmail) {
       // Dev/test: skip the email round-trip so the account can log in without SMTP.
+      // Tokens are issued straight away so the frontend can drop the user in.
       user.setEmailVerified(true);
       user = userRepository.save(user);
-    } else {
-      sendVerificationEmail(user);
+      return issueTokens(user);
     }
 
-    // No tokens issued: the account must verify its email before logging in.
+    sendVerificationEmail(user);
+
+    // No tokens issued: the account must confirm the emailed code (or link)
+    // before it is considered fully registered and allowed to log in.
     return AuthResponse.builder().user(userMapper.toDto(user)).build();
   }
 
@@ -294,20 +303,79 @@ public class AuthService {
     sendVerificationEmail(user);
   }
 
+  /**
+   * Confirm the 6-digit code emailed at registration. On success the account is marked verified and
+   * logged in straight away (tokens issued), matching the staff-2FA "verify then enter" flow.
+   */
+  @Transactional
+  public AuthResponse verifyEmailCode(VerifyEmailCodeRequest request) {
+    User user =
+        userRepository
+            .findByEmail(request.getEmail())
+            .orElseThrow(
+                () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
+
+    // Already verified — the previous attempt went through. Be idempotent and
+    // just hand back a fresh session rather than erroring the user out.
+    if (Boolean.TRUE.equals(user.getEmailVerified())) {
+      return issueTokens(user);
+    }
+
+    EmailVerificationToken verificationToken =
+        emailVerificationTokenRepository
+            .findByUser(user)
+            .orElseThrow(
+                () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
+
+    if (verificationToken.getUsed() || verificationToken.getCodeHash() == null) {
+      throw new InvalidVerificationCodeException("Invalid or expired verification code");
+    }
+
+    if (verificationToken.isExpired()) {
+      throw new VerificationCodeExpiredException("Verification code expired. Please request a new one.");
+    }
+
+    if (verificationToken.getAttempts() >= MAX_CODE_ATTEMPTS) {
+      throw new InvalidVerificationCodeException(
+          "Too many invalid attempts. Please request a new code.");
+    }
+
+    if (!passwordEncoder.matches(request.getCode(), verificationToken.getCodeHash())) {
+      verificationToken.setAttempts(verificationToken.getAttempts() + 1);
+      emailVerificationTokenRepository.save(verificationToken);
+      throw new InvalidVerificationCodeException("Invalid or expired verification code");
+    }
+
+    user.setEmailVerified(true);
+    userRepository.save(user);
+
+    verificationToken.setUsed(true);
+    emailVerificationTokenRepository.save(verificationToken);
+
+    return issueTokens(user);
+  }
+
   private void sendVerificationEmail(User user) {
     emailVerificationTokenRepository.deleteByUser(user);
 
     String token = UUID.randomUUID().toString();
+    String code = generate6DigitCode();
     EmailVerificationToken verificationToken =
         EmailVerificationToken.builder()
             .token(token)
             .user(user)
+            .codeHash(passwordEncoder.encode(code))
+            .attempts(0)
             .expiresAt(LocalDateTime.now().plusHours(24))
             .used(false)
             .build();
 
     emailVerificationTokenRepository.save(verificationToken);
 
-    emailService.sendVerificationEmail(user.getEmail(), token);
+    emailService.sendVerificationEmail(user.getEmail(), token, code);
+  }
+
+  private String generate6DigitCode() {
+    return String.format("%06d", RANDOM.nextInt(1_000_000));
   }
 }
