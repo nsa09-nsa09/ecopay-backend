@@ -19,6 +19,7 @@ import lombok.NoArgsConstructor;
 public class PublicProfileDto {
   private Long id;
   private String publicId;
+  private String slug;
   private String displayName;
   private String avatar;
   private Integer reputation;

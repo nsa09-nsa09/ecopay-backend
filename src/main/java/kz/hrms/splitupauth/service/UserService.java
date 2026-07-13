@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.service;
 import java.time.LocalDateTime;
 import java.util.List;
 import kz.hrms.splitupauth.dto.PublicProfileDto;
+import kz.hrms.splitupauth.dto.SlugAvailabilityDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
 import kz.hrms.splitupauth.entity.Review;
@@ -12,6 +13,7 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.util.SlugGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +30,7 @@ public class UserService {
   private final TokenRevocationService tokenRevocationService;
   private final AvatarStorageService avatarStorageService;
   private final ReputationService reputationService;
+  private final SlugService slugService;
 
   @Transactional(readOnly = true)
   public UserDto getCurrentUser(User user) {
@@ -41,9 +44,32 @@ public class UserService {
     // Setting an arbitrary public URL is no longer supported.
     user.setDisplayName(request.getDisplayName());
 
+    String requestedSlug = request.getSlug();
+    if (requestedSlug != null && !requestedSlug.isBlank()) {
+      String trimmed = requestedSlug.trim();
+      if (!trimmed.equals(user.getSlug())) {
+        slugService.changeSlug(user, trimmed);
+      }
+    }
+
     userRepository.save(user);
 
     return userMapper.toDto(user);
+  }
+
+  @Transactional(readOnly = true)
+  public SlugAvailabilityDto checkSlugAvailability(User user, String slug) {
+    String normalized = SlugGenerator.normalize(slug);
+    if (!normalized.matches("^[a-z0-9]([a-z0-9-]{1,28}[a-z0-9])$")) {
+      return new SlugAvailabilityDto(false, normalized, "invalid");
+    }
+    if (SlugService.RESERVED.contains(normalized)) {
+      return new SlugAvailabilityDto(false, normalized, "reserved");
+    }
+    if (slugService.isTaken(normalized, user.getId())) {
+      return new SlugAvailabilityDto(false, normalized, "taken");
+    }
+    return new SlugAvailabilityDto(true, normalized, null);
   }
 
   @Transactional
@@ -64,10 +90,13 @@ public class UserService {
   }
 
   @Transactional(readOnly = true)
-  public PublicProfileDto getPublicProfile(String publicId) {
+  public PublicProfileDto getPublicProfile(String handle) {
+    // Slug first (the readable handle), fall back to the immutable publicId so old
+    // links keep working after a user renames themselves.
     User user =
         userRepository
-            .findByPublicId(publicId)
+            .findBySlug(handle)
+            .or(() -> userRepository.findByPublicId(handle))
             .filter(u -> u.getStatus() != UserStatus.DELETED)
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -81,6 +110,7 @@ public class UserService {
     return PublicProfileDto.builder()
         .id(user.getId())
         .publicId(user.getPublicId())
+        .slug(user.getSlug())
         .displayName(user.getDisplayName())
         .avatar(avatarStorageService.publicUrl(user.getAvatar()))
         .reputation(user.getReputation())

@@ -39,11 +39,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>State machine (per provider):
  *
  * <ul>
- *   <li>SUCCESS  → status=OK, {@code consecutiveFailures=0}, {@code lastPrice/lastCurrency}
- *       updated, {@code lastSuccessAt=now}. Emits a {@link PriceChange} row if the value moved.
- *   <li>PARSE_FAILED / FETCH_FAILED → {@code consecutiveFailures++}. Once past
- *       {@code failureThreshold}, we flip {@code status=FAILING} and {@code active=false} — the
- *       admin has to re-enable after tweaking the extractor.
+ *   <li>SUCCESS → status=OK, {@code consecutiveFailures=0}, {@code lastPrice/lastCurrency} updated,
+ *       {@code lastSuccessAt=now}. Emits a {@link PriceChange} row if the value moved.
+ *   <li>PARSE_FAILED / FETCH_FAILED → {@code consecutiveFailures++}. Once past {@code
+ *       failureThreshold}, we flip {@code status=FAILING} and {@code active=false} — the admin has
+ *       to re-enable after tweaking the extractor.
  *   <li>BLOCKED → status=BLOCKED, threshold not touched. Blocked usually means "manual price /
  *       needs headless"; the row stays active so admin can flip it to MANUAL and enter the number
  *       by hand.
@@ -76,8 +76,10 @@ public class PriceWatchService {
    */
   @Transactional
   public PriceWatchProvider checkProvider(Long providerId) {
-    PriceWatchProvider provider = providerRepository.findById(providerId)
-        .orElseThrow(() -> new IllegalArgumentException("provider not found: " + providerId));
+    PriceWatchProvider provider =
+        providerRepository
+            .findById(providerId)
+            .orElseThrow(() -> new IllegalArgumentException("provider not found: " + providerId));
     return check(provider);
   }
 
@@ -107,16 +109,28 @@ public class PriceWatchService {
     }
 
     if (fetch.outcome() == PriceSnapshotOutcome.BLOCKED) {
-      recordSnapshot(provider, null, null, PriceSnapshotOutcome.BLOCKED,
-          fetch.httpStatus(), null, fetch.errorMessage());
+      recordSnapshot(
+          provider,
+          null,
+          null,
+          PriceSnapshotOutcome.BLOCKED,
+          fetch.httpStatus(),
+          null,
+          fetch.errorMessage());
       provider.setStatus(PriceWatchStatus.BLOCKED);
       provider.setNextCheckAt(scheduleNext(provider, now));
       return providerRepository.save(provider);
     }
 
     if (fetch.outcome() == PriceSnapshotOutcome.FETCH_FAILED) {
-      recordSnapshot(provider, null, null, PriceSnapshotOutcome.FETCH_FAILED,
-          fetch.httpStatus(), null, fetch.errorMessage());
+      recordSnapshot(
+          provider,
+          null,
+          null,
+          PriceSnapshotOutcome.FETCH_FAILED,
+          fetch.httpStatus(),
+          null,
+          fetch.errorMessage());
       return markFailure(provider, now);
     }
 
@@ -126,15 +140,27 @@ public class PriceWatchService {
     String excerpt = truncate(page.body(), 4000);
 
     if (parsed.isEmpty()) {
-      recordSnapshot(provider, null, null, PriceSnapshotOutcome.PARSE_FAILED,
-          page.status(), excerpt, "no price found by extractor "
-              + provider.getExtractorType());
+      recordSnapshot(
+          provider,
+          null,
+          null,
+          PriceSnapshotOutcome.PARSE_FAILED,
+          page.status(),
+          excerpt,
+          "no price found by extractor " + provider.getExtractorType());
       return markFailure(provider, now);
     }
 
     ParsedPrice p = parsed.get();
-    PriceSnapshot snapshot = recordSnapshot(provider, p.price(), p.currency(),
-        PriceSnapshotOutcome.SUCCESS, page.status(), excerpt, null);
+    PriceSnapshot snapshot =
+        recordSnapshot(
+            provider,
+            p.price(),
+            p.currency(),
+            PriceSnapshotOutcome.SUCCESS,
+            page.status(),
+            excerpt,
+            null);
 
     detectChange(provider, p, snapshot);
 
@@ -149,9 +175,9 @@ public class PriceWatchService {
 
   /**
    * Dry-run the fetch + extract pipeline for a URL without touching any table. Same code paths as
-   * {@link #check(PriceWatchProvider)}: builds a transient provider, delegates to the same
-   * {@link PageFetcher} and the same extractor strategies, then reports back a compact verdict for
-   * the admin's "Test URL" button.
+   * {@link #check(PriceWatchProvider)}: builds a transient provider, delegates to the same {@link
+   * PageFetcher} and the same extractor strategies, then reports back a compact verdict for the
+   * admin's "Test URL" button.
    *
    * <p>Never persists a snapshot, change or provider row — the admin uses this to iterate on the
    * recipe until the parsed price looks right, then clicks Save.
@@ -225,20 +251,24 @@ public class PriceWatchService {
 
   private Optional<ParsedPrice> runExtractor(PriceWatchProvider provider, FetchedPage page) {
     JsonNode config = provider.getExtractorConfig();
-    PriceExtractor extractor = switch (provider.getExtractorType()) {
-      case JSON_LD -> jsonLdExtractor;
-      case META -> metaExtractor;
-      case CSS -> cssExtractor;
-      case REGEX -> regexExtractor;
-      case AUTO -> autoExtractor;
-      case MANUAL -> null; // handled earlier
-    };
+    PriceExtractor extractor =
+        switch (provider.getExtractorType()) {
+          case JSON_LD -> jsonLdExtractor;
+          case META -> metaExtractor;
+          case CSS -> cssExtractor;
+          case REGEX -> regexExtractor;
+          case AUTO -> autoExtractor;
+          case MANUAL -> null; // handled earlier
+        };
     if (extractor == null) return Optional.empty();
     try {
       return extractor.extract(page, config);
     } catch (Exception ex) {
-      log.warn("Extractor {} for provider {} threw: {}",
-          provider.getExtractorType(), provider.getId(), ex.getMessage());
+      log.warn(
+          "Extractor {} for provider {} threw: {}",
+          provider.getExtractorType(),
+          provider.getId(),
+          ex.getMessage());
       return Optional.empty();
     }
   }
@@ -252,8 +282,7 @@ public class PriceWatchService {
       // Snap the row off the schedule so we stop battering a permanently
       // broken URL — admin has to re-enable after fixing the recipe.
       provider.setActive(false);
-      log.warn("Price provider {} disabled after {} consecutive failures",
-          provider.getId(), fails);
+      log.warn("Price provider {} disabled after {} consecutive failures", provider.getId(), fails);
     } else {
       provider.setStatus(PriceWatchStatus.STALE);
     }
@@ -269,15 +298,16 @@ public class PriceWatchService {
       Integer httpStatus,
       String excerpt,
       String errorMessage) {
-    PriceSnapshot snap = PriceSnapshot.builder()
-        .provider(provider)
-        .price(price)
-        .currency(currency)
-        .outcome(outcome)
-        .httpStatus(httpStatus)
-        .rawExcerpt(excerpt)
-        .errorMessage(errorMessage)
-        .build();
+    PriceSnapshot snap =
+        PriceSnapshot.builder()
+            .provider(provider)
+            .price(price)
+            .currency(currency)
+            .outcome(outcome)
+            .httpStatus(httpStatus)
+            .rawExcerpt(excerpt)
+            .errorMessage(errorMessage)
+            .build();
     return snapshotRepository.save(snap);
   }
 
@@ -286,33 +316,38 @@ public class PriceWatchService {
     if (old == null) {
       // First-ever successful observation: record a change from null so the
       // admin's change feed shows the initial baseline.
-      changeRepository.save(PriceChange.builder()
-          .provider(provider)
-          .oldPrice(null)
-          .newPrice(p.price())
-          .currency(p.currency())
-          .snapshot(snap)
-          .build());
+      changeRepository.save(
+          PriceChange.builder()
+              .provider(provider)
+              .oldPrice(null)
+              .newPrice(p.price())
+              .currency(p.currency())
+              .snapshot(snap)
+              .build());
       return;
     }
     if (old.compareTo(p.price()) != 0) {
-      changeRepository.save(PriceChange.builder()
-          .provider(provider)
-          .oldPrice(old)
-          .newPrice(p.price())
-          .currency(p.currency())
-          .snapshot(snap)
-          .build());
+      changeRepository.save(
+          PriceChange.builder()
+              .provider(provider)
+              .oldPrice(old)
+              .newPrice(p.price())
+              .currency(p.currency())
+              .snapshot(snap)
+              .build());
     }
   }
 
   private LocalDateTime scheduleNext(PriceWatchProvider provider, LocalDateTime from) {
-    int minutes = provider.getCheckIntervalMinutes() == null
-        ? defaultIntervalMinutes : provider.getCheckIntervalMinutes();
+    int minutes =
+        provider.getCheckIntervalMinutes() == null
+            ? defaultIntervalMinutes
+            : provider.getCheckIntervalMinutes();
     if (minutes < 1) minutes = 1;
     // Jitter ±15% so a fleet of providers with identical intervals doesn't fire
     // in lockstep and hammer the same upstream at the same second.
-    int jitter = (int) Math.round(minutes * 0.15 * (ThreadLocalRandom.current().nextDouble() * 2 - 1));
+    int jitter =
+        (int) Math.round(minutes * 0.15 * (ThreadLocalRandom.current().nextDouble() * 2 - 1));
     return from.plusMinutes(minutes + jitter);
   }
 

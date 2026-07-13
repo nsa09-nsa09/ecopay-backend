@@ -21,6 +21,8 @@ public class RoomResponse {
   private Long id;
   private Long ownerUserId;
   private String ownerDisplayName;
+  private String ownerSlug;
+  private String ownerPublicId;
   private Boolean ownerVerified;
   private Integer ownerReputation;
   private String ownerReputationLevel;

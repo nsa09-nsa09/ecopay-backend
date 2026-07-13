@@ -21,10 +21,10 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * One fetch attempt against a {@link PriceWatchProvider}. Recorded regardless of outcome —
- * failures (parse, network, blocked) are just as useful for diagnosing broken extractors as
- * successes are for price history. {@code rawExcerpt} is a truncated body slice kept for
- * troubleshooting, never a full page dump.
+ * One fetch attempt against a {@link PriceWatchProvider}. Recorded regardless of outcome — failures
+ * (parse, network, blocked) are just as useful for diagnosing broken extractors as successes are
+ * for price history. {@code rawExcerpt} is a truncated body slice kept for troubleshooting, never a
+ * full page dump.
  */
 @Entity
 @Table(

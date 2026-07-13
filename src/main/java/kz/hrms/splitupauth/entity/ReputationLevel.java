@@ -1,17 +1,19 @@
 package kz.hrms.splitupauth.entity;
 
 /**
- * Activity-based reputation tier, derived from the composite reputation score (0-100).
+ * Trust band derived from the composite reputation score (0-100). "Reputation" here means "how much
+ * the platform trusts this user"; everyone starts at {@link #EXCELLENT} and only drops on bad
+ * signals (poor reviews, confirmed violations).
  *
- * <p>The level is NOT persisted — it is a pure function of {@link User#getReputation()} so the tier
+ * <p>The band is NOT persisted — it is a pure function of {@link User#getReputation()} so the tier
  * and the underlying score can never drift apart. Thresholds are inclusive lower bounds.
  */
 public enum ReputationLevel {
-  NEWCOMER(0),
-  BRONZE(20),
-  SILVER(40),
-  GOLD(60),
-  PLATINUM(80);
+  CRITICAL(0),
+  LOW(20),
+  FAIR(40),
+  GOOD(70),
+  EXCELLENT(90);
 
   private final int minScore;
 
@@ -23,10 +25,10 @@ public enum ReputationLevel {
     return minScore;
   }
 
-  /** Map a composite reputation score to its tier. Null or negative scores fall to NEWCOMER. */
+  /** Map a composite reputation score to its band. Null or negative scores fall to CRITICAL. */
   public static ReputationLevel fromScore(Integer score) {
     int s = score == null ? 0 : score;
-    ReputationLevel result = NEWCOMER;
+    ReputationLevel result = CRITICAL;
     for (ReputationLevel level : values()) {
       if (s >= level.minScore) {
         result = level;

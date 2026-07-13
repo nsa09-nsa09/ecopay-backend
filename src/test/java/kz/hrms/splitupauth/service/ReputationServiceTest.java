@@ -40,14 +40,11 @@ class ReputationServiceTest {
     return User.builder().id(7L).build();
   }
 
-  /** Stub the four activity signals that feed computeScore. */
-  private void stub(
-      User u,
-      int reviewStars,
-      int reviewCount,
-      long completedAsOwner,
-      long completedAsMember,
-      long violations) {
+  /**
+   * Stub the two signals that feed computeScore under the trust model: reviews and confirmed
+   * violations. Completed rooms are informational only and no longer affect the score.
+   */
+  private void stub(User u, int reviewStars, int reviewCount, long violations) {
     List<Review> reviews =
         IntStream.range(0, reviewCount)
             .mapToObj(i -> Review.builder().rating(reviewStars).build())
@@ -56,91 +53,87 @@ class ReputationServiceTest {
         .when(reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(u))
         .thenReturn(reviews);
     lenient()
-        .when(roomRepository.countByOwnerAndStatusAndDeletedAtIsNull(u, RoomStatus.COMPLETED))
-        .thenReturn(completedAsOwner);
-    lenient()
-        .when(roomMemberRepository.countCompletedAsActiveMember(u))
-        .thenReturn(completedAsMember);
-    lenient()
         .when(disputeRepository.countConfirmedViolationsAgainstOwner(u))
         .thenReturn(violations);
   }
 
   @Test
-  void newUserWithNoActivityScoresZero() {
+  void newUserWithNoActivityStaysAtBaseline() {
     User u = user();
-    stub(u, 0, 0, 0, 0, 0);
-    assertEquals(0, service.computeScore(u));
-    assertEquals(ReputationLevel.NEWCOMER, service.levelOf(service.computeScore(u)));
+    stub(u, 0, 0, 0);
+    assertEquals(100, service.computeScore(u));
+    assertEquals(ReputationLevel.EXCELLENT, service.levelOf(service.computeScore(u)));
   }
 
   @Test
-  void ratingAloneContributesUpToHalf() {
+  void perfectRatingKeepsScoreAtBaseline() {
     User u = user();
-    stub(u, 5, 3, 0, 0, 0); // 5★ avg → (5/5)*50 = 50
+    stub(u, 5, 4, 0); // avg 5 → 0 rating penalty
+    assertEquals(100, service.computeScore(u));
+    assertEquals(ReputationLevel.EXCELLENT, ReputationLevel.fromScore(service.computeScore(u)));
+  }
+
+  @Test
+  void averageThreeStarPenalizesTwentyFive() {
+    User u = user();
+    stub(u, 3, 4, 0); // (5 - 3)/4 * 50 = 25 penalty
+    assertEquals(75, service.computeScore(u));
+    assertEquals(ReputationLevel.GOOD, ReputationLevel.fromScore(service.computeScore(u)));
+  }
+
+  @Test
+  void allOneStarCostsFullRatingWeight() {
+    User u = user();
+    stub(u, 1, 3, 0); // (5 - 1)/4 * 50 = 50 penalty
     assertEquals(50, service.computeScore(u));
+    assertEquals(ReputationLevel.FAIR, ReputationLevel.fromScore(service.computeScore(u)));
+  }
 
-    stub(u, 3, 2, 0, 0, 0); // 3★ avg → 30
+  @Test
+  void oneViolationCompoundsRatingPenalty() {
+    User u = user();
+    stub(u, 1, 3, 1); // 50 - 20 = 30
     assertEquals(30, service.computeScore(u));
+    assertEquals(ReputationLevel.LOW, ReputationLevel.fromScore(service.computeScore(u)));
   }
 
   @Test
-  void completedRoomsRewardActivityAndCap() {
+  void twoViolationsWithOneStarLandInCritical() {
     User u = user();
-    stub(u, 0, 0, 2, 1, 0); // 3 completed rooms → 3*10 = 30, no reviews
-    assertEquals(30, service.computeScore(u));
-    assertEquals(ReputationLevel.BRONZE, ReputationLevel.fromScore(service.computeScore(u)));
-
-    stub(u, 0, 0, 4, 3, 0); // 7 completed → capped at 50
-    assertEquals(50, service.computeScore(u));
+    stub(u, 1, 3, 2); // 50 - 40 = 10
+    assertEquals(10, service.computeScore(u));
+    assertEquals(ReputationLevel.CRITICAL, ReputationLevel.fromScore(service.computeScore(u)));
   }
 
   @Test
-  void fullActivityReachesPlatinum() {
+  void manyViolationsClampToZero() {
     User u = user();
-    stub(u, 5, 4, 3, 2, 0); // 50 rating + 5*10 activity = 100
-    int score = service.computeScore(u);
-    assertEquals(100, score);
-    assertEquals(ReputationLevel.PLATINUM, ReputationLevel.fromScore(score));
-  }
-
-  @Test
-  void confirmedViolationsApplyPenalty() {
-    User u = user();
-    stub(u, 5, 2, 0, 0, 1); // 50 rating - 15 penalty = 35
-    assertEquals(35, service.computeScore(u));
-    assertEquals(ReputationLevel.BRONZE, ReputationLevel.fromScore(service.computeScore(u)));
-  }
-
-  @Test
-  void scoreIsClampedToZeroByPenalties() {
-    User u = user();
-    stub(u, 1, 1, 0, 0, 1); // 10 rating - 15 penalty = -5 → clamped to 0
+    stub(u, 1, 3, 5); // 50 - 100 = -50 → clamped to 0
     assertEquals(0, service.computeScore(u));
   }
 
   @Test
   void recomputePersistsWhenScoreChanges() {
     User u = user();
-    u.setReputation(0);
-    stub(u, 5, 3, 0, 0, 0); // → 50
+    u.setReputation(100);
+    stub(u, 3, 4, 0); // → 75
 
     int result = service.recompute(u);
 
-    assertEquals(50, result);
-    assertEquals(50, u.getReputation());
+    assertEquals(75, result);
+    assertEquals(75, u.getReputation());
     verify(userRepository).save(u);
   }
 
   @Test
   void recomputeSkipsSaveWhenScoreUnchanged() {
     User u = user();
-    u.setReputation(50);
-    stub(u, 5, 3, 0, 0, 0); // recomputes to 50 — already current
+    u.setReputation(75);
+    stub(u, 3, 4, 0); // recomputes to 75 — already current
 
     int result = service.recompute(u);
 
-    assertEquals(50, result);
+    assertEquals(75, result);
     verify(userRepository, never()).save(any());
   }
 

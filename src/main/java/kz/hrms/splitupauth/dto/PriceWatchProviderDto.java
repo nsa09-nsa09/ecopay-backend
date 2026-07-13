@@ -11,9 +11,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Admin-facing shape of one Price Watch provider. Includes the live health fields
- * ({@code status}, {@code lastPrice}, {@code lastChangedAt}) so the admin table can render one
- * row per provider without joining snapshots.
+ * Admin-facing shape of one Price Watch provider. Includes the live health fields ({@code status},
+ * {@code lastPrice}, {@code lastChangedAt}) so the admin table can render one row per provider
+ * without joining snapshots.
  */
 @Data
 @Builder

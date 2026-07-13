@@ -18,8 +18,8 @@ import kz.hrms.splitupauth.pricing.extractor.RegexExtractor;
 import org.junit.jupiter.api.Test;
 
 /**
- * Exercises every extractor against a local HTML fixture. No network involved — {@link
- * FetchedPage} is constructed directly.
+ * Exercises every extractor against a local HTML fixture. No network involved — {@link FetchedPage}
+ * is constructed directly.
  */
 class PriceExtractorsTest {
 
@@ -34,8 +34,8 @@ class PriceExtractorsTest {
     var stream = getClass().getResourceAsStream("/pricing/" + fixture);
     assertNotNull(stream, "fixture missing: " + fixture);
     String body = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-    return new FetchedPage("https://example.test/", 200, body,
-        Collections.emptyMap(), currency, locale);
+    return new FetchedPage(
+        "https://example.test/", 200, body, Collections.emptyMap(), currency, locale);
   }
 
   @Test
@@ -77,10 +77,10 @@ class PriceExtractorsTest {
 
   @Test
   void autoExtractor_fallsBackToSweep() {
-    String body = "<html><body><h2>Тариф Premium</h2>"
-        + "<div>Только $12.99 в месяц</div></body></html>";
-    FetchedPage page = new FetchedPage("https://example.test/", 200, body,
-        Collections.emptyMap(), null, "en");
+    String body =
+        "<html><body><h2>Тариф Premium</h2>" + "<div>Только $12.99 в месяц</div></body></html>";
+    FetchedPage page =
+        new FetchedPage("https://example.test/", 200, body, Collections.emptyMap(), null, "en");
     Optional<ParsedPrice> parsed = auto.extract(page, null);
     assertTrue(parsed.isPresent(), "sweep should catch \"$12.99\"");
     assertEquals(0, new BigDecimal("12.99").compareTo(parsed.get().price()));
@@ -90,16 +90,23 @@ class PriceExtractorsTest {
   @Test
   void numberParser_handlesLocaleQuirks() {
     // Space thousands separator + comma decimal (French / Russian).
-    assertEquals(0, new BigDecimal("1990.00").compareTo(
-        PriceNumberParser.parseNumber("1 990,00 ₸").orElseThrow()));
+    assertEquals(
+        0,
+        new BigDecimal("1990.00")
+            .compareTo(PriceNumberParser.parseNumber("1 990,00 ₸").orElseThrow()));
     // Dot thousands separator + comma decimal (German).
-    assertEquals(0, new BigDecimal("1999.00").compareTo(
-        PriceNumberParser.parseNumber("1.999,00 EUR").orElseThrow()));
+    assertEquals(
+        0,
+        new BigDecimal("1999.00")
+            .compareTo(PriceNumberParser.parseNumber("1.999,00 EUR").orElseThrow()));
     // Anglo default.
-    assertEquals(0, new BigDecimal("1,299.50".replace(",", "")).compareTo(
-        PriceNumberParser.parseNumber("$1,299.50").orElseThrow()));
+    assertEquals(
+        0,
+        new BigDecimal("1,299.50".replace(",", ""))
+            .compareTo(PriceNumberParser.parseNumber("$1,299.50").orElseThrow()));
     // No fraction, plain integer with NBSP thousands.
-    assertEquals(0, new BigDecimal("2500").compareTo(
-        PriceNumberParser.parseNumber("2 500 сом").orElseThrow()));
+    assertEquals(
+        0,
+        new BigDecimal("2500").compareTo(PriceNumberParser.parseNumber("2 500 сом").orElseThrow()));
   }
 }

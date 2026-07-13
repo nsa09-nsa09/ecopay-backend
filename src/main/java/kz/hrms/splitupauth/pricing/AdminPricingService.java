@@ -1,6 +1,5 @@
 package kz.hrms.splitupauth.pricing;
 
-import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import java.time.LocalDateTime;
 import java.util.List;
 import kz.hrms.splitupauth.dto.CreatePriceWatchProviderRequest;
@@ -12,9 +11,9 @@ import kz.hrms.splitupauth.dto.TestPriceExtractionResponse;
 import kz.hrms.splitupauth.dto.UpdatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.entity.PriceChange;
 import kz.hrms.splitupauth.entity.PriceExtractorType;
-import kz.hrms.splitupauth.entity.PriceSnapshot;
 import kz.hrms.splitupauth.entity.PriceWatchProvider;
 import kz.hrms.splitupauth.entity.PriceWatchStatus;
+import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.PriceChangeRepository;
 import kz.hrms.splitupauth.repository.PriceSnapshotRepository;
 import kz.hrms.splitupauth.repository.PriceWatchProviderRepository;
@@ -27,9 +26,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Admin-facing facade for the Price Watch module: CRUD on providers, on-demand "check now",
- * history & change feed reads. Keeps the controller thin — all validation and mapping happens
- * here.
+ * Admin-facing facade for the Price Watch module: CRUD on providers, on-demand "check now", history
+ * & change feed reads. Keeps the controller thin — all validation and mapping happens here.
  */
 @Slf4j
 @Service
@@ -78,8 +76,8 @@ public class AdminPricingService {
     p.setNextCheckAt(LocalDateTime.now());
     if (req.getInitialPrice() != null) {
       p.setLastPrice(req.getInitialPrice());
-      p.setLastCurrency(req.getInitialCurrency() == null
-          ? p.getExpectedCurrency() : req.getInitialCurrency());
+      p.setLastCurrency(
+          req.getInitialCurrency() == null ? p.getExpectedCurrency() : req.getInitialCurrency());
     }
     return mapper.toDto(providerRepository.save(p));
   }
@@ -119,8 +117,10 @@ public class AdminPricingService {
               .provider(p)
               .oldPrice(p.getLastPrice())
               .newPrice(req.getManualPrice())
-              .currency(req.getManualCurrency() == null
-                  ? p.getExpectedCurrency() : req.getManualCurrency())
+              .currency(
+                  req.getManualCurrency() == null
+                      ? p.getExpectedCurrency()
+                      : req.getManualCurrency())
               .build();
       p.setLastPrice(req.getManualPrice());
       if (req.getManualCurrency() != null) p.setLastCurrency(req.getManualCurrency());
@@ -158,9 +158,9 @@ public class AdminPricingService {
   }
 
   /**
-   * Fire-and-forget check — kept for the scheduler seam and any background caller. Runs on
-   * Spring's default async executor. The admin "check now" endpoint uses {@link #checkNow} instead
-   * so it can hand back the fresh row.
+   * Fire-and-forget check — kept for the scheduler seam and any background caller. Runs on Spring's
+   * default async executor. The admin "check now" endpoint uses {@link #checkNow} instead so it can
+   * hand back the fresh row.
    */
   @Async
   public void triggerCheck(Long id) {
@@ -175,8 +175,11 @@ public class AdminPricingService {
   public List<PriceSnapshotDto> history(Long id, int limit) {
     PriceWatchProvider p = loadProvider(id);
     int cap = Math.max(1, Math.min(500, limit));
-    return snapshotRepository.findByProviderOrderByCapturedAtDesc(p, PageRequest.of(0, cap))
-        .stream().map(mapper::toDto).toList();
+    return snapshotRepository
+        .findByProviderOrderByCapturedAtDesc(p, PageRequest.of(0, cap))
+        .stream()
+        .map(mapper::toDto)
+        .toList();
   }
 
   @Transactional(readOnly = true)
@@ -190,14 +193,17 @@ public class AdminPricingService {
 
   @Transactional
   public PriceChangeDto acknowledgeChange(Long id) {
-    PriceChange c = changeRepository.findById(id)
-        .orElseThrow(() -> new ResourceNotFoundException("change not found: " + id));
+    PriceChange c =
+        changeRepository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("change not found: " + id));
     c.setAcknowledged(true);
     return mapper.toDto(changeRepository.save(c));
   }
 
   private PriceWatchProvider loadProvider(Long id) {
-    return providerRepository.findById(id)
+    return providerRepository
+        .findById(id)
         .orElseThrow(() -> new ResourceNotFoundException("provider not found: " + id));
   }
 }

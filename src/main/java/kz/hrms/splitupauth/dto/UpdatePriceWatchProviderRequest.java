@@ -36,8 +36,7 @@ public class UpdatePriceWatchProviderRequest {
   private JsonNode extractorConfig;
   private Boolean requiresJs;
 
-  @Positive
-  private Integer checkIntervalMinutes;
+  @Positive private Integer checkIntervalMinutes;
 
   private Boolean active;
 

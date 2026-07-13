@@ -54,7 +54,8 @@ public class AdminFinanceService {
     PaymentTransactionStatus status = parseTxStatus(statusRaw);
 
     Pageable pageable =
-        PageRequest.of(Math.max(0, page), clampSize(size), Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest.of(
+            Math.max(0, page), clampSize(size), Sort.by(Sort.Direction.DESC, "createdAt"));
 
     Specification<PaymentTransaction> spec =
         (root, query, cb) -> {
@@ -64,7 +65,9 @@ public class AdminFinanceService {
           if (dateFrom != null)
             predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), dateFrom));
           if (dateTo != null) predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), dateTo));
-          return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
+          return predicates.isEmpty()
+              ? cb.conjunction()
+              : cb.and(predicates.toArray(new Predicate[0]));
         };
 
     Page<PaymentTransaction> result = paymentTransactionRepository.findAll(spec, pageable);
@@ -78,7 +81,8 @@ public class AdminFinanceService {
     RefundStatus status = parseRefundStatus(statusRaw);
 
     Pageable pageable =
-        PageRequest.of(Math.max(0, page), clampSize(size), Sort.by(Sort.Direction.DESC, "createdAt"));
+        PageRequest.of(
+            Math.max(0, page), clampSize(size), Sort.by(Sort.Direction.DESC, "createdAt"));
 
     Specification<RefundTransaction> spec =
         (root, query, cb) -> {
@@ -87,7 +91,9 @@ public class AdminFinanceService {
           if (dateFrom != null)
             predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), dateFrom));
           if (dateTo != null) predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), dateTo));
-          return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
+          return predicates.isEmpty()
+              ? cb.conjunction()
+              : cb.and(predicates.toArray(new Predicate[0]));
         };
 
     Page<RefundTransaction> result = refundTransactionRepository.findAll(spec, pageable);

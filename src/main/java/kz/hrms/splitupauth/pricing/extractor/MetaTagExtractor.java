@@ -18,21 +18,21 @@ import org.springframework.stereotype.Component;
 public class MetaTagExtractor implements PriceExtractor {
 
   private static final String[] PRICE_ATTRS = {
-      "meta[itemprop=price]",
-      "meta[property=product:price:amount]",
-      "meta[property=og:price:amount]",
-      "meta[property=og:product:price:amount]",
-      "meta[name=twitter:data1]",
-      "meta[name=price]",
+    "meta[itemprop=price]",
+    "meta[property=product:price:amount]",
+    "meta[property=og:price:amount]",
+    "meta[property=og:product:price:amount]",
+    "meta[name=twitter:data1]",
+    "meta[name=price]",
   };
 
   private static final String[] CURRENCY_ATTRS = {
-      "meta[itemprop=priceCurrency]",
-      "meta[property=product:price:currency]",
-      "meta[property=og:price:currency]",
-      "meta[property=og:product:price:currency]",
-      "meta[name=twitter:data2]",
-      "meta[name=currency]",
+    "meta[itemprop=priceCurrency]",
+    "meta[property=product:price:currency]",
+    "meta[property=og:price:currency]",
+    "meta[property=og:product:price:currency]",
+    "meta[name=twitter:data2]",
+    "meta[name=currency]",
   };
 
   @Override
@@ -44,8 +44,8 @@ public class MetaTagExtractor implements PriceExtractor {
     if (num.isEmpty()) return Optional.empty();
     String currency = firstContent(doc, CURRENCY_ATTRS);
     if (currency == null && page.expectedCurrency() != null) currency = page.expectedCurrency();
-    return Optional.of(new ParsedPrice(num.get(), currency == null ? null : currency.toUpperCase(),
-        "meta"));
+    return Optional.of(
+        new ParsedPrice(num.get(), currency == null ? null : currency.toUpperCase(), "meta"));
   }
 
   private static String firstContent(Document doc, String[] selectors) {

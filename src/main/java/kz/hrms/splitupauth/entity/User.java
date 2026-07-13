@@ -54,7 +54,7 @@ public class User {
 
   @Column(nullable = false)
   @Builder.Default
-  private Integer reputation = 0;
+  private Integer reputation = 100;
 
   @Column(name = "email_verified", nullable = false)
   @Builder.Default
@@ -66,6 +66,13 @@ public class User {
 
   @Column(name = "public_id", nullable = false, unique = true, length = 16)
   private String publicId;
+
+  /**
+   * Human-readable URL handle rendered at {@code /u/{slug}}. Nullable so legacy rows and the seed
+   * inserts still validate; the service layer assigns a slug on registration and never removes it.
+   */
+  @Column(unique = true, length = 30)
+  private String slug;
 
   @Column(name = "deleted_at")
   private LocalDateTime deletedAt;
@@ -110,7 +117,7 @@ public class User {
     }
 
     if (reputation == null) {
-      reputation = 0;
+      reputation = 100;
     }
 
     if (emailVerified == null) {

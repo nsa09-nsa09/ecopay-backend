@@ -13,28 +13,28 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Computes a user's activity-based reputation score and tier.
+ * Computes a user's reputation as a "trust" score.
  *
- * <p>The score (0-100, persisted on {@link User#getReputation()}) is a composite of three signals:
+ * <p>Everyone starts at {@value #BASELINE_SCORE}. The score can only decrease, from two signals:
  *
  * <ul>
- *   <li><b>Rating</b> — average review rating, weighted up to {@value #RATING_MAX} points.
- *   <li><b>Activity</b> — successfully completed rooms (as owner or active member), {@value
- *       #POINTS_PER_COMPLETED_ROOM} pts each up to {@value #ACTIVITY_MAX}.
- *   <li><b>Penalty</b> — confirmed owner-fault violations, {@value #PENALTY_PER_VIOLATION} pts
- *       each.
+ *   <li><b>Rating penalty</b> — proportional to how far the average review rating is from a perfect
+ *       5★. A user with all 5★ reviews loses 0 points; all 1★ costs {@value
+ *       #RATING_PENALTY_WEIGHT}.
+ *   <li><b>Violation penalty</b> — {@value #VIOLATION_PENALTY} points per confirmed owner-fault
+ *       violation (disputes ruled against the owner).
  * </ul>
  *
- * <p>The {@link ReputationLevel} tier is always derived from the score (never stored separately).
+ * <p>Completed room counts remain a separate informational metric on the profile — they are not
+ * part of the trust score.
  */
 @Service
 @RequiredArgsConstructor
 public class ReputationService {
 
-  static final int RATING_MAX = 50;
-  static final int ACTIVITY_MAX = 50;
-  static final int POINTS_PER_COMPLETED_ROOM = 10;
-  static final int PENALTY_PER_VIOLATION = 15;
+  static final int BASELINE_SCORE = 100;
+  static final int RATING_PENALTY_WEIGHT = 50;
+  static final int VIOLATION_PENALTY = 20;
 
   private final ReviewRepository reviewRepository;
   private final RoomRepository roomRepository;
@@ -64,23 +64,24 @@ public class ReputationService {
   /** Pure computation of the 0-100 composite score (does not persist). */
   public int computeScore(User user) {
     var reviews = reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user);
-    double ratingScore =
-        reviews.isEmpty()
-            ? 0.0
-            : (reviews.stream().mapToInt(r -> r.getRating()).average().orElse(0.0) / 5.0)
-                * RATING_MAX;
-
-    long completedRooms = completedRoomsCount(user);
-    double activityScore = Math.min(completedRooms * POINTS_PER_COMPLETED_ROOM, ACTIVITY_MAX);
+    int ratingPenalty;
+    if (reviews.isEmpty()) {
+      ratingPenalty = 0;
+    } else {
+      double avg = reviews.stream().mapToInt(r -> r.getRating()).average().orElse(0.0);
+      // Guard against out-of-range data before turning it into a penalty.
+      double clampedAvg = Math.max(1.0, Math.min(5.0, avg));
+      ratingPenalty = (int) Math.round(((5.0 - clampedAvg) / 4.0) * RATING_PENALTY_WEIGHT);
+    }
 
     long violations = disputeRepository.countConfirmedViolationsAgainstOwner(user);
-    double penalty = violations * PENALTY_PER_VIOLATION;
+    long violationPenalty = violations * VIOLATION_PENALTY;
 
-    int score = (int) Math.round(ratingScore + activityScore - penalty);
+    int score = (int) (BASELINE_SCORE - ratingPenalty - violationPenalty);
     return Math.max(0, Math.min(100, score));
   }
 
-  /** Derive the tier for a stored score. */
+  /** Derive the band for a stored score. */
   public ReputationLevel levelOf(Integer score) {
     return ReputationLevel.fromScore(score);
   }

@@ -5,8 +5,8 @@ import java.util.Map;
 /**
  * Immutable snapshot of one HTTP fetch: the requested URL, the body, HTTP status and select
  * response headers (ETag / Last-Modified so callers can send conditional requests on the next
- * tick). Currency and locale are copied from the owning provider so extractors have a hint when
- * the page itself doesn't advertise one.
+ * tick). Currency and locale are copied from the owning provider so extractors have a hint when the
+ * page itself doesn't advertise one.
  */
 public record FetchedPage(
     String url,

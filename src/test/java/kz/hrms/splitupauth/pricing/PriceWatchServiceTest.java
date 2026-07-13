@@ -37,9 +37,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * Drives {@link PriceWatchService} through a stubbed fetcher: no HTTP, no DB. Verifies that a
- * price move is recorded as a {@link PriceChange} row and that N consecutive fetch failures flip
- * the provider off.
+ * Drives {@link PriceWatchService} through a stubbed fetcher: no HTTP, no DB. Verifies that a price
+ * move is recorded as a {@link PriceChange} row and that N consecutive fetch failures flip the
+ * provider off.
  */
 class PriceWatchServiceTest {
 
@@ -65,25 +65,29 @@ class PriceWatchServiceTest {
     RegexExtractor regex = new RegexExtractor();
     AutoExtractor auto = new AutoExtractor(jsonLd, meta, css, regex);
 
-    service = new PriceWatchService(providerRepo, snapshotRepo, changeRepo, fetcher, jsonLd, meta,
-        css, regex, auto);
+    service =
+        new PriceWatchService(
+            providerRepo, snapshotRepo, changeRepo, fetcher, jsonLd, meta, css, regex, auto);
     ReflectionTestUtils.setField(service, "failureThreshold", 3);
     ReflectionTestUtils.setField(service, "defaultIntervalMinutes", 720);
 
-    when(providerRepo.save(any(PriceWatchProvider.class)))
-        .thenAnswer(inv -> inv.getArgument(0));
-    when(snapshotRepo.save(any(PriceSnapshot.class))).thenAnswer(inv -> {
-      PriceSnapshot s = inv.getArgument(0);
-      s.setId((long) (savedSnapshots.size() + 1));
-      savedSnapshots.add(s);
-      return s;
-    });
-    when(changeRepo.save(any(PriceChange.class))).thenAnswer(inv -> {
-      PriceChange c = inv.getArgument(0);
-      c.setId((long) (savedChanges.size() + 1));
-      savedChanges.add(c);
-      return c;
-    });
+    when(providerRepo.save(any(PriceWatchProvider.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(snapshotRepo.save(any(PriceSnapshot.class)))
+        .thenAnswer(
+            inv -> {
+              PriceSnapshot s = inv.getArgument(0);
+              s.setId((long) (savedSnapshots.size() + 1));
+              savedSnapshots.add(s);
+              return s;
+            });
+    when(changeRepo.save(any(PriceChange.class)))
+        .thenAnswer(
+            inv -> {
+              PriceChange c = inv.getArgument(0);
+              c.setId((long) (savedChanges.size() + 1));
+              savedChanges.add(c);
+              return c;
+            });
   }
 
   private PriceWatchProvider newProvider() {
@@ -103,8 +107,7 @@ class PriceWatchServiceTest {
 
   private FetchedPage pageWithPrice(String priceLine) {
     String body = "<html><body>" + priceLine + "</body></html>";
-    return new FetchedPage("https://example.test/", 200, body,
-        Collections.emptyMap(), null, "en");
+    return new FetchedPage("https://example.test/", 200, body, Collections.emptyMap(), null, "en");
   }
 
   @Test
@@ -154,9 +157,11 @@ class PriceWatchServiceTest {
 
     service.check(p);
 
-    assertEquals(0, savedChanges.size(),
-        "identical price observation must not produce a change row");
-    assertEquals(1, savedSnapshots.size(),
+    assertEquals(
+        0, savedChanges.size(), "identical price observation must not produce a change row");
+    assertEquals(
+        1,
+        savedSnapshots.size(),
         "snapshot must still be recorded even when the price is unchanged");
   }
 
@@ -174,8 +179,8 @@ class PriceWatchServiceTest {
 
     assertEquals(3, p.getConsecutiveFailures());
     assertEquals(PriceWatchStatus.FAILING, p.getStatus());
-    assertFalse(p.getActive(),
-        "provider must be auto-deactivated once the failure threshold is reached");
+    assertFalse(
+        p.getActive(), "provider must be auto-deactivated once the failure threshold is reached");
 
     // Three FETCH_FAILED snapshots persisted.
     assertEquals(3, savedSnapshots.size());
@@ -208,20 +213,22 @@ class PriceWatchServiceTest {
 
     verify(fetcher, times(0)).fetch(any(), any(), any());
     assertEquals(PriceWatchStatus.PENDING, out.getStatus());
-    assertNotNull(out.getLastCheckedAt(),
+    assertNotNull(
+        out.getLastCheckedAt(),
         "even manual providers get their lastCheckedAt bumped so admin sees activity");
   }
 
   @Test
   void blockedOutcome_setsBlockedStatus_withoutIncrementingFailures() {
     PriceWatchProvider p = newProvider();
-    when(fetcher.fetch(any(), any(), any()))
-        .thenReturn(FetchResult.blocked(403, "http 403"));
+    when(fetcher.fetch(any(), any(), any())).thenReturn(FetchResult.blocked(403, "http 403"));
 
     PriceWatchProvider out = service.check(p);
 
     assertEquals(PriceWatchStatus.BLOCKED, out.getStatus());
-    assertEquals(0, out.getConsecutiveFailures(),
+    assertEquals(
+        0,
+        out.getConsecutiveFailures(),
         "BLOCKED means the site turned us away; it is not a permanent failure signal");
     assertTrue(out.getActive(), "blocked providers stay enabled so admin can flip to MANUAL");
     assertEquals(1, savedSnapshots.size());
@@ -254,7 +261,8 @@ class PriceWatchServiceTest {
     PriceWatchProvider out = service.check(p);
 
     assertNotNull(out.getNextCheckAt());
-    assertTrue(out.getNextCheckAt().isAfter(before),
+    assertTrue(
+        out.getNextCheckAt().isAfter(before),
         "next check must be scheduled after the current time");
   }
 }

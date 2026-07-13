@@ -11,8 +11,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 public interface RefundTransactionRepository
-    extends JpaRepository<RefundTransaction, Long>,
-        JpaSpecificationExecutor<RefundTransaction> {
+    extends JpaRepository<RefundTransaction, Long>, JpaSpecificationExecutor<RefundTransaction> {
 
   Optional<RefundTransaction> findByIdempotencyKey(String idempotencyKey);
 

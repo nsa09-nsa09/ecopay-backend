@@ -11,15 +11,15 @@ import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 /**
- * Reads a price from the DOM element pointed to by a CSS selector stored in the extractor
- * config. Config shape (all optional except {@code selector}):
+ * Reads a price from the DOM element pointed to by a CSS selector stored in the extractor config.
+ * Config shape (all optional except {@code selector}):
  *
  * <pre>{@code
  * { "selector": ".pricing-card__price", "attr": "data-price", "currency": "USD" }
  * }</pre>
  *
- * When {@code attr} is set, we read that HTML attribute instead of the element text — that is
- * how many pricing widgets carry the machine-readable number.
+ * When {@code attr} is set, we read that HTML attribute instead of the element text — that is how
+ * many pricing widgets carry the machine-readable number.
  */
 @Component
 public class CssSelectorExtractor implements PriceExtractor {
@@ -52,7 +52,8 @@ public class CssSelectorExtractor implements PriceExtractor {
     if (currencyHint == null) currencyHint = page.expectedCurrency();
 
     String detected = PriceNumberParser.guessCurrency(raw).orElse(currencyHint);
-    return Optional.of(new ParsedPrice(num.get(),
-        detected == null ? null : detected.toUpperCase(), "css:" + selector));
+    return Optional.of(
+        new ParsedPrice(
+            num.get(), detected == null ? null : detected.toUpperCase(), "css:" + selector));
   }
 }

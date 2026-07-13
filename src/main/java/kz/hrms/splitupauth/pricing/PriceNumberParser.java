@@ -24,25 +24,27 @@ public final class PriceNumberParser {
   private static final Map<String, String> SYMBOL_TO_ISO = buildSymbolTable();
 
   /** Common ISO codes we recognise inline. */
-  private static final Pattern ISO_CODE = Pattern.compile(
-      "\\b(USD|EUR|RUB|KZT|TJS|UZS|KGS|GBP|CNY|JPY|TRY|CAD|AUD|CHF|SEK|NOK|DKK|BRL|INR|PLN|AED)\\b",
-      Pattern.CASE_INSENSITIVE);
+  private static final Pattern ISO_CODE =
+      Pattern.compile(
+          "\\b(USD|EUR|RUB|KZT|TJS|UZS|KGS|GBP|CNY|JPY|TRY|CAD|AUD|CHF|SEK|NOK|DKK|BRL|INR|PLN|AED)\\b",
+          Pattern.CASE_INSENSITIVE);
 
   /**
-   * Runs of "digits, spaces, dots, commas" plus optional trailing fractional. We anchor on at
-   * least one digit so short "1,2" doesn't match year fragments etc.
+   * Runs of "digits, spaces, dots, commas" plus optional trailing fractional. We anchor on at least
+   * one digit so short "1,2" doesn't match year fragments etc.
    */
   private static final Pattern NUMBER = Pattern.compile("\\d[\\d\\u00A0 .,'’]*");
 
   public static Optional<BigDecimal> parseNumber(String raw) {
     if (raw == null) return Optional.empty();
     // Strip zero-width, NBSP-like and thin spaces first.
-    String cleaned = raw.replace(' ', ' ')
-        .replace(' ', ' ')
-        .replace(' ', ' ')
-        .replace('\'', ' ')
-        .replace('’', ' ')
-        .trim();
+    String cleaned =
+        raw.replace(' ', ' ')
+            .replace(' ', ' ')
+            .replace(' ', ' ')
+            .replace('\'', ' ')
+            .replace('’', ' ')
+            .trim();
     Matcher m = NUMBER.matcher(cleaned);
     if (!m.find()) return Optional.empty();
     String hit = m.group().trim();
@@ -65,7 +67,8 @@ public final class PriceNumberParser {
       int decIdx = Math.max(lastComma, lastDot);
       char decCh = s.charAt(decIdx);
       String tail = s.substring(decIdx + 1);
-      boolean tailIsFraction = !tail.isEmpty() && tail.length() <= 2 && tail.chars().allMatch(Character::isDigit);
+      boolean tailIsFraction =
+          !tail.isEmpty() && tail.length() <= 2 && tail.chars().allMatch(Character::isDigit);
       // Also treat "12,50" (2-digit tail) or "12.5" (1-digit) as fraction.
       // If tail is 3 digits AND the other separator is present, this is a thousands group.
       if (!tailIsFraction) {
@@ -107,8 +110,9 @@ public final class PriceNumberParser {
   public static Optional<ParsedPrice> parse(String context, String hintCurrency, String source) {
     Optional<BigDecimal> num = parseNumber(context);
     if (num.isEmpty()) return Optional.empty();
-    String currency = guessCurrency(context).orElse(
-        hintCurrency == null ? null : hintCurrency.toUpperCase(Locale.ROOT));
+    String currency =
+        guessCurrency(context)
+            .orElse(hintCurrency == null ? null : hintCurrency.toUpperCase(Locale.ROOT));
     return Optional.of(new ParsedPrice(num.get(), currency, source));
   }
 

@@ -24,8 +24,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Admin endpoints for the Price Watch module. Inherits ADMIN authority from the
- * {@code /api/v1/admin/**} matcher in {@code SecurityConfig}; no per-method annotation needed.
+ * Admin endpoints for the Price Watch module. Inherits ADMIN authority from the {@code
+ * /api/v1/admin/**} matcher in {@code SecurityConfig}; no per-method annotation needed.
  */
 @RestController
 @RequestMapping("/api/v1/admin/pricing")
@@ -42,8 +42,7 @@ public class AdminPricingController {
   @PostMapping("/providers")
   public ResponseEntity<PriceWatchProviderDto> createProvider(
       @Valid @RequestBody CreatePriceWatchProviderRequest req) {
-    return ResponseEntity.status(HttpStatus.CREATED)
-        .body(adminPricingService.createProvider(req));
+    return ResponseEntity.status(HttpStatus.CREATED).body(adminPricingService.createProvider(req));
   }
 
   @GetMapping("/providers/{id}")
@@ -65,9 +64,9 @@ public class AdminPricingController {
 
   /**
    * Synchronous "check now" — runs one fetch/extract cycle and returns the fresh provider row so
-   * the admin table can render the new price/status immediately. Bounded by
-   * {@code app.pricing.timeout-seconds}. The old async firehose is still available via
-   * {@link AdminPricingService#triggerCheck} for the scheduler.
+   * the admin table can render the new price/status immediately. Bounded by {@code
+   * app.pricing.timeout-seconds}. The old async firehose is still available via {@link
+   * AdminPricingService#triggerCheck} for the scheduler.
    */
   @PostMapping("/providers/{id}/check")
   public ResponseEntity<PriceWatchProviderDto> checkProvider(@PathVariable Long id) {

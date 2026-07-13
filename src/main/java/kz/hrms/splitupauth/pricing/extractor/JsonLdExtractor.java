@@ -15,9 +15,9 @@ import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 /**
- * Reads schema.org JSON-LD blocks — the most robust price signal when a site publishes it,
- * because it is what Google indexes. Walks every {@code <script type="application/ld+json">}
- * block and looks for {@code offers.price} (or nested {@code offers[].price}).
+ * Reads schema.org JSON-LD blocks — the most robust price signal when a site publishes it, because
+ * it is what Google indexes. Walks every {@code <script type="application/ld+json">} block and
+ * looks for {@code offers.price} (or nested {@code offers[].price}).
  */
 @Slf4j
 @Component
@@ -88,8 +88,10 @@ public class JsonLdExtractor implements PriceExtractor {
     var fields = node.fields();
     while (fields.hasNext()) {
       var e = fields.next();
-      if ("price".equals(e.getKey()) || "priceCurrency".equals(e.getKey())
-          || "priceSpecification".equals(e.getKey()) || "offers".equals(e.getKey())) {
+      if ("price".equals(e.getKey())
+          || "priceCurrency".equals(e.getKey())
+          || "priceSpecification".equals(e.getKey())
+          || "offers".equals(e.getKey())) {
         continue;
       }
       Optional<ParsedPrice> hit = walk(e.getValue(), hintCurrency);

@@ -37,6 +37,7 @@ class UserServiceTest {
   @Mock private TokenRevocationService tokenRevocationService;
   @Mock private AvatarStorageService avatarStorageService;
   @Mock private ReputationService reputationService;
+  @Mock private SlugService slugService;
 
   private UserService service;
 
@@ -50,9 +51,10 @@ class UserServiceTest {
             serviceReviewRepository,
             tokenRevocationService,
             avatarStorageService,
-            reputationService);
+            reputationService,
+            slugService);
     // Real impl never returns null; the mock would, so give it a sane default.
-    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.NEWCOMER);
+    lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.EXCELLENT);
     lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);
   }
 

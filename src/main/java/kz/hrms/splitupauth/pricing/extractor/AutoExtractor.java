@@ -13,10 +13,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * "Just get me a number" strategy that tries every other extractor in a sensible order and, if
- * none succeed, sweeps the raw body for a currency-symbol-adjacent number. The sweep is only
- * meant to bootstrap a provider — the admin is expected to promote the provider to a specific
- * strategy once they know which one lands cleanly.
+ * "Just get me a number" strategy that tries every other extractor in a sensible order and, if none
+ * succeed, sweeps the raw body for a currency-symbol-adjacent number. The sweep is only meant to
+ * bootstrap a provider — the admin is expected to promote the provider to a specific strategy once
+ * they know which one lands cleanly.
  */
 @Component
 @RequiredArgsConstructor
@@ -28,8 +28,8 @@ public class AutoExtractor implements PriceExtractor {
   private final RegexExtractor regex;
 
   /**
-   * Currency-adjacent number: a symbol/code within ~10 chars of a numeric run. We reuse the
-   * central parser for the final number normalisation.
+   * Currency-adjacent number: a symbol/code within ~10 chars of a numeric run. We reuse the central
+   * parser for the final number normalisation.
    */
   private static final Pattern SWEEP =
       Pattern.compile(
@@ -72,8 +72,8 @@ public class AutoExtractor implements PriceExtractor {
         BigDecimal value = num.get();
         if (value.signum() <= 0 || value.compareTo(new BigDecimal("1000000")) > 0) continue;
         String currency = PriceNumberParser.guessCurrency(context).orElse(expectedCurrency);
-        return Optional.of(new ParsedPrice(value,
-            currency == null ? null : currency.toUpperCase(), "auto:sweep"));
+        return Optional.of(
+            new ParsedPrice(value, currency == null ? null : currency.toUpperCase(), "auto:sweep"));
       }
     }
     return Optional.empty();

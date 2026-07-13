@@ -83,9 +83,9 @@ public class AuthController {
   }
 
   /**
-   * Refresh the access token. The refresh token is preferred from the httpOnly cookie (new
-   * client), but we still accept it in the request body so an older frontend that hasn't been
-   * redeployed yet keeps working.
+   * Refresh the access token. The refresh token is preferred from the httpOnly cookie (new client),
+   * but we still accept it in the request body so an older frontend that hasn't been redeployed yet
+   * keeps working.
    */
   @PostMapping("/refresh")
   public ResponseEntity<AuthResponse> refreshToken(
