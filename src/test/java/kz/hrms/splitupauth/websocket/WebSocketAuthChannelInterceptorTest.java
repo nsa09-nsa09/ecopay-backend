@@ -2,7 +2,6 @@ package kz.hrms.splitupauth.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -107,8 +106,7 @@ class WebSocketAuthChannelInterceptorTest {
     Room room = room(100L, owner);
     lenient().when(roomRepository.findById(100L)).thenReturn(Optional.of(room));
 
-    assertDoesNotThrow(
-        () -> interceptor.preSend(subscribe(owner, "/topic/rooms/100/chat"), null));
+    assertDoesNotThrow(() -> interceptor.preSend(subscribe(owner, "/topic/rooms/100/chat"), null));
   }
 
   @Test
@@ -118,14 +116,10 @@ class WebSocketAuthChannelInterceptorTest {
     Room room = room(100L, owner);
     lenient().when(roomRepository.findById(100L)).thenReturn(Optional.of(room));
     lenient()
-        .when(
-            roomMemberRepository.findByRoomAndUserAndStatusIn(
-                eq(room), eq(member), any()))
-        .thenReturn(
-            Optional.of(RoomMember.builder().status(MemberStatus.ACTIVE).build()));
+        .when(roomMemberRepository.findByRoomAndUserAndStatusIn(eq(room), eq(member), any()))
+        .thenReturn(Optional.of(RoomMember.builder().status(MemberStatus.ACTIVE).build()));
 
-    assertDoesNotThrow(
-        () -> interceptor.preSend(subscribe(member, "/topic/rooms/100/chat"), null));
+    assertDoesNotThrow(() -> interceptor.preSend(subscribe(member, "/topic/rooms/100/chat"), null));
   }
 
   @Test

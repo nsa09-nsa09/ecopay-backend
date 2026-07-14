@@ -41,8 +41,8 @@ class ReputationServiceTest {
   }
 
   /**
-   * Stub the two signals that feed computeScore under the trust model: reviews and confirmed
-   * violations. Completed rooms are informational only and no longer affect the score.
+   * Stub the two signals that feed computeScore under the smoothed trust model: reviews and
+   * confirmed violations.
    */
   private void stub(User u, int reviewStars, int reviewCount, long violations) {
     List<Review> reviews =
@@ -66,49 +66,64 @@ class ReputationServiceTest {
   }
 
   @Test
-  void perfectRatingKeepsScoreAtBaseline() {
+  void singleOneStarBarelyDentsScore() {
+    // (10*5 + 1)/11 = 4.6364 → (3.6364/4)*100 ≈ 90.909 → round 91 — one bad review only nudges
+    // the score down thanks to the prior, so the user stays in the EXCELLENT band (≥ 90).
     User u = user();
-    stub(u, 5, 4, 0); // avg 5 → 0 rating penalty
-    assertEquals(100, service.computeScore(u));
+    stub(u, 1, 1, 0);
+    assertEquals(91, service.computeScore(u));
     assertEquals(ReputationLevel.EXCELLENT, ReputationLevel.fromScore(service.computeScore(u)));
   }
 
   @Test
-  void averageThreeStarPenalizesTwentyFive() {
+  void singleFiveStarStaysAtBaseline() {
+    // (10*5 + 5)/11 = 5.0 → 100
     User u = user();
-    stub(u, 3, 4, 0); // (5 - 3)/4 * 50 = 25 penalty
-    assertEquals(75, service.computeScore(u));
-    assertEquals(ReputationLevel.GOOD, ReputationLevel.fromScore(service.computeScore(u)));
+    stub(u, 5, 1, 0);
+    assertEquals(100, service.computeScore(u));
   }
 
   @Test
-  void allOneStarCostsFullRatingWeight() {
+  void fiveOneStarsLandInFair() {
+    // (50 + 5)/15 = 3.6667 → (2.6667/4)*100 ≈ 66.667 → round 67
     User u = user();
-    stub(u, 1, 3, 0); // (5 - 1)/4 * 50 = 50 penalty
+    stub(u, 1, 5, 0);
+    assertEquals(67, service.computeScore(u));
+    assertEquals(ReputationLevel.FAIR, ReputationLevel.fromScore(service.computeScore(u)));
+  }
+
+  @Test
+  void tenOneStarsLandInFairMiddle() {
+    // (50 + 10)/20 = 3.0 → (2/4)*100 = 50
+    User u = user();
+    stub(u, 1, 10, 0);
     assertEquals(50, service.computeScore(u));
     assertEquals(ReputationLevel.FAIR, ReputationLevel.fromScore(service.computeScore(u)));
   }
 
   @Test
-  void oneViolationCompoundsRatingPenalty() {
+  void twentyOneStarsLandInLow() {
+    // (50 + 20)/30 = 2.3333 → (1.3333/4)*100 ≈ 33.333 → round 33
     User u = user();
-    stub(u, 1, 3, 1); // 50 - 20 = 30
-    assertEquals(30, service.computeScore(u));
+    stub(u, 1, 20, 0);
+    assertEquals(33, service.computeScore(u));
     assertEquals(ReputationLevel.LOW, ReputationLevel.fromScore(service.computeScore(u)));
   }
 
   @Test
-  void twoViolationsWithOneStarLandInCritical() {
+  void fiveStarsWithTwoViolationsFallToFair() {
+    // effAvg stays 5.0 (all 5★ + all-5★ prior) → rating 100, minus 2 * 20 = 40 → 60
     User u = user();
-    stub(u, 1, 3, 2); // 50 - 40 = 10
-    assertEquals(10, service.computeScore(u));
-    assertEquals(ReputationLevel.CRITICAL, ReputationLevel.fromScore(service.computeScore(u)));
+    stub(u, 5, 4, 2);
+    assertEquals(60, service.computeScore(u));
+    assertEquals(ReputationLevel.FAIR, ReputationLevel.fromScore(service.computeScore(u)));
   }
 
   @Test
-  void manyViolationsClampToZero() {
+  void veryLowRatingWithManyViolationsClampsToZero() {
+    // 20 * 1★ → 33, minus 5 * 20 = 100 penalty → -67, clamped to 0
     User u = user();
-    stub(u, 1, 3, 5); // 50 - 100 = -50 → clamped to 0
+    stub(u, 1, 20, 5);
     assertEquals(0, service.computeScore(u));
   }
 
@@ -116,24 +131,24 @@ class ReputationServiceTest {
   void recomputePersistsWhenScoreChanges() {
     User u = user();
     u.setReputation(100);
-    stub(u, 3, 4, 0); // → 75
+    stub(u, 1, 5, 0); // → 80: (50+5)/15 = 3.6667 → 66.67 → 67
 
     int result = service.recompute(u);
 
-    assertEquals(75, result);
-    assertEquals(75, u.getReputation());
+    assertEquals(67, result);
+    assertEquals(67, u.getReputation());
     verify(userRepository).save(u);
   }
 
   @Test
   void recomputeSkipsSaveWhenScoreUnchanged() {
     User u = user();
-    u.setReputation(75);
-    stub(u, 3, 4, 0); // recomputes to 75 — already current
+    u.setReputation(67);
+    stub(u, 1, 5, 0); // recomputes to 67 — already current
 
     int result = service.recompute(u);
 
-    assertEquals(75, result);
+    assertEquals(67, result);
     verify(userRepository, never()).save(any());
   }
 

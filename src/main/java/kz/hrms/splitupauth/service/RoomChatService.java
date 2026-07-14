@@ -46,7 +46,8 @@ public class RoomChatService {
 
   /** Newest-first page of a room's chat history, for the caller if they are a participant. */
   @Transactional(readOnly = true)
-  public PagedResponse<RoomChatMessageDto> history(User currentUser, Long roomId, int page, int size) {
+  public PagedResponse<RoomChatMessageDto> history(
+      User currentUser, Long roomId, int page, int size) {
     Room room = loadRoom(roomId);
     assertCanAccess(currentUser, room);
 
@@ -101,7 +102,12 @@ public class RoomChatService {
     User owner = room.getOwner();
     if (owner != null && owner.getId() != null && !owner.getId().equals(sender.getId())) {
       notificationService.notify(
-          owner, NotificationType.CHAT_MESSAGE, title, body, "/rooms/owner/" + room.getId(), metadata);
+          owner,
+          NotificationType.CHAT_MESSAGE,
+          title,
+          body,
+          "/rooms/owner/" + room.getId(),
+          metadata);
     }
 
     for (RoomMember member :

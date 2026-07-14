@@ -13,27 +13,35 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Computes a user's reputation as a "trust" score.
+ * Computes a user's reputation as a "trust" score using a Bayesian-smoothed rating.
  *
- * <p>Everyone starts at {@value #BASELINE_SCORE}. The score can only decrease, from two signals:
+ * <p>The score (0-100, persisted on {@link User#getReputation()}) is derived from two signals:
  *
  * <ul>
- *   <li><b>Rating penalty</b> — proportional to how far the average review rating is from a perfect
- *       5★. A user with all 5★ reviews loses 0 points; all 1★ costs {@value
- *       #RATING_PENALTY_WEIGHT}.
+ *   <li><b>Effective average rating</b> — a prior of {@value #PRIOR_WEIGHT} pseudo-reviews at
+ *       {@value #PRIOR_MEAN}★ is blended with the real reviews. This anchors new profiles at the
+ *       baseline and dampens the impact of a single low rating (Uber-style smoothing), so one 1★
+ *       review only nudges the score down instead of collapsing it.
  *   <li><b>Violation penalty</b> — {@value #VIOLATION_PENALTY} points per confirmed owner-fault
- *       violation (disputes ruled against the owner).
+ *       violation. This is a hard signal (disputes ruled against the owner) and applies on top of
+ *       the smoothed rating.
  * </ul>
  *
- * <p>Completed room counts remain a separate informational metric on the profile — they are not
- * part of the trust score.
+ * <p>Formally: {@code effAvg = (PRIOR_WEIGHT * PRIOR_MEAN + Σ rating) / (PRIOR_WEIGHT + n)}, then
+ * {@code ratingScore = (effAvg - 1) / 4 * 100} and finally {@code score = clamp(round(ratingScore)
+ * - violations * VIOLATION_PENALTY, 0, 100)}. The baseline {@link #BASELINE_SCORE} of 100 falls out
+ * naturally for {@code n = 0}.
+ *
+ * <p>Completed room counts are a separate informational metric on the profile — they are not part
+ * of the trust score.
  */
 @Service
 @RequiredArgsConstructor
 public class ReputationService {
 
   static final int BASELINE_SCORE = 100;
-  static final int RATING_PENALTY_WEIGHT = 50;
+  static final int PRIOR_WEIGHT = 10;
+  static final double PRIOR_MEAN = 5.0;
   static final int VIOLATION_PENALTY = 20;
 
   private final ReviewRepository reviewRepository;
@@ -64,21 +72,17 @@ public class ReputationService {
   /** Pure computation of the 0-100 composite score (does not persist). */
   public int computeScore(User user) {
     var reviews = reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user);
-    int ratingPenalty;
-    if (reviews.isEmpty()) {
-      ratingPenalty = 0;
-    } else {
-      double avg = reviews.stream().mapToInt(r -> r.getRating()).average().orElse(0.0);
-      // Guard against out-of-range data before turning it into a penalty.
-      double clampedAvg = Math.max(1.0, Math.min(5.0, avg));
-      ratingPenalty = (int) Math.round(((5.0 - clampedAvg) / 4.0) * RATING_PENALTY_WEIGHT);
-    }
+    int n = reviews.size();
+    int sum = reviews.stream().mapToInt(r -> r.getRating()).sum();
+
+    double effAvg = (PRIOR_WEIGHT * PRIOR_MEAN + sum) / (PRIOR_WEIGHT + n);
+    double ratingScore = ((effAvg - 1.0) / 4.0) * 100.0;
 
     long violations = disputeRepository.countConfirmedViolationsAgainstOwner(user);
     long violationPenalty = violations * VIOLATION_PENALTY;
 
-    int score = (int) (BASELINE_SCORE - ratingPenalty - violationPenalty);
-    return Math.max(0, Math.min(100, score));
+    int score = (int) Math.round(ratingScore) - (int) violationPenalty;
+    return Math.max(0, Math.min(BASELINE_SCORE, score));
   }
 
   /** Derive the band for a stored score. */

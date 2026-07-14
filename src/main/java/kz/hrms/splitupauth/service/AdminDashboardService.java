@@ -74,6 +74,16 @@ public class AdminDashboardService {
             PaymentTransactionStatus.SUCCESS,
             PaymentTransactionStatus.REFUNDED_PARTIAL,
             PaymentTransactionStatus.REFUNDED_FULL);
+    // Platform income = ECOpay commission on the same successful charges as totalRevenue,
+    // so platformRevenue ≤ totalRevenue by construction.
+    BigDecimal platformRevenue =
+        singleBigDecimal(
+            "SELECT COALESCE(SUM(t.paymentIntent.commissionAmount), 0) FROM PaymentTransaction t "
+                + "WHERE t.type = ?1 AND t.status IN (?2, ?3, ?4)",
+            PaymentTransactionType.CHARGE,
+            PaymentTransactionStatus.SUCCESS,
+            PaymentTransactionStatus.REFUNDED_PARTIAL,
+            PaymentTransactionStatus.REFUNDED_FULL);
     BigDecimal totalRefunds =
         singleBigDecimal(
             "SELECT COALESCE(SUM(r.amount), 0) FROM RefundTransaction r WHERE r.status = ?1",
@@ -175,6 +185,7 @@ public class AdminDashboardService {
         .completedRooms(completedRooms)
         .blockedRooms(blockedRooms)
         .totalRevenue(totalRevenue)
+        .platformRevenue(platformRevenue)
         .totalRefunds(totalRefunds)
         .openDisputes(openDisputes)
         .pendingModeration(pendingModeration)
@@ -222,6 +233,7 @@ public class AdminDashboardService {
     // bucket → [registrations, loginsTotal, uniqueLogins, visitors, pageViews, newRooms]
     Map<String, long[]> buckets = new HashMap<>();
     Map<String, BigDecimal> revenueBuckets = new HashMap<>();
+    Map<String, BigDecimal> commissionBuckets = new HashMap<>();
     Timestamp fromTs = Timestamp.valueOf(resolvedFrom);
     Timestamp toTs = Timestamp.valueOf(resolvedTo);
 
@@ -325,6 +337,30 @@ public class AdminDashboardService {
         fromTs,
         toTs);
 
+    // Platform commission (real ECOpay income) in the same window and buckets as revenue,
+    // using the same fx conversion so the two series are directly comparable in KZT.
+    String commissionSql =
+        "SELECT to_char(date_trunc(?, t.created_at), ?) AS bucket, "
+            + "COALESCE(SUM(pi.commission_amount * COALESCE(r.fx_rate_to_kzt, 1)), 0) AS commission "
+            + "FROM payment_transactions t "
+            + "JOIN payment_intents pi ON pi.id = t.payment_intent_id "
+            + "LEFT JOIN rooms r ON r.id = t.room_id "
+            + "WHERE t.type = 'CHARGE' AND t.status IN ('SUCCESS','REFUNDED_PARTIAL','REFUNDED_FULL') "
+            + "  AND t.created_at >= ? AND t.created_at < ? "
+            + "GROUP BY bucket ORDER BY bucket";
+    jdbc.query(
+        commissionSql,
+        rs -> {
+          String period = rs.getString(1);
+          BigDecimal commission = rs.getBigDecimal(2);
+          commissionBuckets.merge(
+              period, commission == null ? BigDecimal.ZERO : commission, BigDecimal::add);
+        },
+        unit,
+        sqlLabelPattern(unit),
+        fromTs,
+        toTs);
+
     List<DashboardMetricPointDto> series = new ArrayList<>();
     for (LocalDateTime cursor = truncate(resolvedFrom, unit);
         !cursor.isAfter(resolvedTo);
@@ -332,6 +368,7 @@ public class AdminDashboardService {
       String label = cursor.format(labelFormat);
       long[] cur = buckets.getOrDefault(label, new long[6]);
       BigDecimal revenue = revenueBuckets.getOrDefault(label, BigDecimal.ZERO);
+      BigDecimal commissionRevenue = commissionBuckets.getOrDefault(label, BigDecimal.ZERO);
       series.add(
           DashboardMetricPointDto.builder()
               .period(label)
@@ -342,6 +379,7 @@ public class AdminDashboardService {
               .pageViews(cur[4])
               .newRooms(cur[5])
               .revenue(revenue)
+              .commissionRevenue(commissionRevenue)
               .build());
     }
 

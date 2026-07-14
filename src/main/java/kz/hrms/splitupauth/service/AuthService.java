@@ -336,7 +336,8 @@ public class AuthService {
     }
 
     if (verificationToken.isExpired()) {
-      throw new VerificationCodeExpiredException("Verification code expired. Please request a new one.");
+      throw new VerificationCodeExpiredException(
+          "Verification code expired. Please request a new one.");
     }
 
     if (verificationToken.getAttempts() >= MAX_CODE_ATTEMPTS) {

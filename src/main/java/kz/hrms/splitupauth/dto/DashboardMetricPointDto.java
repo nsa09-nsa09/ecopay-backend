@@ -40,4 +40,10 @@ public class DashboardMetricPointDto {
    * window).
    */
   private BigDecimal revenue;
+
+  /**
+   * Platform commission revenue in KZT recognized in the bucket (SUM of commission on successful
+   * charges).
+   */
+  private BigDecimal commissionRevenue;
 }

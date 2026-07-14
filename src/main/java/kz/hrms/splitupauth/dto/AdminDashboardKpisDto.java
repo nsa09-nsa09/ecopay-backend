@@ -23,6 +23,13 @@ public class AdminDashboardKpisDto {
   private long completedRooms;
   private long blockedRooms;
   private BigDecimal totalRevenue;
+
+  /**
+   * Real platform income = ECOpay commissions from successfully captured charges (turnover minus
+   * owner payouts).
+   */
+  private BigDecimal platformRevenue;
+
   private BigDecimal totalRefunds;
   private long openDisputes;
   private long pendingModeration;
