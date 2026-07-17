@@ -42,9 +42,9 @@ CASCADE;
 
 INSERT INTO users (id, email, password, display_name, public_id, status, reputation, email_verified, created_at)
 VALUES
-    (1, 'askar@test.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Askar', 'pub_askar', 'ACTIVE', 10, TRUE, NOW()),
-    (2, 'maria@test.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Maria', 'pub_maria', 'ACTIVE', 5,  TRUE, NOW()),
-    (3, 'timur@test.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Timur', 'pub_timur', 'ACTIVE', 0,  TRUE, NOW());
+    (1, 'askar@test.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Askar', 'pub_askar', 'ACTIVE', 50, TRUE, NOW()),
+    (2, 'maria@test.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Maria', 'pub_maria', 'ACTIVE', 50, TRUE, NOW()),
+    (3, 'timur@test.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Timur', 'pub_timur', 'ACTIVE', 50, TRUE, NOW());
 
 -- =========================================================
 -- CATEGORIES

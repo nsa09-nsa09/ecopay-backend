@@ -17,7 +17,7 @@ public class CreateReviewRequest {
 
   @NotNull
   @Min(1)
-  @Max(5)
+  @Max(10)
   private Integer rating;
 
   @Size(max = 2000, message = "Text must be at most 2000 characters")

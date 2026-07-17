@@ -288,7 +288,7 @@ created_at, resolved_at
 ### Review Fields
 ```
 id, author_id, recipient_id, room_id,
-rating (1–5), text,
+rating (1–10), text,
 created_at, hidden_by_admin: boolean
 ```
 
@@ -298,7 +298,8 @@ created_at, hidden_by_admin: boolean
 - Admin can hide a review (logged)
 
 ### Reputation Score Inputs
-- Average rating from reviews
+- Average rating from reviews (10-point scale; stored ×10 as 0–100)
+- New user with no reviews → neutral default 5.0/10 (score 50)
 - Count of successfully completed periods
 - Count of confirmed disputes/complaints
 - Confirmed fraud/violations

@@ -79,7 +79,7 @@ public class AuthService {
             .displayName(request.getDisplayName())
             .status(UserStatus.ACTIVE)
             .role(Role.USER)
-            .reputation(100)
+            .reputation(User.DEFAULT_REPUTATION)
             .emailVerified(false)
             .termsAcceptedAt(LocalDateTime.now())
             .acceptedTermsVersion(termsVersion)

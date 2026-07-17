@@ -52,9 +52,16 @@ public class User {
   @Column(nullable = false)
   private UserStatus status;
 
+  /**
+   * Composite trust score, 0..100, rendered as X.X/10. Users with no reviews sit at the neutral
+   * {@link #DEFAULT_REPUTATION} (= 5.0/10); the score is recomputed from peer reviews by
+   * ReputationService.
+   */
+  public static final int DEFAULT_REPUTATION = 50;
+
   @Column(nullable = false)
   @Builder.Default
-  private Integer reputation = 100;
+  private Integer reputation = DEFAULT_REPUTATION;
 
   @Column(name = "email_verified", nullable = false)
   @Builder.Default
@@ -117,7 +124,7 @@ public class User {
     }
 
     if (reputation == null) {
-      reputation = 100;
+      reputation = DEFAULT_REPUTATION;
     }
 
     if (emailVerified == null) {

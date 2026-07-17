@@ -13,16 +13,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Computes a user's reputation as a "trust" score.
+ * Computes a user's reputation as a "trust" rating on a 10-point scale (stored ×10 as 0..100 so the
+ * UI can render one decimal, e.g. 74 → 7.4/10).
  *
- * <p>Everyone starts at {@value #BASELINE_SCORE}. The score can only decrease, from two signals:
+ * <p>The rating aggregates peer reviews left after a room completes:
  *
  * <ul>
- *   <li><b>Rating penalty</b> — proportional to how far the average review rating is from a perfect
- *       5★. A user with all 5★ reviews loses 0 points; all 1★ costs {@value
- *       #RATING_PENALTY_WEIGHT}.
+ *   <li><b>No reviews yet</b> — the user sits at the neutral {@link User#DEFAULT_REPUTATION} (=
+ *       5.0/10). This is a starting point, not an earned score.
+ *   <li><b>With reviews</b> — the score is the average review rating (1..10) × 10.
  *   <li><b>Violation penalty</b> — {@value #VIOLATION_PENALTY} points per confirmed owner-fault
- *       violation (disputes ruled against the owner).
+ *       violation (disputes ruled against the owner) are subtracted on top.
  * </ul>
  *
  * <p>Completed room counts remain a separate informational metric on the profile — they are not
@@ -32,8 +33,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ReputationService {
 
-  static final int BASELINE_SCORE = 100;
-  static final int RATING_PENALTY_WEIGHT = 50;
   static final int VIOLATION_PENALTY = 20;
 
   private final ReviewRepository reviewRepository;
@@ -64,20 +63,20 @@ public class ReputationService {
   /** Pure computation of the 0-100 composite score (does not persist). */
   public int computeScore(User user) {
     var reviews = reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user);
-    int ratingPenalty;
+    int base;
     if (reviews.isEmpty()) {
-      ratingPenalty = 0;
+      base = User.DEFAULT_REPUTATION;
     } else {
       double avg = reviews.stream().mapToInt(r -> r.getRating()).average().orElse(0.0);
-      // Guard against out-of-range data before turning it into a penalty.
-      double clampedAvg = Math.max(1.0, Math.min(5.0, avg));
-      ratingPenalty = (int) Math.round(((5.0 - clampedAvg) / 4.0) * RATING_PENALTY_WEIGHT);
+      // Guard against out-of-range data before scaling it into a score.
+      double clampedAvg = Math.max(1.0, Math.min(10.0, avg));
+      base = (int) Math.round(clampedAvg * 10.0);
     }
 
     long violations = disputeRepository.countConfirmedViolationsAgainstOwner(user);
     long violationPenalty = violations * VIOLATION_PENALTY;
 
-    int score = (int) (BASELINE_SCORE - ratingPenalty - violationPenalty);
+    int score = (int) (base - violationPenalty);
     return Math.max(0, Math.min(100, score));
   }
 

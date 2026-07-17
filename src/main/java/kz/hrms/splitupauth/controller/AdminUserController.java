@@ -176,7 +176,7 @@ public class AdminUserController {
             .phone(phone)
             .role(request.getRole())
             .status(UserStatus.ACTIVE)
-            .reputation(100)
+            .reputation(User.DEFAULT_REPUTATION)
             .emailVerified(true) // created by admin → bypass email verification
             .ownerVerified(false)
             .build();

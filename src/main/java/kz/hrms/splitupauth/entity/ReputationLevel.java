@@ -1,9 +1,10 @@
 package kz.hrms.splitupauth.entity;
 
 /**
- * Trust band derived from the composite reputation score (0-100). "Reputation" here means "how much
- * the platform trusts this user"; everyone starts at {@link #EXCELLENT} and only drops on bad
- * signals (poor reviews, confirmed violations).
+ * Trust band derived from the composite reputation score (0-100, i.e. the 10-point rating × 10).
+ * "Reputation" here means "how much the platform trusts this user"; a user with no reviews starts
+ * at the neutral {@link #FAIR} (score {@link User#DEFAULT_REPUTATION} = 5.0/10) and moves up or
+ * down as peer reviews arrive.
  *
  * <p>The band is NOT persisted — it is a pure function of {@link User#getReputation()} so the tier
  * and the underlying score can never drift apart. Thresholds are inclusive lower bounds.

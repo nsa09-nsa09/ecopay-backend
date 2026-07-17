@@ -579,7 +579,8 @@ public class RoomService {
 
   private Double roundRating(OwnerRatingProjection p) {
     if (p == null || p.getAvgRating() == null) {
-      return null;
+      // No reviews yet → the neutral starting rating (5.0/10), never null/0.
+      return (double) User.DEFAULT_REPUTATION / 10.0;
     }
     return Math.round(p.getAvgRating() * 10.0) / 10.0;
   }
