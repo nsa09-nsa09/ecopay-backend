@@ -50,7 +50,7 @@ VALUES
         'Askar',
         'pub_askar',
         'ACTIVE',
-        10,
+        50,
         TRUE,
         NOW()
     ),
@@ -60,7 +60,7 @@ VALUES
         'Maria',
         'pub_maria',
         'ACTIVE',
-        5,
+        50,
         TRUE,
         NOW()
     ),
@@ -70,7 +70,7 @@ VALUES
         'Timur',
         'pub_timur',
         'ACTIVE',
-        0,
+        50,
         TRUE,
         NOW()
     );

@@ -98,9 +98,10 @@ public class ReviewService {
             .findById(userId)
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
     var reviews = reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(user);
+    // No reviews yet → the neutral starting rating (5.0/10), never null/0.
     double avg =
         reviews.isEmpty()
-            ? 0.0
+            ? User.DEFAULT_REPUTATION / 10.0
             : reviews.stream().mapToInt(Review::getRating).average().orElse(0.0);
     return ReputationDto.builder()
         .userId(user.getId())
