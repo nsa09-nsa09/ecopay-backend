@@ -7,9 +7,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * Broadcasts a persisted {@link RoomChatMessageDto} to a room's chat topic. Subscription is gated
- * to the room's paid participants by {@link
- * WebSocketAuthChannelInterceptor#validateSubscription} via the {@code /topic/rooms/{id}/chat}
- * pattern.
+ * to the room's paid participants by {@link WebSocketAuthChannelInterceptor#validateSubscription}
+ * via the {@code /topic/rooms/{id}/chat} pattern.
  */
 @Service
 @RequiredArgsConstructor

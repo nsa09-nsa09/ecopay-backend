@@ -17,6 +17,12 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
   Optional<Review> findByAuthorAndRecipientAndRoom_Id(User author, User recipient, Long roomId);
 
+  /**
+   * Latest review the {@code author} left for {@code recipient} regardless of room; used to upsert
+   * the profile-level rating when {@code roomId} is not provided.
+   */
+  Optional<Review> findFirstByAuthorAndRecipientOrderByCreatedAtDesc(User author, User recipient);
+
   long countByRecipientAndHiddenByAdminFalse(User recipient);
 
   /** Batch-aggregate visible review stats for a set of recipients (avoids N+1 in listings). */

@@ -4,11 +4,9 @@ import java.util.List;
 import kz.hrms.splitupauth.dto.CreateReviewRequest;
 import kz.hrms.splitupauth.dto.ReputationDto;
 import kz.hrms.splitupauth.dto.ReviewDto;
-import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Review;
-import kz.hrms.splitupauth.entity.RoomStatus;
+import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.ReviewRepository;
@@ -41,49 +39,38 @@ public class ReviewService {
         userRepository
             .findById(req.getRecipientId())
             .orElseThrow(() -> new ResourceNotFoundException("Recipient not found"));
-    var room =
-        roomRepository
-            .findById(req.getRoomId())
-            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-    // Eligibility per spec: review allowed only after the period/participation ended.
-    // ACTIVE means the period is still running — both sides are still co-using the
-    // service and the experience isn't final yet, so reviews are not eligible.
-    if (room.getStatus() != RoomStatus.COMPLETED) {
-      throw new InvalidRequestException("Reviews are allowed only after the room is COMPLETED");
+    Room room = null;
+    if (req.getRoomId() != null) {
+      room =
+          roomRepository
+              .findById(req.getRoomId())
+              .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
     }
 
-    // Both author and recipient must have been members (or owner) of this room.
-    boolean authorWasMember =
-        author.getId().equals(room.getOwner().getId())
-            || roomMemberRepository
-                .findByRoomAndUserAndStatusIn(
-                    room, author, List.of(MemberStatus.ACTIVE, MemberStatus.PENDING))
-                .isPresent();
-    boolean recipientWasMember =
-        recipient.getId().equals(room.getOwner().getId())
-            || roomMemberRepository
-                .findByRoomAndUserAndStatusIn(
-                    room, recipient, List.of(MemberStatus.ACTIVE, MemberStatus.PENDING))
-                .isPresent();
-    if (!authorWasMember || !recipientWasMember) {
-      throw new ForbiddenOperationException("Both users must have shared this room");
-    }
-
-    if (reviewRepository
-        .findByAuthorAndRecipientAndRoom_Id(author, recipient, req.getRoomId())
-        .isPresent()) {
-      throw new InvalidRequestException("You have already reviewed this user for this room");
-    }
-
+    // Upsert on (author, recipient): a user has a single active rating for another user;
+    // subsequent submissions update rating/text and optionally re-anchor the room.
+    String sanitizedText = TextSanitizer.sanitize(req.getText());
     Review review =
-        Review.builder()
-            .author(author)
-            .recipient(recipient)
-            .room(room)
-            .rating(req.getRating())
-            .text(TextSanitizer.sanitize(req.getText()))
-            .build();
+        reviewRepository
+            .findFirstByAuthorAndRecipientOrderByCreatedAtDesc(author, recipient)
+            .orElse(null);
+    if (review == null) {
+      review =
+          Review.builder()
+              .author(author)
+              .recipient(recipient)
+              .room(room)
+              .rating(req.getRating())
+              .text(sanitizedText)
+              .build();
+    } else {
+      review.setRating(req.getRating());
+      review.setText(sanitizedText);
+      if (room != null) {
+        review.setRoom(room);
+      }
+    }
     review = reviewRepository.save(review);
 
     reputationService.recompute(recipient);

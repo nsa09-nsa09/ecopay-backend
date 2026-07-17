@@ -36,8 +36,8 @@ public class Review {
   @JoinColumn(name = "recipient_id", nullable = false)
   private User recipient;
 
-  @ManyToOne(fetch = FetchType.LAZY, optional = false)
-  @JoinColumn(name = "room_id", nullable = false)
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "room_id")
   private Room room;
 
   @Column(nullable = false)

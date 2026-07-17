@@ -12,7 +12,10 @@ public class CreateReviewRequest {
   @NotNull(message = "Recipient id is required")
   private Long recipientId;
 
-  @NotNull(message = "Room id is required")
+  /**
+   * Optional anchor room. When present the review is attributed to that room; when {@code null} it
+   * is treated as a profile-level rating.
+   */
   private Long roomId;
 
   @NotNull

@@ -26,8 +26,13 @@ import org.springframework.transaction.annotation.Transactional;
  *       violation (disputes ruled against the owner) are subtracted on top.
  * </ul>
  *
- * <p>Completed room counts remain a separate informational metric on the profile — they are not
- * part of the trust score.
+ * <p>Formally: {@code effAvg = (PRIOR_WEIGHT * PRIOR_MEAN + Σ rating) / (PRIOR_WEIGHT + n)}, then
+ * {@code ratingScore = (effAvg - 1) / 4 * 100} and finally {@code score = clamp(round(ratingScore)
+ * - violations * VIOLATION_PENALTY, 0, 100)}. The baseline {@link #BASELINE_SCORE} of 100 falls out
+ * naturally for {@code n = 0}.
+ *
+ * <p>Completed room counts are a separate informational metric on the profile — they are not part
+ * of the trust score.
  */
 @Service
 @RequiredArgsConstructor
