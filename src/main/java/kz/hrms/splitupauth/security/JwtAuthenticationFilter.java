@@ -39,14 +39,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     try {
       String jwt = authHeader.substring(7);
-      String email = jwtUtil.extractUsername(jwt);
+      String subject = jwtUtil.extractUsername(jwt);
 
-      if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-        User user = userRepository.findByEmail(email).orElse(null);
+      if (subject != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+        // New tokens carry the immutable publicId as subject; tokens minted
+        // before the optional-email change carry the email. '@' cannot appear
+        // in a publicId, so it cleanly discriminates the two.
+        User user =
+            (subject.contains("@")
+                    ? userRepository.findByEmail(subject)
+                    : userRepository.findByPublicId(subject))
+                .orElse(null);
 
         if (user != null
             && user.getStatus() == UserStatus.ACTIVE
-            && jwtUtil.validateToken(jwt, email)) {
+            && jwtUtil.validateToken(jwt, subject)) {
 
           UsernamePasswordAuthenticationToken authToken =
               new UsernamePasswordAuthenticationToken(

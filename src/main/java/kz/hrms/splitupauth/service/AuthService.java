@@ -46,6 +46,8 @@ public class AuthService {
   private final StaffTwoFactorService staffTwoFactorService;
   private final LegalDocumentService legalDocumentService;
   private final SlugService slugService;
+  private final PhoneVerificationService phoneVerificationService;
+  private final EmailChangeService emailChangeService;
 
   // Dev/test only: auto-verify email on registration so login works without SMTP.
   @Value("${app.dev.auto-verify-email:false}")
@@ -53,7 +55,13 @@ public class AuthService {
 
   @Transactional
   public AuthResponse register(RegisterRequest request) {
-    if (userRepository.existsByEmail(request.getEmail())) {
+    boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
+
+    if (byPhone) {
+      if (userRepository.existsByPhone(request.getPhone())) {
+        throw new UserAlreadyExistsException("User with this phone already exists");
+      }
+    } else if (userRepository.existsByEmail(request.getEmail())) {
       throw new UserAlreadyExistsException("User with this email already exists");
     }
 
@@ -70,11 +78,13 @@ public class AuthService {
             ? request.getAcceptedPrivacyVersion()
             : legalDocumentService.currentVersion(LegalDocument.DocType.PRIVACY);
 
-    // Phone is no longer collected at registration — it's requested at
-    // room-creation time (when the platform actually needs to verify it).
+    // Email is optional: phone-registered accounts have none until the user
+    // adds one in the profile (email is only ever attached after the emailed
+    // code is confirmed).
     User user =
         User.builder()
-            .email(request.getEmail())
+            .email(byPhone ? null : request.getEmail())
+            .phone(byPhone ? request.getPhone() : null)
             .password(passwordEncoder.encode(request.getPassword()))
             .displayName(request.getDisplayName())
             .status(UserStatus.ACTIVE)
@@ -91,6 +101,17 @@ public class AuthService {
     slugService.assignInitialSlug(user);
     user = userRepository.save(user);
 
+    if (byPhone) {
+      // SMS the 6-digit confirmation code. Cooldowns, hourly caps and code TTL
+      // are enforced by PhoneVerificationService — the same protections as the
+      // profile phone-verification flow.
+      phoneVerificationService.requestCode(user, request.getPhone());
+
+      // No tokens: the account must confirm the SMS code first (see
+      // verifyPhoneCode), mirroring the email registration contract.
+      return AuthResponse.builder().user(userMapper.toDto(user)).build();
+    }
+
     if (devAutoVerifyEmail) {
       // Dev/test: skip the email round-trip so the account can log in without SMTP.
       // Tokens are issued straight away so the frontend can drop the user in.
@@ -106,17 +127,57 @@ public class AuthService {
     return AuthResponse.builder().user(userMapper.toDto(user)).build();
   }
 
+  /**
+   * Final step of phone registration: confirm the SMS code. On success the phone is marked verified
+   * and the user is logged in straight away (tokens issued), mirroring verifyEmailCode.
+   */
   @Transactional
-  public AuthResponse login(LoginRequest request) {
-    rateLimitService.checkLoginAttempts(request.getEmail());
-
+  public AuthResponse verifyPhoneCode(VerifyPhoneCodeRequest request) {
     User user =
         userRepository
-            .findByEmail(request.getEmail())
+            .findByPhone(request.getPhone())
+            .orElseThrow(
+                () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
+
+    // Already verified — the previous attempt went through. Be idempotent and
+    // just hand back a fresh session rather than erroring the user out.
+    if (user.getPhoneVerifiedAt() != null) {
+      return issueTokens(user);
+    }
+
+    phoneVerificationService.verifyCode(user, request.getPhone(), request.getCode());
+
+    return issueTokens(user);
+  }
+
+  /**
+   * Re-issue the SMS code for an unfinished phone registration. Stays silent for unknown or
+   * already-verified phones to avoid phone-number enumeration; cooldown and hourly caps are
+   * enforced by PhoneVerificationService.
+   */
+  @Transactional
+  public void resendPhoneCode(String phone) {
+    User user = userRepository.findByPhone(phone).orElse(null);
+    if (user == null || user.getPhoneVerifiedAt() != null) {
+      return;
+    }
+    phoneVerificationService.requestCode(user, phone);
+  }
+
+  @Transactional
+  public AuthResponse login(LoginRequest request) {
+    String identifier = request.identifier();
+    rateLimitService.checkLoginAttempts(identifier);
+
+    boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
+    User user =
+        (byPhone
+                ? userRepository.findByPhone(request.getPhone())
+                : userRepository.findByEmail(request.getEmail()))
             .orElseThrow(
                 () -> {
-                  rateLimitService.recordLoginAttempt(request.getEmail(), false);
-                  return new InvalidCredentialsException("Invalid email or password");
+                  rateLimitService.recordLoginAttempt(identifier, false);
+                  return new InvalidCredentialsException("Invalid credentials");
                 });
 
     if (user.getStatus() == UserStatus.BANNED) {
@@ -125,16 +186,25 @@ public class AuthService {
     }
 
     if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-      rateLimitService.recordLoginAttempt(request.getEmail(), false);
-      throw new InvalidCredentialsException("Invalid email or password");
+      rateLimitService.recordLoginAttempt(identifier, false);
+      throw new InvalidCredentialsException("Invalid credentials");
     }
 
-    if (Boolean.FALSE.equals(user.getEmailVerified())) {
+    // The account counts as confirmed when either channel it registered with
+    // is verified: a confirmed email, or a confirmed phone (phone-registered
+    // accounts have no email at all until one is added in the profile).
+    boolean emailConfirmed = user.getEmail() != null && Boolean.TRUE.equals(user.getEmailVerified());
+    boolean phoneConfirmed = user.getPhoneVerifiedAt() != null;
+    if (!emailConfirmed && !phoneConfirmed) {
+      if (user.getEmail() == null) {
+        throw new PhoneNotVerifiedException(
+            "Phone not verified. Please enter the code we sent you by SMS.");
+      }
       throw new EmailNotVerifiedException(
           "Email not verified. Please check your inbox for the verification link.");
     }
 
-    rateLimitService.recordLoginAttempt(request.getEmail(), true);
+    rateLimitService.recordLoginAttempt(identifier, true);
 
     // ADMIN / SUPPORT accounts must complete an email 2FA step before any
     // access or refresh tokens are issued.
@@ -177,7 +247,10 @@ public class AuthService {
   }
 
   private AuthResponse issueTokens(User user) {
-    String accessToken = jwtUtil.generateAccessToken(user.getEmail());
+    // Subject is the immutable publicId, not the email: email is optional now
+    // and may change. JwtAuthenticationFilter still resolves legacy
+    // email-subject tokens for sessions issued before this switch.
+    String accessToken = jwtUtil.generateAccessToken(user.getPublicId());
     String refreshToken = refreshTokenService.createRefreshToken(user);
 
     // Track the moment tokens were last issued so the admin panel can show
@@ -206,7 +279,7 @@ public class AuthService {
     // Rotate: revoke the presented token first, then issue a fresh one.
     refreshTokenService.revokeRefreshToken(request.getRefreshToken());
 
-    String accessToken = jwtUtil.generateAccessToken(user.getEmail());
+    String accessToken = jwtUtil.generateAccessToken(user.getPublicId());
     String newRefreshToken = refreshTokenService.createRefreshToken(user);
 
     return AuthResponse.builder()
@@ -225,7 +298,10 @@ public class AuthService {
   public void requestPasswordReset(PasswordResetRequest request) {
     User user = userRepository.findByEmail(request.getEmail()).orElse(null);
 
-    if (user == null) {
+    // Silent for unknown addresses AND for accounts whose email was never
+    // confirmed: password recovery only works through a verified email, and
+    // responding differently would leak which addresses exist in the system.
+    if (user == null || !Boolean.TRUE.equals(user.getEmailVerified())) {
       return;
     }
 
@@ -288,6 +364,14 @@ public class AuthService {
     }
 
     User user = verificationToken.getUser();
+
+    // Click-through link of the profile add/change-email flow: the address is
+    // parked on the token and only attached to the account now.
+    if (verificationToken.getPendingEmail() != null) {
+      emailChangeService.applyPendingEmail(user, verificationToken);
+      return;
+    }
+
     user.setEmailVerified(true);
     userRepository.save(user);
 

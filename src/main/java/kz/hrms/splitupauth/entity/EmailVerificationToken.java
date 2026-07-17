@@ -35,6 +35,14 @@ public class EmailVerificationToken {
   @Column(name = "code_hash")
   private String codeHash;
 
+  /**
+   * When set, this challenge adds/changes the account email: the address lives here until the code
+   * (or link) is confirmed, and only then is copied to {@code users.email}. Null for the
+   * registration-verification flow, where the address is already on the user row.
+   */
+  @Column(name = "pending_email")
+  private String pendingEmail;
+
   /** Failed code attempts; the challenge is rejected once it reaches the service-layer limit. */
   @Column(nullable = false)
   @Builder.Default

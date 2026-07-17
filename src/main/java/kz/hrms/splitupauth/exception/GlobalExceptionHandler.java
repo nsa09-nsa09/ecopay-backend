@@ -109,6 +109,16 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
   }
 
+  @ExceptionHandler(PhoneNotVerifiedException.class)
+  public ResponseEntity<ErrorResponse> handlePhoneNotVerified(PhoneNotVerifiedException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+    error.setCode("PHONE_NOT_VERIFIED");
+    // Same marker convention as EMAIL_NOT_VERIFIED below: the login screen reads
+    // `errors.code` to switch to the SMS-code entry step.
+    error.setErrors(Map.of("code", "PHONE_NOT_VERIFIED"));
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  }
+
   @ExceptionHandler(EmailNotVerifiedException.class)
   public ResponseEntity<ErrorResponse> handleEmailNotVerified(EmailNotVerifiedException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());

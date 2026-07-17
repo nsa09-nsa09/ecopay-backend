@@ -62,6 +62,8 @@ class AuthServiceTest {
   @Mock private StaffTwoFactorService staffTwoFactorService;
   @Mock private LegalDocumentService legalDocumentService;
   @Mock private SlugService slugService;
+  @Mock private PhoneVerificationService phoneVerificationService;
+  @Mock private EmailChangeService emailChangeService;
 
   private AuthService authService;
 
@@ -80,7 +82,9 @@ class AuthServiceTest {
             userMapper,
             staffTwoFactorService,
             legalDocumentService,
-            slugService);
+            slugService,
+            phoneVerificationService,
+            emailChangeService);
   }
 
   @Test
@@ -188,7 +192,8 @@ class AuthServiceTest {
   }
 
   private void stubTokens(User user) {
-    when(jwtUtil.generateAccessToken(user.getEmail())).thenReturn("access");
+    // JWT subject is the immutable publicId (email is optional since phone registration).
+    when(jwtUtil.generateAccessToken(user.getPublicId())).thenReturn("access");
     // createRefreshToken returns the token string (String-based refresh-token model).
     when(refreshTokenService.createRefreshToken(eq(user))).thenReturn("refresh");
     when(userMapper.toDto(user))
@@ -199,6 +204,7 @@ class AuthServiceTest {
   private static User user(Role role) {
     return User.builder()
         .id(role == Role.USER ? 1L : 2L)
+        .publicId("pub" + role.name())
         .email(role.name().toLowerCase() + "@example.com")
         .password("ENC")
         .displayName(role.name())

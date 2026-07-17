@@ -4,15 +4,23 @@ import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 @Data
 public class RegisterRequest {
 
-  @NotBlank(message = "Email is required")
+  /**
+   * Optional: exactly one of {@link #email} / {@link #phone} identifies the new account. Email
+   * registration confirms via an emailed code; phone registration confirms via an SMS code.
+   */
   @Email(message = "Email must be valid")
   private String email;
+
+  /** Optional: see {@link #email}. Phone-registered accounts add an email later in the profile. */
+  @Pattern(regexp = "^\\+7\\d{10}$", message = "Phone must be in +7XXXXXXXXXX format")
+  private String phone;
 
   @NotBlank(message = "Password is required")
   @Size(min = 8, message = "Password must be at least 8 characters")
@@ -39,4 +47,11 @@ public class RegisterRequest {
 
   /** Optional: version of Privacy consent the user saw when accepting. */
   private Integer acceptedPrivacyVersion;
+
+  @AssertTrue(message = "Exactly one of email or phone is required")
+  public boolean isIdentifierPresent() {
+    boolean hasEmail = email != null && !email.isBlank();
+    boolean hasPhone = phone != null && !phone.isBlank();
+    return hasEmail ^ hasPhone;
+  }
 }

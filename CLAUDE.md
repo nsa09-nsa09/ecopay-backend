@@ -392,7 +392,10 @@ Event types: `room_created`, `member_joined`, `payment_intent_created`, `payment
 - Logout = revoke refresh token
 
 ### Registration / Login
-- Email + password (min 8 chars, unique email)
+- Phone + OTP + password (primary sign-up path; SMS code confirms the phone) OR email + password (code emailed). Exactly one identifier per registration; email is optional and can be added/changed later in the profile (confirmed via emailed one-time code, `pending_email` on `email_verification_tokens`)
+- Login: phone or email + password; JWT subject is the immutable `public_id` (legacy email-subject tokens still resolve)
+- Password reset works only through a verified email (silent otherwise)
+- Password min 8 chars; email unique among non-null values, phone unique
 - Google Sign-In (validate issuer/audience)
 - Password reset via email
 - Rate limit on login / forgot-password
