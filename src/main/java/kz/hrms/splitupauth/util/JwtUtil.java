@@ -50,14 +50,18 @@ public class JwtUtil {
     return extractExpiration(token).before(new Date());
   }
 
-  public String generateAccessToken(String email) {
+  /**
+   * Subject is the user's immutable publicId (tokens minted before the optional-email change carry
+   * the email instead — JwtAuthenticationFilter resolves both).
+   */
+  public String generateAccessToken(String subject) {
     Map<String, Object> claims = new HashMap<>();
-    return createToken(claims, email, accessExpiration);
+    return createToken(claims, subject, accessExpiration);
   }
 
-  public String generateRefreshToken(String email) {
+  public String generateRefreshToken(String subject) {
     Map<String, Object> claims = new HashMap<>();
-    return createToken(claims, email, refreshExpiration);
+    return createToken(claims, subject, refreshExpiration);
   }
 
   private String createToken(Map<String, Object> claims, String subject, Long expiration) {

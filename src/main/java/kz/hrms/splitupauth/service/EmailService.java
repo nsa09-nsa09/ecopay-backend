@@ -100,6 +100,47 @@ public class EmailService {
   }
 
   /**
+   * Confirmation email for adding or changing the account email from the profile. Sent to the NEW
+   * address; the account keeps its old email (or none) until the code or link is confirmed.
+   */
+  public void sendEmailChangeConfirmation(String to, String token, String code) {
+    try {
+      MimeMessage message = mailSender.createMimeMessage();
+      MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+      helper.setFrom(fromEmail.trim());
+      helper.setTo(to);
+      helper.setSubject("Confirm your email address");
+
+      String verifyLink = baseUrl + "/api/v1/auth/verify-email?token=" + token;
+      helper.setText(buildEmailChangeEmail(verifyLink, code), true);
+
+      mailSender.send(message);
+    } catch (MessagingException e) {
+      throw new RuntimeException("Failed to send email", e);
+    }
+  }
+
+  private String buildEmailChangeEmail(String verifyLink, String code) {
+    return "<html>"
+        + "<body>"
+        + "<h2>Confirm your email address</h2>"
+        + "<p>Enter the code below in your EcoPay profile to attach this email address to your"
+        + " account:</p>"
+        + "<p style=\"font-size:24px;font-weight:bold;letter-spacing:6px;\">"
+        + code
+        + "</p>"
+        + "<p>This code expires in 30 minutes.</p>"
+        + "<p>Prefer a link? You can also confirm here: "
+        + "<a href=\""
+        + verifyLink
+        + "\">Confirm Email</a></p>"
+        + "<p>If you didn't request this, please ignore this email.</p>"
+        + "</body>"
+        + "</html>";
+  }
+
+  /**
    * Generic transactional-notification email. Used by the notification system for email-eligible
    * events the user hasn't opted out of. {@code link} is an optional frontend-relative path (e.g.
    * {@code /rooms/member/42}) rendered as a "View details" button.

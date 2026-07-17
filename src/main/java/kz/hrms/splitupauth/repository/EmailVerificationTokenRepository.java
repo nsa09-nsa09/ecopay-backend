@@ -17,4 +17,9 @@ public interface EmailVerificationTokenRepository
   void deleteByUser(User user);
 
   void deleteByExpiresAtBefore(LocalDateTime dateTime);
+
+  /** Send-frequency guard for the email add/change flow (cooldown + hourly cap). */
+  long countByUserAndCreatedAtAfter(User user, LocalDateTime after);
+
+  Optional<EmailVerificationToken> findTopByUserOrderByCreatedAtDesc(User user);
 }
