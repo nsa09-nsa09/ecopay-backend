@@ -1,5 +1,5 @@
 -- =========================================================
--- V50 — Trust rating moves to a 10-point scale:
+-- V51 — Trust rating moves to a 10-point scale:
 --   * Peer review ratings are now 1..10 (old 1..5 values are doubled,
 --     so 4/5 becomes 8/10 — same relative position on the scale).
 --   * users.reputation keeps its 0..100 storage (score = rating × 10,

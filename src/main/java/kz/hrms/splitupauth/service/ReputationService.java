@@ -16,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Computes a user's reputation as a "trust" rating on a 10-point scale (stored ×10 as 0..100 so the
  * UI can render one decimal, e.g. 74 → 7.4/10).
  *
- * <p>The rating aggregates peer reviews left after a room completes:
+ * <p>The rating aggregates peer reviews:
  *
  * <ul>
  *   <li><b>No reviews yet</b> — the user sits at the neutral {@link User#DEFAULT_REPUTATION} (=
@@ -25,11 +25,6 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li><b>Violation penalty</b> — {@value #VIOLATION_PENALTY} points per confirmed owner-fault
  *       violation (disputes ruled against the owner) are subtracted on top.
  * </ul>
- *
- * <p>Formally: {@code effAvg = (PRIOR_WEIGHT * PRIOR_MEAN + Σ rating) / (PRIOR_WEIGHT + n)}, then
- * {@code ratingScore = (effAvg - 1) / 4 * 100} and finally {@code score = clamp(round(ratingScore)
- * - violations * VIOLATION_PENALTY, 0, 100)}. The baseline {@link #BASELINE_SCORE} of 100 falls out
- * naturally for {@code n = 0}.
  *
  * <p>Completed room counts are a separate informational metric on the profile — they are not part
  * of the trust score.
