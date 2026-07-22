@@ -61,14 +61,14 @@ VALUES
 -- SERVICES
 -- =========================================================
 
-INSERT INTO services (id, category_id, name, slug, provider_type, is_active, created_at)
+INSERT INTO services (id, category_id, name, slug, provider_type, access_type, is_active, created_at)
 VALUES
-    (1, 1, 'Netflix',         'netflix',         'DIGITAL',  TRUE, NOW()),
-    (2, 1, 'YouTube Premium', 'youtube-premium', 'DIGITAL',  TRUE, NOW()),
-    (3, 2, 'Spotify',         'spotify',         'DIGITAL',  TRUE, NOW()),
-    (4, 3, 'Microsoft 365',   'microsoft-365',   'DIGITAL',  TRUE, NOW()),
-    (5, 4, 'Beeline Family',  'beeline-family',  'OPERATOR', TRUE, NOW()),
-    (6, 4, 'Activ Family',    'activ-family',    'OPERATOR', TRUE, NOW());
+    (1, 1, 'Netflix',         'netflix',         'DIGITAL',  'EMAIL', TRUE, NOW()),
+    (2, 1, 'YouTube Premium', 'youtube-premium', 'DIGITAL',  'EMAIL', TRUE, NOW()),
+    (3, 2, 'Spotify',         'spotify',         'DIGITAL',  'EMAIL', TRUE, NOW()),
+    (4, 3, 'Microsoft 365',   'microsoft-365',   'DIGITAL',  'EMAIL', TRUE, NOW()),
+    (5, 4, 'Beeline Family',  'beeline-family',  'OPERATOR', 'PHONE', TRUE, NOW()),
+    (6, 4, 'Activ Family',    'activ-family',    'OPERATOR', 'PHONE', TRUE, NOW());
 
 -- =========================================================
 -- TARIFF PLANS

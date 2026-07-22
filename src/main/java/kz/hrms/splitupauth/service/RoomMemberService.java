@@ -14,6 +14,7 @@ import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.*;
 import kz.hrms.splitupauth.security.FieldEncryptionService;
+import kz.hrms.splitupauth.util.ContactIdentifiers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -59,20 +60,21 @@ public class RoomMemberService {
 
     roomMember = roomMemberRepository.save(roomMember);
 
-    if (room.getRoomType() == RoomType.TELECOM) {
-      String rawIdentifier = request.getIdentifierValue();
+    // Every service needs a contact from the member — an address for the ones that
+    // invite by email, a number for the ones keyed on the phone (see accessType).
+    IdentifierType identifierType = resolveIdentifierType(room, request);
+    String normalized = ContactIdentifiers.normalize(identifierType, request.getIdentifierValue());
 
-      RoomMemberIdentifier identifier =
-          RoomMemberIdentifier.builder()
-              .roomMember(roomMember)
-              .identifierType(request.getIdentifierType())
-              .identifierEncrypted(fieldEncryptionService.encrypt(rawIdentifier))
-              .identifierMasked(maskIdentifier(rawIdentifier))
-              .isValidFormat(isValidIdentifierFormat(rawIdentifier))
-              .build();
+    RoomMemberIdentifier identifier =
+        RoomMemberIdentifier.builder()
+            .roomMember(roomMember)
+            .identifierType(identifierType)
+            .identifierEncrypted(fieldEncryptionService.encrypt(normalized))
+            .identifierMasked(ContactIdentifiers.mask(identifierType, normalized))
+            .isValidFormat(ContactIdentifiers.isValidFormat(identifierType, normalized))
+            .build();
 
-      roomMemberIdentifierRepository.save(identifier);
-    }
+    roomMemberIdentifierRepository.save(identifier);
 
     roomEventLogger.log(
         room,
@@ -399,13 +401,18 @@ public class RoomMemberService {
       return;
     }
 
-    if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
-      RoomMemberIdentifier identifier =
-          roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
+    RoomMemberIdentifier identifier =
+        roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
 
-      if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
+    // A malformed contact means the owner cannot actually grant access, so hold the
+    // member for review. Missing rows are only tolerated for the digital memberships
+    // that predate contact collection — TELECOM always required one.
+    if (identifier == null) {
+      if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
         return;
       }
+    } else if (!Boolean.TRUE.equals(identifier.getIsValidFormat())) {
+      return;
     }
 
     roomMember.setStatus(MemberStatus.ACTIVE);
@@ -479,29 +486,61 @@ public class RoomMemberService {
       throw new InvalidRequestException("No available slots in this room");
     }
 
-    if (room.getRoomType() == RoomType.TELECOM) {
-      if (request.getIdentifierType() == null) {
-        throw new InvalidRequestException("Identifier type is required for TELECOM room");
-      }
+    validateContact(room, request);
+  }
 
-      if (request.getIdentifierValue() == null || request.getIdentifierValue().isBlank()) {
-        throw new InvalidRequestException("Identifier value is required for TELECOM room");
-      }
+  /**
+   * The service's {@code accessType} decides what the member has to hand over: an email for the
+   * providers that invite by address, a phone for the ones keyed on the number, either when the
+   * provider accepts both. TELECOM rooms additionally accept SIM/eSIM/account references.
+   */
+  private void validateContact(Room room, JoinRoomRequest request) {
+    ServiceAccessType accessType = serviceAccessType(room);
+    IdentifierType type = resolveIdentifierType(room, request);
+
+    if (!ContactIdentifiers.allowedFor(accessType).contains(type)) {
+      throw new InvalidRequestException(
+          accessType == ServiceAccessType.EMAIL
+              ? "This service grants access by email — an email address is required"
+              : "This service grants access by phone — a phone number is required");
+    }
+
+    String normalized = ContactIdentifiers.normalize(type, request.getIdentifierValue());
+    if (normalized == null) {
+      throw new InvalidRequestException(
+          type == IdentifierType.EMAIL
+              ? "Email address is required to join this room"
+              : "Phone number is required to join this room");
+    }
+
+    if (!ContactIdentifiers.isValidFormat(type, normalized)) {
+      throw new InvalidRequestException(
+          switch (type) {
+            case EMAIL -> "Enter a valid email address";
+            case ACCOUNT -> "Enter a valid account identifier";
+            default -> "Phone must be in +7XXXXXXXXXX format";
+          });
     }
   }
 
-  private String maskIdentifier(String value) {
-    if (value == null || value.length() < 4) {
-      return "****";
-    }
+  /** Falls back to the service's natural identifier when the client didn't send an explicit one. */
+  private IdentifierType resolveIdentifierType(Room room, JoinRoomRequest request) {
+    return request.getIdentifierType() != null
+        ? request.getIdentifierType()
+        : ContactIdentifiers.defaultFor(serviceAccessType(room));
+  }
 
-    if (value.length() <= 6) {
-      return value.charAt(0) + "***" + value.charAt(value.length() - 1);
+  private ServiceAccessType serviceAccessType(Room room) {
+    ServiceAccessType accessType =
+        room.getService() == null ? null : room.getService().getAccessType();
+    if (accessType != null) {
+      return accessType;
     }
-
-    String start = value.substring(0, Math.min(4, value.length()));
-    String end = value.substring(value.length() - 2);
-    return start + "*****" + end;
+    // Pre-V54 rows could still be null in a half-migrated environment; a telecom
+    // room is always phone-shaped, so that is the safe read.
+    return room.getRoomType() == RoomType.TELECOM
+        ? ServiceAccessType.PHONE
+        : ServiceAccessType.EMAIL;
   }
 
   @Transactional
@@ -519,10 +558,6 @@ public class RoomMemberService {
 
     if (!room.getOwner().getId().equals(currentUser.getId())) {
       throw new ForbiddenOperationException("Only room owner can reveal member identifier");
-    }
-
-    if (room.getRoomType() != RoomType.TELECOM) {
-      throw new InvalidRequestException("Identifier reveal is only available for TELECOM rooms");
     }
 
     RoomMember roomMember =
@@ -582,10 +617,6 @@ public class RoomMemberService {
             .filter(r -> r.getDeletedAt() == null)
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-    if (room.getRoomType() != RoomType.TELECOM) {
-      throw new InvalidRequestException("Identifier reveal is only available for TELECOM rooms");
-    }
-
     RoomMember roomMember =
         roomMemberRepository
             .findByIdAndRoomAndDeletedAtIsNull(memberId, room)
@@ -631,13 +662,8 @@ public class RoomMemberService {
     }
 
     if (room.getVerificationMode() == VerificationMode.RISK_BASED) {
-      if (room.getRoomType() == RoomType.TELECOM) {
-        RoomMemberIdentifier identifier =
-            roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
-
-        if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
-          return true;
-        }
+      if (hasMalformedContact(roomMember)) {
+        return true;
       }
 
       if (hasOpenAutoActivationBlocker(roomMember)) {
@@ -653,13 +679,8 @@ public class RoomMemberService {
       return "ADMIN_REQUIRED";
     }
 
-    if (roomMember.getRoom().getRoomType() == RoomType.TELECOM) {
-      RoomMemberIdentifier identifier =
-          roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
-
-      if (identifier == null || !Boolean.TRUE.equals(identifier.getIsValidFormat())) {
-        return "INVALID_IDENTIFIER";
-      }
+    if (hasMalformedContact(roomMember)) {
+      return "INVALID_IDENTIFIER";
     }
 
     if (hasOpenDispute(roomMember)) {
@@ -701,6 +722,19 @@ public class RoomMemberService {
 
   private boolean hasOpenAutoActivationBlocker(RoomMember roomMember) {
     return hasOpenSupportTicket(roomMember) || hasOpenDispute(roomMember);
+  }
+
+  /**
+   * True when the member's contact can't be used to grant access. A missing row only counts against
+   * TELECOM rooms — digital memberships created before contact collection have none.
+   */
+  private boolean hasMalformedContact(RoomMember roomMember) {
+    RoomMemberIdentifier identifier =
+        roomMemberIdentifierRepository.findByRoomMember(roomMember).orElse(null);
+    if (identifier == null) {
+      return roomMember.getRoom().getRoomType() == RoomType.TELECOM;
+    }
+    return !Boolean.TRUE.equals(identifier.getIsValidFormat());
   }
 
   private void ensureStaffCanReveal(User currentUser) {
@@ -854,10 +888,6 @@ public class RoomMemberService {
             .userAgent(httpRequest.getHeader("User-Agent"))
             .createdAt(auditTimestamp)
             .build());
-  }
-
-  private boolean isValidIdentifierFormat(String value) {
-    return value != null && value.length() >= 4;
   }
 
   private record RevealContextInfo(IdentifierRevealContextType type, Long id) {}

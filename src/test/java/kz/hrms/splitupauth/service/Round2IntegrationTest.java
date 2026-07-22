@@ -75,7 +75,7 @@ class Round2IntegrationTest extends AbstractIntegrationTest {
     req.setEmail("r2_" + n + "_" + System.nanoTime() + "@test.kz");
     req.setPassword("Test1234");
     req.setDisplayName(name);
-    authService.register(req);
+    authService.register(req, MailLocale.RU);
     User u = userRepository.findByEmail(req.getEmail()).orElseThrow();
     // Need emailVerified=true for login
     u.setEmailVerified(true);

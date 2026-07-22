@@ -6,6 +6,7 @@ import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
+import kz.hrms.splitupauth.entity.ServiceAccessType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -44,6 +45,9 @@ public class RoomSummaryDto {
 
   /** Backend-served URL of the service logo (S3-backed), or null if none uploaded. */
   private String serviceLogoUrl;
+
+  /** What a joining member must hand over for this service — EMAIL, PHONE or BOTH. */
+  private ServiceAccessType serviceAccessType;
 
   private AccessType accessType;
   private String regionRestriction;

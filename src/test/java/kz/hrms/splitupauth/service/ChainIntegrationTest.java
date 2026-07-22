@@ -57,7 +57,7 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
     req.setPassword("Test1234");
     req.setDisplayName(name);
 
-    authService.register(req);
+    authService.register(req, MailLocale.RU);
     User user = userRepository.findByEmail(req.getEmail()).orElseThrow();
     // Phone is now collected at room-creation time. Attach + verify it via
     // dev-bypass here so the subsequent createRoom path still passes the
@@ -99,6 +99,8 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
     // Join
     JoinRoomRequest join = new JoinRoomRequest();
     join.setConsentAccepted(true);
+    // Netflix is an EMAIL-access service (V54), so the member hands over an address.
+    join.setIdentifierValue("it-member@gmail.com");
     RoomMemberDto membership = roomMemberService.joinRoom(room.getId(), member, join);
     assertEquals(MemberStatus.APPLIED, membership.getStatus());
 
@@ -151,7 +153,7 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
     // Phone is no longer collected at registration; this account stays
     // phone-less, which keeps phoneVerifiedAt = null and trips the
     // createRoom gate below.
-    authService.register(req);
+    authService.register(req, MailLocale.RU);
     User user = userRepository.findByEmail(req.getEmail()).orElseThrow();
 
     CreateRoomRequest create = new CreateRoomRequest();

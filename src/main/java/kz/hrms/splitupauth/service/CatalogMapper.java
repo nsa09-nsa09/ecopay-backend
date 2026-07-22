@@ -44,6 +44,7 @@ public class CatalogMapper {
         .name(service.getName())
         .slug(service.getSlug())
         .providerType(service.getProviderType())
+        .accessType(service.getAccessType())
         .minPricePerMember(minPricePerMember)
         .currency(currency)
         .tariffCount(tariffCount)

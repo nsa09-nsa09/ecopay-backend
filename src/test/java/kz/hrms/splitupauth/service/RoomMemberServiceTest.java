@@ -25,6 +25,7 @@ import kz.hrms.splitupauth.dto.RevealedIdentifierDto;
 import kz.hrms.splitupauth.dto.RoomMemberDto;
 import kz.hrms.splitupauth.entity.Dispute;
 import kz.hrms.splitupauth.entity.DisputeStatus;
+import kz.hrms.splitupauth.entity.IdentifierType;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.ModerationQueue;
 import kz.hrms.splitupauth.entity.ModerationQueueStatus;
@@ -36,6 +37,8 @@ import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomMemberIdentifier;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
+import kz.hrms.splitupauth.entity.ServiceAccessType;
+import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.SupportTicket;
 import kz.hrms.splitupauth.entity.SupportTicketStatus;
 import kz.hrms.splitupauth.entity.User;
@@ -204,6 +207,154 @@ class RoomMemberServiceTest {
             () -> roomMemberService.joinRoom(ROOM_ID, member, request));
 
     assertEquals("Cannot join room after start date", exception.getMessage());
+    verify(roomMemberRepository, never()).save(any(RoomMember.class));
+  }
+
+  @Test
+  void joinRoom_emailServiceRejectsAPhoneNumber() {
+    User member = user(204L, Role.USER);
+    Room room = room(104L);
+    room.setService(service(ServiceAccessType.EMAIL));
+
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+    request.setIdentifierType(IdentifierType.PHONE);
+    request.setIdentifierValue("+77051234567");
+
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+
+    InvalidRequestException exception =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> roomMemberService.joinRoom(ROOM_ID, member, request));
+
+    assertEquals(
+        "This service grants access by email — an email address is required",
+        exception.getMessage());
+    verify(roomMemberRepository, never()).save(any(RoomMember.class));
+  }
+
+  @Test
+  void joinRoom_emailServiceRejectsAMalformedAddress() {
+    User member = user(205L, Role.USER);
+    Room room = room(105L);
+    room.setService(service(ServiceAccessType.EMAIL));
+
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+    request.setIdentifierValue("member@localhost");
+
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+
+    InvalidRequestException exception =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> roomMemberService.joinRoom(ROOM_ID, member, request));
+
+    assertEquals("Enter a valid email address", exception.getMessage());
+    verify(roomMemberRepository, never()).save(any(RoomMember.class));
+  }
+
+  @Test
+  void joinRoom_emailServiceStoresTheNormalizedAddress() {
+    User member = user(206L, Role.USER);
+    Room room = room(106L);
+    room.setService(service(ServiceAccessType.EMAIL));
+
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+    // No explicit type: the service's accessType decides what this value is.
+    request.setIdentifierValue("  Member@Gmail.COM ");
+
+    stubMemberPersistence();
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.empty());
+    when(fieldEncryptionService.encrypt("member@gmail.com")).thenReturn("enc:member@gmail.com");
+
+    roomMemberService.joinRoom(ROOM_ID, member, request);
+
+    ArgumentCaptor<RoomMemberIdentifier> captor =
+        ArgumentCaptor.forClass(RoomMemberIdentifier.class);
+    verify(roomMemberIdentifierRepository).save(captor.capture());
+
+    RoomMemberIdentifier saved = captor.getValue();
+    assertEquals(IdentifierType.EMAIL, saved.getIdentifierType());
+    assertEquals("enc:member@gmail.com", saved.getIdentifierEncrypted());
+    assertEquals("m****r@gmail.com", saved.getIdentifierMasked());
+    assertEquals(Boolean.TRUE, saved.getIsValidFormat());
+  }
+
+  @Test
+  void joinRoom_phoneServiceNormalizesLocalFormat() {
+    User member = user(207L, Role.USER);
+    Room room = room(107L);
+    room.setService(service(ServiceAccessType.PHONE));
+
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+    request.setIdentifierValue("8 (705) 123-45-67");
+
+    stubMemberPersistence();
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.empty());
+    when(fieldEncryptionService.encrypt("+77051234567")).thenReturn("enc:+77051234567");
+
+    roomMemberService.joinRoom(ROOM_ID, member, request);
+
+    ArgumentCaptor<RoomMemberIdentifier> captor =
+        ArgumentCaptor.forClass(RoomMemberIdentifier.class);
+    verify(roomMemberIdentifierRepository).save(captor.capture());
+
+    RoomMemberIdentifier saved = captor.getValue();
+    assertEquals(IdentifierType.PHONE, saved.getIdentifierType());
+    assertEquals("enc:+77051234567", saved.getIdentifierEncrypted());
+    assertEquals(Boolean.TRUE, saved.getIsValidFormat());
+  }
+
+  @Test
+  void joinRoom_bothServiceAcceptsEitherContact() {
+    User member = user(208L, Role.USER);
+    Room room = room(108L);
+    room.setService(service(ServiceAccessType.BOTH));
+
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+    request.setIdentifierType(IdentifierType.EMAIL);
+    request.setIdentifierValue("member@yandex.kz");
+
+    stubMemberPersistence();
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.empty());
+    when(fieldEncryptionService.encrypt("member@yandex.kz")).thenReturn("enc");
+
+    roomMemberService.joinRoom(ROOM_ID, member, request);
+
+    ArgumentCaptor<RoomMemberIdentifier> captor =
+        ArgumentCaptor.forClass(RoomMemberIdentifier.class);
+    verify(roomMemberIdentifierRepository).save(captor.capture());
+    assertEquals(IdentifierType.EMAIL, captor.getValue().getIdentifierType());
+  }
+
+  @Test
+  void joinRoom_requiresAContactEvenForDigitalRooms() {
+    User member = user(209L, Role.USER);
+    Room room = room(109L);
+    room.setService(service(ServiceAccessType.EMAIL));
+
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+
+    InvalidRequestException exception =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> roomMemberService.joinRoom(ROOM_ID, member, request));
+
+    assertEquals("Email address is required to join this room", exception.getMessage());
     verify(roomMemberRepository, never()).save(any(RoomMember.class));
   }
 
@@ -460,6 +611,24 @@ class RoomMemberServiceTest {
         .currency("KZT")
         .startDate(LocalDateTime.now().plusDays(1))
         .build();
+  }
+
+  /**
+   * The default save stub echoes the argument back without an id, which the join flow's
+   * notification payload (a {@code Map.of}) rejects. Give persisted members an id instead.
+   */
+  private void stubMemberPersistence() {
+    when(roomMemberRepository.save(any(RoomMember.class)))
+        .thenAnswer(
+            invocation -> {
+              RoomMember saved = invocation.getArgument(0);
+              saved.setId(700L);
+              return saved;
+            });
+  }
+
+  private ServiceEntity service(ServiceAccessType accessType) {
+    return ServiceEntity.builder().id(900L).name("Test service").accessType(accessType).build();
   }
 
   private Room telecomRoom(Long roomId, User owner) {

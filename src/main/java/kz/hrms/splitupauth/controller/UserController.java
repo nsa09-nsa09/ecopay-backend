@@ -10,9 +10,11 @@ import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.EmailChangeService;
+import kz.hrms.splitupauth.service.MailLocale;
 import kz.hrms.splitupauth.service.MemberDashboardService;
 import kz.hrms.splitupauth.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -52,8 +54,13 @@ public class UserController {
    */
   @PostMapping("/me/email/request")
   public ResponseEntity<Void> requestEmailChange(
-      @AuthenticationPrincipal User user, @Valid @RequestBody EmailChangeRequest request) {
-    emailChangeService.requestChange(user, request.getEmail());
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody EmailChangeRequest request,
+      @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+    // The web client sends its in-app language here, so the confirmation email
+    // arrives in the language the user is actually reading the site in rather
+    // than whatever their browser was installed with.
+    emailChangeService.requestChange(user, request.getEmail(), MailLocale.from(acceptLanguage));
     return ResponseEntity.accepted().build();
   }
 

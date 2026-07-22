@@ -35,6 +35,15 @@ public class ServiceEntity {
   @Column(name = "provider_type", nullable = false)
   private ProviderType providerType;
 
+  /**
+   * What a joining member must supply so the owner can add them — email, phone, or either. Driven
+   * by the provider's own rules (Spotify invites by email, operators need the number).
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "access_type", nullable = false, length = 10)
+  @Builder.Default
+  private ServiceAccessType accessType = ServiceAccessType.EMAIL;
+
   @Column(name = "is_active", nullable = false)
   @Builder.Default
   private Boolean isActive = true;
@@ -54,6 +63,9 @@ public class ServiceEntity {
     createdAt = LocalDateTime.now();
     if (isActive == null) {
       isActive = true;
+    }
+    if (accessType == null) {
+      accessType = ServiceAccessType.EMAIL;
     }
   }
 

@@ -63,8 +63,7 @@ class JwtAuthenticationFilterSubjectTest {
 
     filter.doFilter(bearer(), new MockHttpServletResponse(), new MockFilterChain());
 
-    assertEquals(
-        user, SecurityContextHolder.getContext().getAuthentication().getPrincipal());
+    assertEquals(user, SecurityContextHolder.getContext().getAuthentication().getPrincipal());
     verify(userRepository, never()).findByEmail(org.mockito.ArgumentMatchers.anyString());
   }
 
@@ -76,8 +75,7 @@ class JwtAuthenticationFilterSubjectTest {
 
     filter.doFilter(bearer(), new MockHttpServletResponse(), new MockFilterChain());
 
-    assertEquals(
-        user, SecurityContextHolder.getContext().getAuthentication().getPrincipal());
+    assertEquals(user, SecurityContextHolder.getContext().getAuthentication().getPrincipal());
   }
 
   @Test

@@ -7,6 +7,7 @@ import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
+import kz.hrms.splitupauth.entity.ServiceAccessType;
 import kz.hrms.splitupauth.entity.VerificationMode;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -33,6 +34,12 @@ public class RoomResponse {
 
   /** Backend-served URL of the service logo (S3-backed), or null if none uploaded. */
   private String serviceLogoUrl;
+
+  /**
+   * What a joining member must hand over for this service — EMAIL, PHONE or BOTH. Named apart from
+   * {@link #accessType}, which is the room's own "how does the owner grant access" field.
+   */
+  private ServiceAccessType serviceAccessType;
 
   private Long tariffPlanId;
   private RoomType roomType;
