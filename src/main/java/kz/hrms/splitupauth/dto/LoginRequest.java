@@ -4,6 +4,7 @@ import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import kz.hrms.splitupauth.util.EmailNormalizer;
 import lombok.Data;
 
 @Data
@@ -30,5 +31,19 @@ public class LoginRequest {
   /** The identifier the caller actually supplied — used for rate-limit keying and lookups. */
   public String identifier() {
     return email != null && !email.isBlank() ? email : phone;
+  }
+
+  /**
+   * Canonicalises on bind, before Bean Validation runs. Order matters: {@code @Email} rejects
+   * {@code " user@gmail.com "} outright, so without this a pasted address with a trailing space —
+   * common, since copying out of another app drags whitespace along — is turned away with an
+   * unhelpful "Email must be valid" and the service-layer normalizer never sees it.
+   *
+   * <p>Written by hand rather than as a Jackson annotation on purpose: the HTTP layer runs Jackson
+   * 3 ({@code tools.jackson}) while parts of this project still use the 2.x namespace, and a setter
+   * is correct under both.
+   */
+  public void setEmail(String email) {
+    this.email = EmailNormalizer.normalize(email);
   }
 }

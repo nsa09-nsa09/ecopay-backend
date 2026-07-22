@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.dto;
 
 import java.time.LocalDateTime;
 import kz.hrms.splitupauth.entity.ProviderType;
+import kz.hrms.splitupauth.entity.ServiceAccessType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -18,6 +19,10 @@ public class AdminServiceDto {
   private String name;
   private String slug;
   private ProviderType providerType;
+
+  /** What a joining member must provide to be let in: EMAIL, PHONE or BOTH. */
+  private ServiceAccessType accessType;
+
   private Boolean isActive;
   private Long tariffsCount;
   private LocalDateTime createdAt;

@@ -89,7 +89,7 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     req.setPassword("Test1234");
     req.setDisplayName(name);
 
-    authService.register(req);
+    authService.register(req, MailLocale.RU);
     User user = userRepository.findByEmail(req.getEmail()).orElseThrow();
     String phone = "+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L));
     phoneVerificationService.requestCode(user, phone);
@@ -133,6 +133,8 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     // ---------- guest joins ----------
     JoinRoomRequest join = new JoinRoomRequest();
     join.setConsentAccepted(true);
+    // Netflix is an EMAIL-access service (V54), so the member hands over an address.
+    join.setIdentifierValue("e2e-guest@gmail.com");
     RoomMemberDto membership = roomMemberService.joinRoom(room.getId(), guest, join);
     assertEquals(MemberStatus.APPLIED, membership.getStatus());
 

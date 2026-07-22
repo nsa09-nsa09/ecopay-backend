@@ -60,7 +60,7 @@ class NewFeaturesIntegrationTest extends AbstractIntegrationTest {
     req.setEmail("new_" + n + "_" + System.nanoTime() + "@test.kz");
     req.setPassword("Test1234");
     req.setDisplayName(name);
-    authService.register(req);
+    authService.register(req, MailLocale.RU);
     return userRepository.findByEmail(req.getEmail()).orElseThrow();
   }
 

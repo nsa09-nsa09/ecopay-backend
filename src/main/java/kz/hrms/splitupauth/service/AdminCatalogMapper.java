@@ -37,6 +37,7 @@ public class AdminCatalogMapper {
         .name(service.getName())
         .slug(service.getSlug())
         .providerType(service.getProviderType())
+        .accessType(service.getAccessType())
         .isActive(service.getIsActive())
         .tariffsCount(tariffsCount)
         .createdAt(service.getCreatedAt())

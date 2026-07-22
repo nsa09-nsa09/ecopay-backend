@@ -65,11 +65,14 @@ public class StaffTwoFactorService {
 
     challenge = challengeRepository.save(challenge);
 
-    try {
-      emailService.sendStaffTwoFactorCode(user.getEmail(), code);
-    } catch (RuntimeException ex) {
-      log.warn("Failed to send staff 2FA email to user id={}: {}", user.getId(), ex.getMessage());
-    }
+    // Deliberately NOT swallowed, unlike the silent password-reset/resend
+    // endpoints. The caller's password has already been verified here, so
+    // there is no account to disclose — and a swallowed failure is worse than
+    // an error: the console would sit on "enter the emailed code" forever
+    // while the code never arrives. Letting this out rolls the challenge back
+    // and returns 503 EMAIL_DELIVERY_FAILED, which tells the operator to go
+    // fix mail rather than to doubt their password.
+    emailService.sendStaffTwoFactorCode(user.getEmail(), code, MailLocale.from(user.getLocale()));
 
     return challenge;
   }
@@ -157,14 +160,11 @@ public class StaffTwoFactorService {
     // indefinitely by spamming resends.
     challenge = challengeRepository.save(challenge);
 
-    try {
-      emailService.sendStaffTwoFactorCode(challenge.getUser().getEmail(), code);
-    } catch (RuntimeException ex) {
-      log.warn(
-          "Failed to re-send staff 2FA email to user id={}: {}",
-          challenge.getUser().getId(),
-          ex.getMessage());
-    }
+    // Same reasoning as createChallenge: the caller already holds a valid
+    // challenge id, so a delivery failure is theirs to see rather than to be
+    // hidden behind a silent success.
+    emailService.sendStaffTwoFactorCode(
+        challenge.getUser().getEmail(), code, MailLocale.from(challenge.getUser().getLocale()));
 
     return challenge;
   }

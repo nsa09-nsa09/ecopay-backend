@@ -105,7 +105,8 @@ public class NotificationService {
               channels.email(),
               title,
               body,
-              link));
+              link,
+              MailLocale.from(recipient.getLocale())));
     } catch (Exception e) {
       // Best-effort: log and move on so the triggering operation succeeds.
       log.warn(

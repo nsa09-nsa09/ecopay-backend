@@ -80,7 +80,8 @@ class StaffTwoFactorServiceTest {
 
     // Emailed plaintext code must be a 6-digit string and the same instance is returned.
     ArgumentCaptor<String> codeCaptor = ArgumentCaptor.forClass(String.class);
-    verify(emailService).sendStaffTwoFactorCode(eq(user.getEmail()), codeCaptor.capture());
+    verify(emailService)
+        .sendStaffTwoFactorCode(eq(user.getEmail()), codeCaptor.capture(), any(MailLocale.class));
     String sentCode = codeCaptor.getValue();
     assertTrue(sentCode.matches("\\d{6}"));
     assertSame(saved, challenge);
@@ -170,7 +171,8 @@ class StaffTwoFactorServiceTest {
     when(challengeRepository.findById("c-1")).thenReturn(Optional.of(challenge));
 
     assertThrows(TwoFactorChallengeException.class, () -> service.resendChallenge("c-1"));
-    verify(emailService, never()).sendStaffTwoFactorCode(anyString(), anyString());
+    verify(emailService, never())
+        .sendStaffTwoFactorCode(anyString(), anyString(), any(MailLocale.class));
   }
 
   @Test
@@ -185,7 +187,8 @@ class StaffTwoFactorServiceTest {
     service.resendChallenge("c-1");
 
     assertEquals("HASH2", challenge.getCodeHash());
-    verify(emailService, times(1)).sendStaffTwoFactorCode(eq(user.getEmail()), anyString());
+    verify(emailService, times(1))
+        .sendStaffTwoFactorCode(eq(user.getEmail()), anyString(), any(MailLocale.class));
   }
 
   @Test

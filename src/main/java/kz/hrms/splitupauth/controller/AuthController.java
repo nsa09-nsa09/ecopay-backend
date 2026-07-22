@@ -7,6 +7,7 @@ import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.service.AuthService;
+import kz.hrms.splitupauth.service.MailLocale;
 import kz.hrms.splitupauth.service.PhoneVerificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,8 +44,12 @@ public class AuthController {
 
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(
-      @Valid @RequestBody RegisterRequest request, HttpServletResponse response) {
-    AuthResponse auth = authService.register(request);
+      @Valid @RequestBody RegisterRequest request,
+      HttpServletResponse response,
+      @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+    // Captured on the account so every later email (verification, password
+    // reset, notifications) goes out in the language the user signed up in.
+    AuthResponse auth = authService.register(request, MailLocale.from(acceptLanguage));
     // Regular sign-up issues no tokens — the account must confirm the emailed
     // code first. Only the dev auto-verify path returns a refresh token here.
     if (auth.getRefreshToken() != null) {
@@ -87,8 +92,7 @@ public class AuthController {
    * verified phones) to avoid phone-number enumeration. Mirrors /resend-verification.
    */
   @PostMapping("/resend-phone-code")
-  public ResponseEntity<Void> resendPhoneCode(
-      @Valid @RequestBody RequestPhoneCodeRequest request) {
+  public ResponseEntity<Void> resendPhoneCode(@Valid @RequestBody RequestPhoneCodeRequest request) {
     authService.resendPhoneCode(request.getPhone());
     return ResponseEntity.ok().build();
   }

@@ -220,6 +220,13 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <argLine>-Duser.timezone=Asia/Almaty</argLine>
+                    <!--
+                      live-dns tests query the public internet and assert on records
+                      we do not control, so they must not gate a normal build. Run
+                      them deliberately when touching EmailDomainService:
+                        ./mvnw test -Dtest=EmailDomainServiceLiveDnsTest -Dgroups=live-dns
+                    -->
+                    <excludedGroups>live-dns</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>

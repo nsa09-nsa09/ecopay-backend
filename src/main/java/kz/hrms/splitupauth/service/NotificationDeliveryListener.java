@@ -44,7 +44,7 @@ public class NotificationDeliveryListener {
     if (event.sendEmail() && event.email() != null && !event.email().isBlank()) {
       try {
         emailService.sendNotificationEmail(
-            event.email(), event.emailSubject(), event.emailBody(), event.link());
+            event.email(), event.emailSubject(), event.emailBody(), event.link(), event.locale());
       } catch (Exception e) {
         log.warn("Failed to email notification to user={}: {}", event.userId(), e.getMessage());
       }

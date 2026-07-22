@@ -130,6 +130,42 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
   }
 
+  /**
+   * Pre-delivery email checks (format / MX). The reason code and the typo suggestion both travel in
+   * the errors map so the client can pick a specific message and offer a one-click correction —
+   * `message` alone is not enough to distinguish "bad format" from "domain doesn't exist".
+   */
+  @ExceptionHandler(InvalidEmailException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidEmail(InvalidEmailException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    error.setCode(ex.getReason().name());
+
+    Map<String, String> errors = new HashMap<>();
+    errors.put("code", ex.getReason().name());
+    errors.put("email", ex.getMessage());
+    if (ex.getSuggestion() != null) {
+      errors.put("suggestion", ex.getSuggestion());
+    }
+    error.setErrors(errors);
+
+    return ResponseEntity.badRequest().body(error);
+  }
+
+  /**
+   * SMTP was unreachable or kept failing after retries. This is our problem, not the user's, so it
+   * must read as "try again shortly" rather than a generic 500.
+   */
+  @ExceptionHandler(MailDeliveryException.class)
+  public ResponseEntity<ErrorResponse> handleMailDelivery(MailDeliveryException ex) {
+    // The cause chain can carry the SMTP transcript; log the summary only.
+    log.error("Email delivery failed: {}", ex.getMessage());
+    ErrorResponse error =
+        new ErrorResponse(HttpStatus.SERVICE_UNAVAILABLE.value(), ex.getMessage());
+    error.setCode("EMAIL_DELIVERY_FAILED");
+    error.setErrors(Map.of("code", "EMAIL_DELIVERY_FAILED"));
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+  }
+
   @ExceptionHandler(TwoFactorChallengeException.class)
   public ResponseEntity<ErrorResponse> handleTwoFactorChallenge(TwoFactorChallengeException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());

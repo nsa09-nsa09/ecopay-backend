@@ -34,6 +34,25 @@ public class AuthService {
   /** Wrong-code attempts allowed before the confirmation must be restarted (resent). */
   private static final int MAX_CODE_ATTEMPTS = 5;
 
+  /** Minimum seconds between two verification emails for the same account. */
+  static final int RESEND_COOLDOWN_SECONDS = 60;
+
+  /** Verification emails allowed per account per hour (anti-mailbomb). */
+  static final int MAX_SENDS_PER_HOUR = 5;
+
+  /**
+   * Lifetime of a one-time confirmation token, shared by the emailed link and the 6-digit code.
+   *
+   * <p>Short on purpose: the token is a bearer credential sitting in a mailbox, and a mailbox is
+   * exactly what gets forwarded, synced to a phone that later changes hands, or read by whoever
+   * borrows an unlocked laptop. Thirty minutes covers "open the mail, type the code" and little
+   * else. The user is never stuck — /auth/resend-verification issues a fresh one.
+   */
+  public static final int CONFIRMATION_TTL_MINUTES = 30;
+
+  /** Lifetime of a password-reset link. Same reasoning, and the stakes are higher. */
+  public static final int PASSWORD_RESET_TTL_MINUTES = 30;
+
   private final UserRepository userRepository;
   private final PasswordResetTokenRepository passwordResetTokenRepository;
   private final EmailVerificationTokenRepository emailVerificationTokenRepository;
@@ -48,20 +67,27 @@ public class AuthService {
   private final SlugService slugService;
   private final PhoneVerificationService phoneVerificationService;
   private final EmailChangeService emailChangeService;
+  private final EmailValidationService emailValidationService;
 
   // Dev/test only: auto-verify email on registration so login works without SMTP.
   @Value("${app.dev.auto-verify-email:false}")
   private boolean devAutoVerifyEmail;
 
   @Transactional
-  public AuthResponse register(RegisterRequest request) {
+  public AuthResponse register(RegisterRequest request, MailLocale locale) {
     boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
+
+    // Email registration attaches a brand-new address, so it gets the full
+    // pipeline: canonicalise, then reject malformed addresses and domains that
+    // publish no MX. Skipping this is how gmial.com rows end up in the table.
+    String email =
+        byPhone ? null : emailValidationService.normalizeAndValidateDeliverable(request.getEmail());
 
     if (byPhone) {
       if (userRepository.existsByPhone(request.getPhone())) {
         throw new UserAlreadyExistsException("User with this phone already exists");
       }
-    } else if (userRepository.existsByEmail(request.getEmail())) {
+    } else if (userRepository.existsByEmail(email)) {
       throw new UserAlreadyExistsException("User with this email already exists");
     }
 
@@ -83,8 +109,9 @@ public class AuthService {
     // code is confirmed).
     User user =
         User.builder()
-            .email(byPhone ? null : request.getEmail())
+            .email(email)
             .phone(byPhone ? request.getPhone() : null)
+            .locale(locale.tag())
             .password(passwordEncoder.encode(request.getPassword()))
             .displayName(request.getDisplayName())
             .status(UserStatus.ACTIVE)
@@ -166,14 +193,25 @@ public class AuthService {
 
   @Transactional
   public AuthResponse login(LoginRequest request) {
-    String identifier = request.identifier();
+    boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
+
+    // Format check only (level 1). The address already exists in the database
+    // here, so an MX lookup would add latency without adding safety — and would
+    // lock out an existing user whose provider's DNS is having a bad day.
+    // Normalizing is not optional: without it "User@Gmail.com" misses the row
+    // stored as "user@gmail.com" and reads as wrong credentials.
+    String email =
+        byPhone ? null : emailValidationService.normalizeAndValidateFormat(request.getEmail());
+
+    // Rate-limit on the canonical identifier so case variants share one bucket
+    // rather than giving an attacker a fresh allowance per spelling.
+    String identifier = byPhone ? request.getPhone() : email;
     rateLimitService.checkLoginAttempts(identifier);
 
-    boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
     User user =
         (byPhone
                 ? userRepository.findByPhone(request.getPhone())
-                : userRepository.findByEmail(request.getEmail()))
+                : userRepository.findByEmail(email))
             .orElseThrow(
                 () -> {
                   rateLimitService.recordLoginAttempt(identifier, false);
@@ -193,7 +231,8 @@ public class AuthService {
     // The account counts as confirmed when either channel it registered with
     // is verified: a confirmed email, or a confirmed phone (phone-registered
     // accounts have no email at all until one is added in the profile).
-    boolean emailConfirmed = user.getEmail() != null && Boolean.TRUE.equals(user.getEmailVerified());
+    boolean emailConfirmed =
+        user.getEmail() != null && Boolean.TRUE.equals(user.getEmailVerified());
     boolean phoneConfirmed = user.getPhoneVerifiedAt() != null;
     if (!emailConfirmed && !phoneConfirmed) {
       if (user.getEmail() == null) {
@@ -296,7 +335,11 @@ public class AuthService {
 
   @Transactional
   public void requestPasswordReset(PasswordResetRequest request) {
-    User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+    // Normalize only — never validate loudly here. Any thrown error (bad
+    // format, dead domain) would be a different response than the silent
+    // success below, handing an attacker an oracle for which addresses exist.
+    String email = emailValidationService.normalize(request.getEmail());
+    User user = email == null ? null : userRepository.findByEmail(email).orElse(null);
 
     // Silent for unknown addresses AND for accounts whose email was never
     // confirmed: password recovery only works through a verified email, and
@@ -312,13 +355,23 @@ public class AuthService {
         PasswordResetToken.builder()
             .token(token)
             .user(user)
-            .expiresAt(LocalDateTime.now().plusHours(1))
+            .expiresAt(LocalDateTime.now().plusMinutes(PASSWORD_RESET_TTL_MINUTES))
             .used(false)
             .build();
 
     passwordResetTokenRepository.save(resetToken);
 
-    emailService.sendPasswordResetEmail(user.getEmail(), token);
+    try {
+      emailService.sendPasswordResetEmail(
+          user.getEmail(), token, MailLocale.from(user.getLocale()));
+    } catch (MailDeliveryException e) {
+      // This endpoint answers identically for unknown and unverified addresses
+      // (see above), so it must answer identically when our mail server is
+      // down too — otherwise 200-vs-503 tells an attacker exactly which
+      // addresses are registered and verified. The token stays valid; the user
+      // can request another one once delivery recovers.
+      log.error("Password-reset email failed for account id={}: {}", user.getId(), e.getMessage());
+    }
   }
 
   @Transactional
@@ -381,14 +434,32 @@ public class AuthService {
 
   @Transactional
   public void resendVerificationEmail(ResendVerificationRequest request) {
-    User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+    // Silent path: normalize but never throw, same enumeration argument as
+    // requestPasswordReset.
+    String email = emailValidationService.normalize(request.getEmail());
+    User user = email == null ? null : userRepository.findByEmail(email).orElse(null);
 
     // Stay silent for unknown or already-verified accounts to avoid email enumeration.
     if (user == null || Boolean.TRUE.equals(user.getEmailVerified())) {
       return;
     }
 
-    sendVerificationEmail(user);
+    try {
+      sendVerificationEmail(user);
+    } catch (TooManyRequestsException e) {
+      // This endpoint is unauthenticated and takes an arbitrary address, so a
+      // 429 here would answer "yes, that address exists and is unverified" —
+      // exactly the enumeration signal the silent branches above avoid. Drop
+      // the send instead; the client shows its own resend countdown.
+      log.debug("Suppressed resend for rate-limited account id={}", user.getId());
+    } catch (MailDeliveryException e) {
+      // Same reasoning, and it bites harder: while SMTP is down an unknown
+      // address returns 200 and a real one would return 503, handing an
+      // attacker a clean oracle over the whole user base. Our outage must not
+      // become a disclosure, so answer identically and page the operator
+      // through the logs instead.
+      log.error("Verification resend failed for account id={}: {}", user.getId(), e.getMessage());
+    }
   }
 
   /**
@@ -397,9 +468,10 @@ public class AuthService {
    */
   @Transactional
   public AuthResponse verifyEmailCode(VerifyEmailCodeRequest request) {
+    String email = emailValidationService.normalize(request.getEmail());
     User user =
         userRepository
-            .findByEmail(request.getEmail())
+            .findByEmail(email)
             .orElseThrow(
                 () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
 
@@ -444,7 +516,30 @@ public class AuthService {
     return issueTokens(user);
   }
 
+  /**
+   * Issues a fresh verification token + code and emails it.
+   *
+   * <p>Rate-limited on the same terms as the profile email-change flow: an unauthenticated caller
+   * can hit /auth/resend-verification with any address, so without a cooldown this endpoint is a
+   * free way to mailbomb a third party and burn our sending reputation.
+   */
   private void sendVerificationEmail(User user) {
+    LocalDateTime now = LocalDateTime.now();
+
+    long sendsLastHour =
+        emailVerificationTokenRepository.countByUserAndCreatedAtAfter(user, now.minusHours(1));
+    if (sendsLastHour >= MAX_SENDS_PER_HOUR) {
+      throw new TooManyRequestsException("Too many confirmation emails. Try again later.");
+    }
+
+    emailVerificationTokenRepository
+        .findTopByUserOrderByCreatedAtDesc(user)
+        .filter(t -> t.getCreatedAt().isAfter(now.minusSeconds(RESEND_COOLDOWN_SECONDS)))
+        .ifPresent(
+            t -> {
+              throw new TooManyRequestsException("Please wait before requesting another code.");
+            });
+
     emailVerificationTokenRepository.deleteByUser(user);
 
     String token = UUID.randomUUID().toString();
@@ -455,13 +550,14 @@ public class AuthService {
             .user(user)
             .codeHash(passwordEncoder.encode(code))
             .attempts(0)
-            .expiresAt(LocalDateTime.now().plusHours(24))
+            .expiresAt(now.plusMinutes(CONFIRMATION_TTL_MINUTES))
             .used(false)
             .build();
 
     emailVerificationTokenRepository.save(verificationToken);
 
-    emailService.sendVerificationEmail(user.getEmail(), token, code);
+    emailService.sendVerificationEmail(
+        user.getEmail(), token, code, MailLocale.from(user.getLocale()));
   }
 
   private String generate6DigitCode() {

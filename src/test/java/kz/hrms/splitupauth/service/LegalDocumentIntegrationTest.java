@@ -217,7 +217,7 @@ class LegalDocumentIntegrationTest extends AbstractIntegrationTest {
     req.setDisplayName("OK User");
     req.setTermsAccepted(true);
 
-    authService.register(req);
+    authService.register(req, MailLocale.RU);
 
     User saved = userRepository.findByEmail(req.getEmail()).orElseThrow();
     assertNotNull(saved.getTermsAcceptedAt(), "Registration must stamp terms_accepted_at.");

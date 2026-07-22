@@ -45,8 +45,7 @@ class ReputationServiceTest {
    * violations. Completed rooms are informational only and do not affect the score.
    */
   private void stubRatings(User u, List<Integer> ratings, long violations) {
-    List<Review> reviews =
-        ratings.stream().map(r -> Review.builder().rating(r).build()).toList();
+    List<Review> reviews = ratings.stream().map(r -> Review.builder().rating(r).build()).toList();
     lenient()
         .when(reviewRepository.findByRecipientAndHiddenByAdminFalseOrderByCreatedAtDesc(u))
         .thenReturn(reviews);

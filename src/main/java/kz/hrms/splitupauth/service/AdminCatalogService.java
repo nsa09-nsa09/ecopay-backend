@@ -18,6 +18,8 @@ import kz.hrms.splitupauth.dto.UpdateTariffRequest;
 import kz.hrms.splitupauth.entity.AdminActionLog;
 import kz.hrms.splitupauth.entity.AdminActionType;
 import kz.hrms.splitupauth.entity.Category;
+import kz.hrms.splitupauth.entity.ProviderType;
+import kz.hrms.splitupauth.entity.ServiceAccessType;
 import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
 import kz.hrms.splitupauth.entity.User;
@@ -217,6 +219,10 @@ public class AdminCatalogService {
             .name(req.getName())
             .slug(slug)
             .providerType(req.getProviderType())
+            .accessType(
+                req.getAccessType() != null
+                    ? req.getAccessType()
+                    : defaultAccessTypeFor(req.getProviderType()))
             .isActive(req.getIsActive() != null ? req.getIsActive() : true)
             .build();
     service = serviceRepository.save(service);
@@ -226,6 +232,7 @@ public class AdminCatalogService {
     newState.put("slug", service.getSlug());
     newState.put("categoryId", service.getCategory().getId());
     newState.put("providerType", service.getProviderType().name());
+    newState.put("accessType", service.getAccessType().name());
     newState.put("isActive", service.getIsActive());
     writeLog(
         admin,
@@ -256,6 +263,7 @@ public class AdminCatalogService {
     oldState.put("slug", service.getSlug());
     oldState.put("categoryId", service.getCategory().getId());
     oldState.put("providerType", service.getProviderType().name());
+    oldState.put("accessType", service.getAccessType().name());
     oldState.put("isActive", service.getIsActive());
 
     if (req.getCategoryId() != null && !req.getCategoryId().equals(service.getCategory().getId())) {
@@ -274,6 +282,9 @@ public class AdminCatalogService {
     if (req.getProviderType() != null) {
       service.setProviderType(req.getProviderType());
     }
+    if (req.getAccessType() != null) {
+      service.setAccessType(req.getAccessType());
+    }
     if (req.getIsActive() != null) {
       service.setIsActive(req.getIsActive());
     }
@@ -285,6 +296,7 @@ public class AdminCatalogService {
     newState.put("slug", service.getSlug());
     newState.put("categoryId", service.getCategory().getId());
     newState.put("providerType", service.getProviderType().name());
+    newState.put("accessType", service.getAccessType().name());
     newState.put("isActive", service.getIsActive());
     writeLog(
         admin,
@@ -604,6 +616,16 @@ public class AdminCatalogService {
       candidate = Slugifier.appendSuffix(base, suffix++);
     }
     return candidate;
+  }
+
+  /**
+   * Mirrors the V54 backfill: an operator account is the phone number, everything digital invites
+   * by address. Admins can override per service afterwards.
+   */
+  private ServiceAccessType defaultAccessTypeFor(ProviderType providerType) {
+    return providerType == ProviderType.OPERATOR || providerType == ProviderType.ISP
+        ? ServiceAccessType.PHONE
+        : ServiceAccessType.EMAIL;
   }
 
   private boolean collidesServiceSlug(String slug, Long ignoreId) {

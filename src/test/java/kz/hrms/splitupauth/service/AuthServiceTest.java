@@ -65,6 +65,13 @@ class AuthServiceTest {
   @Mock private PhoneVerificationService phoneVerificationService;
   @Mock private EmailChangeService emailChangeService;
 
+  /**
+   * Real validator, not a mock: these tests assert on normalization (case-folding, trimming), so a
+   * mock returning null would make them vacuous. The MX check is disabled so no test touches DNS.
+   */
+  private final EmailValidationService emailValidationService =
+      new EmailValidationService(new EmailDomainService(false, 100, 1, 10));
+
   private AuthService authService;
 
   @BeforeEach
@@ -84,7 +91,8 @@ class AuthServiceTest {
             legalDocumentService,
             slugService,
             phoneVerificationService,
-            emailChangeService);
+            emailChangeService,
+            emailValidationService);
   }
 
   @Test

@@ -11,6 +11,7 @@ import kz.hrms.splitupauth.dto.NotificationDto;
  * @param email recipient email, or null if not emailing
  * @param dto payload to push over websocket, or null if in-app is off
  * @param sendEmail whether to also send an email for this event
+ * @param locale language to render the email chrome in (buttons, footer)
  */
 public record NotificationDeliveryEvent(
     Long userId,
@@ -19,4 +20,5 @@ public record NotificationDeliveryEvent(
     boolean sendEmail,
     String emailSubject,
     String emailBody,
-    String link) {}
+    String link,
+    MailLocale locale) {}

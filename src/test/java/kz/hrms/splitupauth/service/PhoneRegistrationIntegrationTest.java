@@ -34,7 +34,8 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
 
   private static String uniquePhone() {
     // +77 9xx xx xx xx range, unique per test run.
-    return "+779" + String.format("%08d", SEQ.incrementAndGet() * 137 + (int) (System.nanoTime() % 100000));
+    return "+779"
+        + String.format("%08d", SEQ.incrementAndGet() * 137 + (int) (System.nanoTime() % 100000));
   }
 
   private static RegisterRequest phoneRegister(String phone) {
@@ -50,7 +51,7 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   void registerByPhone_persistsUserWithNullEmail_andIssuesNoTokensYet() {
     String phone = uniquePhone();
 
-    AuthResponse response = authService.register(phoneRegister(phone));
+    AuthResponse response = authService.register(phoneRegister(phone), MailLocale.RU);
 
     assertNull(response.getAccessToken(), "no session until the SMS code is confirmed");
     User saved = userRepository.findByPhone(phone).orElseThrow();
@@ -63,7 +64,7 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   @Test
   void fullPhoneFlow_register_confirmSms_login() {
     String phone = uniquePhone();
-    authService.register(phoneRegister(phone));
+    authService.register(phoneRegister(phone), MailLocale.RU);
 
     // Unverified phone cannot log in yet.
     LoginRequest login = new LoginRequest();
@@ -93,9 +94,10 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   @Test
   void registerByPhone_duplicatePhone_rejected() {
     String phone = uniquePhone();
-    authService.register(phoneRegister(phone));
+    authService.register(phoneRegister(phone), MailLocale.RU);
 
     assertThrows(
-        UserAlreadyExistsException.class, () -> authService.register(phoneRegister(phone)));
+        UserAlreadyExistsException.class,
+        () -> authService.register(phoneRegister(phone), MailLocale.RU));
   }
 }

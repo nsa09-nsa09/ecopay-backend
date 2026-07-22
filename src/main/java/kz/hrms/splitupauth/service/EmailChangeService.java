@@ -50,11 +50,29 @@ public class EmailChangeService {
   private final PasswordEncoder passwordEncoder;
   private final EmailService emailService;
   private final UserMapper userMapper;
+  private final EmailValidationService emailValidationService;
 
-  /** Step 1: validate the new address and email a one-time confirmation code to it. */
+  /**
+   * Step 1: validate the new address and email a one-time confirmation code to it.
+   *
+   * @param locale language for the confirmation email; also persisted on the account so later mail
+   *     (password reset, notifications) matches
+   */
   @Transactional
-  public void requestChange(User user, String newEmail) {
-    String email = newEmail.trim().toLowerCase();
+  public void requestChange(User user, String newEmail, MailLocale locale) {
+    // The principal is loaded by JwtAuthenticationFilter outside any
+    // transaction, so it arrives detached — dirty checking will not pick this
+    // up and the save() has to be explicit.
+    if (!locale.tag().equals(user.getLocale())) {
+      user.setLocale(locale.tag());
+      userRepository.save(user);
+    }
+
+    // Full pipeline: canonicalise, reject malformed addresses, and reject
+    // domains with no MX before we spend a send on them. This is the main
+    // entry point for new addresses, so it is where typos would otherwise
+    // accumulate.
+    String email = emailValidationService.normalizeAndValidateDeliverable(newEmail);
 
     if (email.equalsIgnoreCase(user.getEmail()) && Boolean.TRUE.equals(user.getEmailVerified())) {
       throw new InvalidRequestException("This email is already attached to your account");
@@ -99,7 +117,7 @@ public class EmailChangeService {
             .build();
     tokenRepository.save(verificationToken);
 
-    emailService.sendEmailChangeConfirmation(email, token, code);
+    emailService.sendEmailChangeConfirmation(email, token, code, MailLocale.from(user.getLocale()));
   }
 
   /** Step 2: confirm the code; only now is the address copied onto the account. */

@@ -1,10 +1,12 @@
 package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -41,6 +44,14 @@ class EmailChangeServiceTest {
   @Mock PasswordEncoder passwordEncoder;
   @Mock EmailService emailService;
   @Mock UserMapper userMapper;
+
+  /**
+   * Real validator, not a mock: these tests assert on normalization (case-folding, trimming), so a
+   * mock returning null would make them vacuous. The MX check is disabled so no test touches DNS.
+   */
+  @Spy
+  EmailValidationService emailValidationService =
+      new EmailValidationService(new EmailDomainService(false, 100, 1, 10));
 
   @InjectMocks EmailChangeService service;
 
@@ -64,7 +75,7 @@ class EmailChangeServiceTest {
     when(tokenRepository.findTopByUserOrderByCreatedAtDesc(user)).thenReturn(Optional.empty());
     when(passwordEncoder.encode(anyString())).thenReturn("CODE_HASH");
 
-    service.requestChange(user, "New@Test.kz");
+    service.requestChange(user, "New@Test.kz", MailLocale.RU);
 
     ArgumentCaptor<EmailVerificationToken> cap =
         ArgumentCaptor.forClass(EmailVerificationToken.class);
@@ -72,11 +83,19 @@ class EmailChangeServiceTest {
     EmailVerificationToken token = cap.getValue();
     assertEquals("new@test.kz", token.getPendingEmail(), "address must be normalized and parked");
 
-    // The account itself is untouched until confirmation.
+    // The account's address is untouched until confirmation. requestChange may
+    // still save the user to record the locale for the outgoing email, so
+    // assert on the address itself rather than on "no save happened".
     assertEquals(null, user.getEmail());
-    verify(userRepository, never()).save(any());
+    ArgumentCaptor<User> savedUser = ArgumentCaptor.forClass(User.class);
+    verify(userRepository, atMost(1)).save(savedUser.capture());
+    savedUser
+        .getAllValues()
+        .forEach(u -> assertNull(u.getEmail(), "email must not be attached before confirmation"));
 
-    verify(emailService).sendEmailChangeConfirmation(eq("new@test.kz"), anyString(), anyString());
+    verify(emailService)
+        .sendEmailChangeConfirmation(
+            eq("new@test.kz"), anyString(), anyString(), any(MailLocale.class));
   }
 
   @Test
@@ -86,8 +105,10 @@ class EmailChangeServiceTest {
     when(userRepository.findByEmail("new@test.kz")).thenReturn(Optional.of(other));
 
     assertThrows(
-        UserAlreadyExistsException.class, () -> service.requestChange(user, "new@test.kz"));
-    verify(emailService, never()).sendEmailChangeConfirmation(anyString(), anyString(), anyString());
+        UserAlreadyExistsException.class,
+        () -> service.requestChange(user, "new@test.kz", MailLocale.RU));
+    verify(emailService, never())
+        .sendEmailChangeConfirmation(anyString(), anyString(), anyString(), any(MailLocale.class));
   }
 
   @Test
@@ -96,7 +117,9 @@ class EmailChangeServiceTest {
     user.setEmail("mine@test.kz");
     user.setEmailVerified(true);
 
-    assertThrows(InvalidRequestException.class, () -> service.requestChange(user, "mine@test.kz"));
+    assertThrows(
+        InvalidRequestException.class,
+        () -> service.requestChange(user, "mine@test.kz", MailLocale.RU));
   }
 
   @Test
@@ -112,8 +135,11 @@ class EmailChangeServiceTest {
                     .expiresAt(LocalDateTime.now().plusMinutes(30))
                     .build()));
 
-    assertThrows(TooManyRequestsException.class, () -> service.requestChange(user, "new@test.kz"));
-    verify(emailService, never()).sendEmailChangeConfirmation(anyString(), anyString(), anyString());
+    assertThrows(
+        TooManyRequestsException.class,
+        () -> service.requestChange(user, "new@test.kz", MailLocale.RU));
+    verify(emailService, never())
+        .sendEmailChangeConfirmation(anyString(), anyString(), anyString(), any(MailLocale.class));
   }
 
   @Test
@@ -122,7 +148,9 @@ class EmailChangeServiceTest {
     when(userRepository.findByEmail("new@test.kz")).thenReturn(Optional.empty());
     when(tokenRepository.countByUserAndCreatedAtAfter(eq(user), any())).thenReturn(5L);
 
-    assertThrows(TooManyRequestsException.class, () -> service.requestChange(user, "new@test.kz"));
+    assertThrows(
+        TooManyRequestsException.class,
+        () -> service.requestChange(user, "new@test.kz", MailLocale.RU));
   }
 
   // ===================== confirm =====================
@@ -166,7 +194,8 @@ class EmailChangeServiceTest {
     when(tokenRepository.findByUser(user)).thenReturn(Optional.of(token));
     when(passwordEncoder.matches("999999", "CODE_HASH")).thenReturn(false);
 
-    assertThrows(InvalidVerificationCodeException.class, () -> service.confirmChange(user, "999999"));
+    assertThrows(
+        InvalidVerificationCodeException.class, () -> service.confirmChange(user, "999999"));
 
     assertEquals(1, token.getAttempts());
     assertEquals(null, user.getEmail());
@@ -179,7 +208,8 @@ class EmailChangeServiceTest {
     token.setExpiresAt(LocalDateTime.now().minusMinutes(1));
     when(tokenRepository.findByUser(user)).thenReturn(Optional.of(token));
 
-    assertThrows(VerificationCodeExpiredException.class, () -> service.confirmChange(user, "123456"));
+    assertThrows(
+        VerificationCodeExpiredException.class, () -> service.confirmChange(user, "123456"));
   }
 
   @Test
@@ -189,7 +219,8 @@ class EmailChangeServiceTest {
     token.setAttempts(5);
     when(tokenRepository.findByUser(user)).thenReturn(Optional.of(token));
 
-    assertThrows(InvalidVerificationCodeException.class, () -> service.confirmChange(user, "123456"));
+    assertThrows(
+        InvalidVerificationCodeException.class, () -> service.confirmChange(user, "123456"));
   }
 
   @Test
@@ -210,6 +241,7 @@ class EmailChangeServiceTest {
     User user = phoneOnlyUser();
     when(tokenRepository.findByUser(user)).thenReturn(Optional.empty());
 
-    assertThrows(InvalidVerificationCodeException.class, () -> service.confirmChange(user, "123456"));
+    assertThrows(
+        InvalidVerificationCodeException.class, () -> service.confirmChange(user, "123456"));
   }
 }

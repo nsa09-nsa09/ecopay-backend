@@ -61,6 +61,13 @@ class AuthServicePhoneAuthTest {
   @Mock private PhoneVerificationService phoneVerificationService;
   @Mock private EmailChangeService emailChangeService;
 
+  /**
+   * Real validator, not a mock: these tests assert on normalization (case-folding, trimming), so a
+   * mock returning null would make them vacuous. The MX check is disabled so no test touches DNS.
+   */
+  private final EmailValidationService emailValidationService =
+      new EmailValidationService(new EmailDomainService(false, 100, 1, 10));
+
   private AuthService authService;
 
   @BeforeEach
@@ -80,7 +87,8 @@ class AuthServicePhoneAuthTest {
             legalDocumentService,
             slugService,
             phoneVerificationService,
-            emailChangeService);
+            emailChangeService,
+            emailValidationService);
   }
 
   // ===================== registration =====================
@@ -92,7 +100,7 @@ class AuthServicePhoneAuthTest {
     when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userMapper.toDto(any(User.class))).thenReturn(UserDto.builder().build());
 
-    AuthResponse response = authService.register(phoneRegisterRequest());
+    AuthResponse response = authService.register(phoneRegisterRequest(), MailLocale.RU);
 
     ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
     verify(userRepository).save(cap.capture());
@@ -102,7 +110,8 @@ class AuthServicePhoneAuthTest {
     assertEquals(Boolean.FALSE, saved.getEmailVerified());
 
     verify(phoneVerificationService).requestCode(saved, PHONE);
-    verify(emailService, never()).sendVerificationEmail(anyString(), anyString(), anyString());
+    verify(emailService, never())
+        .sendVerificationEmail(anyString(), anyString(), anyString(), any(MailLocale.class));
 
     // No tokens until the SMS code is confirmed.
     assertNull(response.getAccessToken());
@@ -113,7 +122,9 @@ class AuthServicePhoneAuthTest {
   void registerByPhone_rejectsDuplicatePhone() {
     when(userRepository.existsByPhone(PHONE)).thenReturn(true);
 
-    assertThrows(UserAlreadyExistsException.class, () -> authService.register(phoneRegisterRequest()));
+    assertThrows(
+        UserAlreadyExistsException.class,
+        () -> authService.register(phoneRegisterRequest(), MailLocale.RU));
     verify(userRepository, never()).save(any());
     verify(phoneVerificationService, never()).requestCode(any(), anyString());
   }
@@ -225,8 +236,7 @@ class AuthServicePhoneAuthTest {
 
   @Test
   void passwordReset_silentlySkipsUnverifiedEmail() {
-    User user =
-        User.builder().id(3L).email("mail@test.kz").emailVerified(false).build();
+    User user = User.builder().id(3L).email("mail@test.kz").emailVerified(false).build();
     when(userRepository.findByEmail("mail@test.kz")).thenReturn(Optional.of(user));
 
     PasswordResetRequest req = new PasswordResetRequest();
@@ -234,13 +244,13 @@ class AuthServicePhoneAuthTest {
     authService.requestPasswordReset(req);
 
     verify(passwordResetTokenRepository, never()).save(any());
-    verify(emailService, never()).sendPasswordResetEmail(anyString(), anyString());
+    verify(emailService, never())
+        .sendPasswordResetEmail(anyString(), anyString(), any(MailLocale.class));
   }
 
   @Test
   void passwordReset_sendsForVerifiedEmail() {
-    User user =
-        User.builder().id(3L).email("mail@test.kz").emailVerified(true).build();
+    User user = User.builder().id(3L).email("mail@test.kz").emailVerified(true).build();
     when(userRepository.findByEmail("mail@test.kz")).thenReturn(Optional.of(user));
 
     PasswordResetRequest req = new PasswordResetRequest();
@@ -248,7 +258,8 @@ class AuthServicePhoneAuthTest {
     authService.requestPasswordReset(req);
 
     verify(passwordResetTokenRepository).save(any());
-    verify(emailService).sendPasswordResetEmail(eq("mail@test.kz"), anyString());
+    verify(emailService)
+        .sendPasswordResetEmail(eq("mail@test.kz"), anyString(), any(MailLocale.class));
   }
 
   // ===================== helpers =====================

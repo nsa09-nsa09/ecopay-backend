@@ -71,6 +71,14 @@ public class User {
   @Builder.Default
   private Boolean emailVerified = false;
 
+  /**
+   * Language the account uses the app in ("ru" | "kk" | "en"), captured from Accept-Language.
+   * Transactional email is rendered in this language; null falls back to the app default. Not a
+   * business input — nothing branches on it except message rendering.
+   */
+  @Column(length = 5)
+  private String locale;
+
   @Column(name = "owner_verified", nullable = false)
   @Builder.Default
   private Boolean ownerVerified = false;
