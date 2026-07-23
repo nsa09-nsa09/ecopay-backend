@@ -89,10 +89,10 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     req.setPassword("Test1234");
     req.setDisplayName(name);
 
-    authService.register(req, MailLocale.RU);
+    authService.register(req, MailLocale.RU, null);
     User user = userRepository.findByEmail(req.getEmail()).orElseThrow();
     String phone = "+77" + String.format("%09d", (System.nanoTime() % 1_000_000_000L));
-    phoneVerificationService.requestCode(user, phone);
+    phoneVerificationService.requestCode(user, phone, null);
     phoneVerificationService.verifyCode(user, phone, "000000");
     return userRepository.findByEmail(req.getEmail()).orElseThrow();
   }

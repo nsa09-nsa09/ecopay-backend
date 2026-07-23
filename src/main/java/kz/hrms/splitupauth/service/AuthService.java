@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -74,7 +75,8 @@ public class AuthService {
   private boolean devAutoVerifyEmail;
 
   @Transactional
-  public AuthResponse register(RegisterRequest request, MailLocale locale) {
+  public AuthResponse register(
+      RegisterRequest request, MailLocale locale, HttpServletRequest http) {
     boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
 
     // Email registration attaches a brand-new address, so it gets the full
@@ -132,7 +134,7 @@ public class AuthService {
       // SMS the 6-digit confirmation code. Cooldowns, hourly caps and code TTL
       // are enforced by PhoneVerificationService — the same protections as the
       // profile phone-verification flow.
-      phoneVerificationService.requestCode(user, request.getPhone());
+      phoneVerificationService.requestCode(user, request.getPhone(), http);
 
       // No tokens: the account must confirm the SMS code first (see
       // verifyPhoneCode), mirroring the email registration contract.
@@ -183,12 +185,16 @@ public class AuthService {
    * enforced by PhoneVerificationService.
    */
   @Transactional
-  public void resendPhoneCode(String phone) {
+  public void resendPhoneCode(String phone, HttpServletRequest http) {
     User user = userRepository.findByPhone(phone).orElse(null);
     if (user == null || user.getPhoneVerifiedAt() != null) {
+      // Charge the IP quota even though nothing is sent: this endpoint answers 200
+      // for unknown numbers on purpose, so a free silent path here would just move
+      // the enumeration oracle rather than close it.
+      phoneVerificationService.enforceIpQuota(http);
       return;
     }
-    phoneVerificationService.requestCode(user, phone);
+    phoneVerificationService.requestCode(user, phone, http);
   }
 
   @Transactional
