@@ -100,7 +100,7 @@ class AuthServicePhoneAuthTest {
     when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
     when(userMapper.toDto(any(User.class))).thenReturn(UserDto.builder().build());
 
-    AuthResponse response = authService.register(phoneRegisterRequest(), MailLocale.RU);
+    AuthResponse response = authService.register(phoneRegisterRequest(), MailLocale.RU, null);
 
     ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
     verify(userRepository).save(cap.capture());
@@ -109,7 +109,7 @@ class AuthServicePhoneAuthTest {
     assertEquals(PHONE, saved.getPhone());
     assertEquals(Boolean.FALSE, saved.getEmailVerified());
 
-    verify(phoneVerificationService).requestCode(saved, PHONE);
+    verify(phoneVerificationService).requestCode(saved, PHONE, null);
     verify(emailService, never())
         .sendVerificationEmail(anyString(), anyString(), anyString(), any(MailLocale.class));
 
@@ -124,9 +124,9 @@ class AuthServicePhoneAuthTest {
 
     assertThrows(
         UserAlreadyExistsException.class,
-        () -> authService.register(phoneRegisterRequest(), MailLocale.RU));
+        () -> authService.register(phoneRegisterRequest(), MailLocale.RU, null));
     verify(userRepository, never()).save(any());
-    verify(phoneVerificationService, never()).requestCode(any(), anyString());
+    verify(phoneVerificationService, never()).requestCode(any(), anyString(), any());
   }
 
   @Test
@@ -166,12 +166,12 @@ class AuthServicePhoneAuthTest {
   @Test
   void resendPhoneCode_staysSilentForUnknownAndVerifiedPhones() {
     when(userRepository.findByPhone(PHONE)).thenReturn(Optional.empty());
-    authService.resendPhoneCode(PHONE);
+    authService.resendPhoneCode(PHONE, null);
 
     when(userRepository.findByPhone(PHONE)).thenReturn(Optional.of(phoneUser(LocalDateTime.now())));
-    authService.resendPhoneCode(PHONE);
+    authService.resendPhoneCode(PHONE, null);
 
-    verify(phoneVerificationService, never()).requestCode(any(), anyString());
+    verify(phoneVerificationService, never()).requestCode(any(), anyString(), any());
   }
 
   @Test
@@ -179,9 +179,9 @@ class AuthServicePhoneAuthTest {
     User user = phoneUser(null);
     when(userRepository.findByPhone(PHONE)).thenReturn(Optional.of(user));
 
-    authService.resendPhoneCode(PHONE);
+    authService.resendPhoneCode(PHONE, null);
 
-    verify(phoneVerificationService).requestCode(user, PHONE);
+    verify(phoneVerificationService).requestCode(user, PHONE, null);
   }
 
   // ===================== login =====================

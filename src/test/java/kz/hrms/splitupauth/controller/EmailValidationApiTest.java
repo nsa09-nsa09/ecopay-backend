@@ -65,7 +65,7 @@ class EmailValidationApiTest {
 
   @Test
   void deadDomain_returns400_withReasonCodeAndSuggestion() throws Exception {
-    when(authService.register(any(), any()))
+    when(authService.register(any(), any(), any()))
         .thenThrow(
             new InvalidEmailException(
                 InvalidEmailException.Reason.EMAIL_DOMAIN_NOT_FOUND,
@@ -88,7 +88,7 @@ class EmailValidationApiTest {
 
   @Test
   void malformedAddress_returns400_withFormatCode() throws Exception {
-    when(authService.register(any(), any()))
+    when(authService.register(any(), any(), any()))
         .thenThrow(
             new InvalidEmailException(
                 InvalidEmailException.Reason.EMAIL_INVALID_FORMAT, "Email address is not valid"));
@@ -107,7 +107,7 @@ class EmailValidationApiTest {
 
   @Test
   void smtpFailure_returns503_notA500() throws Exception {
-    when(authService.register(any(), any()))
+    when(authService.register(any(), any(), any()))
         .thenThrow(new MailDeliveryException("Unable to send email right now"));
 
     mockMvc
@@ -123,7 +123,7 @@ class EmailValidationApiTest {
 
   @Test
   void acceptLanguage_reachesTheServiceAsMailLocale() throws Exception {
-    when(authService.register(any(), any())).thenReturn(AuthResponse.builder().build());
+    when(authService.register(any(), any(), any())).thenReturn(AuthResponse.builder().build());
 
     mockMvc
         .perform(
@@ -134,12 +134,12 @@ class EmailValidationApiTest {
         .andExpect(status().isCreated());
 
     // 'kz' is the frontend's spelling of Kazakh; MailLocale maps it to KK.
-    verify(authService).register(any(), eq(MailLocale.KK));
+    verify(authService).register(any(), eq(MailLocale.KK), any());
   }
 
   @Test
   void missingAcceptLanguage_fallsBackToDefault() throws Exception {
-    when(authService.register(any(), any())).thenReturn(AuthResponse.builder().build());
+    when(authService.register(any(), any(), any())).thenReturn(AuthResponse.builder().build());
 
     mockMvc
         .perform(
@@ -148,12 +148,12 @@ class EmailValidationApiTest {
                 .content(registerBody("user@example.com")))
         .andExpect(status().isCreated());
 
-    verify(authService).register(any(), eq(MailLocale.RU));
+    verify(authService).register(any(), eq(MailLocale.RU), any());
   }
 
   @Test
   void fullBrowserAcceptLanguageHeader_isParsedNotRejected() throws Exception {
-    when(authService.register(any(), any())).thenReturn(AuthResponse.builder().build());
+    when(authService.register(any(), any(), any())).thenReturn(AuthResponse.builder().build());
 
     mockMvc
         .perform(
@@ -163,7 +163,7 @@ class EmailValidationApiTest {
                 .content(registerBody("user@example.com")))
         .andExpect(status().isCreated());
 
-    verify(authService).register(any(), eq(MailLocale.EN));
+    verify(authService).register(any(), eq(MailLocale.EN), any());
   }
 
   // ===================== resend throttling =====================

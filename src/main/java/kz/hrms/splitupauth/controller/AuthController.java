@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.time.Duration;
@@ -45,11 +46,12 @@ public class AuthController {
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(
       @Valid @RequestBody RegisterRequest request,
+      HttpServletRequest httpRequest,
       HttpServletResponse response,
       @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
     // Captured on the account so every later email (verification, password
     // reset, notifications) goes out in the language the user signed up in.
-    AuthResponse auth = authService.register(request, MailLocale.from(acceptLanguage));
+    AuthResponse auth = authService.register(request, MailLocale.from(acceptLanguage), httpRequest);
     // Regular sign-up issues no tokens — the account must confirm the emailed
     // code first. Only the dev auto-verify path returns a refresh token here.
     if (auth.getRefreshToken() != null) {
@@ -92,8 +94,9 @@ public class AuthController {
    * verified phones) to avoid phone-number enumeration. Mirrors /resend-verification.
    */
   @PostMapping("/resend-phone-code")
-  public ResponseEntity<Void> resendPhoneCode(@Valid @RequestBody RequestPhoneCodeRequest request) {
-    authService.resendPhoneCode(request.getPhone());
+  public ResponseEntity<Void> resendPhoneCode(
+      @Valid @RequestBody RequestPhoneCodeRequest request, HttpServletRequest httpRequest) {
+    authService.resendPhoneCode(request.getPhone(), httpRequest);
     return ResponseEntity.ok().build();
   }
 
@@ -202,8 +205,10 @@ public class AuthController {
 
   @PostMapping("/phone/request-code")
   public ResponseEntity<Void> requestPhoneCode(
-      @AuthenticationPrincipal User user, @Valid @RequestBody RequestPhoneCodeRequest request) {
-    phoneVerificationService.requestCode(user, request.getPhone());
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody RequestPhoneCodeRequest request,
+      HttpServletRequest httpRequest) {
+    phoneVerificationService.requestCode(user, request.getPhone(), httpRequest);
     return ResponseEntity.noContent().build();
   }
 

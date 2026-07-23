@@ -51,7 +51,7 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   void registerByPhone_persistsUserWithNullEmail_andIssuesNoTokensYet() {
     String phone = uniquePhone();
 
-    AuthResponse response = authService.register(phoneRegister(phone), MailLocale.RU);
+    AuthResponse response = authService.register(phoneRegister(phone), MailLocale.RU, null);
 
     assertNull(response.getAccessToken(), "no session until the SMS code is confirmed");
     User saved = userRepository.findByPhone(phone).orElseThrow();
@@ -64,7 +64,7 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   @Test
   void fullPhoneFlow_register_confirmSms_login() {
     String phone = uniquePhone();
-    authService.register(phoneRegister(phone), MailLocale.RU);
+    authService.register(phoneRegister(phone), MailLocale.RU, null);
 
     // Unverified phone cannot log in yet.
     LoginRequest login = new LoginRequest();
@@ -94,10 +94,10 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   @Test
   void registerByPhone_duplicatePhone_rejected() {
     String phone = uniquePhone();
-    authService.register(phoneRegister(phone), MailLocale.RU);
+    authService.register(phoneRegister(phone), MailLocale.RU, null);
 
     assertThrows(
         UserAlreadyExistsException.class,
-        () -> authService.register(phoneRegister(phone), MailLocale.RU));
+        () -> authService.register(phoneRegister(phone), MailLocale.RU, null));
   }
 }
