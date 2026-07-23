@@ -92,6 +92,26 @@ class PhoneRegistrationIntegrationTest extends AbstractIntegrationTest {
   }
 
   @Test
+  void severalEmaillessAccounts_coexist_underTheUniqueEmailConstraint() {
+    // users.email keeps its UNIQUE constraint after V52 dropped NOT NULL. It is a
+    // plain constraint (no WHERE, no expression), so Postgres treats NULLs as
+    // distinct and any number of phone-registered rows fit alongside each other.
+    // A partial/expression index — or NULLS NOT DISTINCT — would make the second
+    // registration below fail on flush, which is exactly what this pins down.
+    String first = uniquePhone();
+    String second = uniquePhone();
+    String third = uniquePhone();
+
+    authService.register(phoneRegister(first), MailLocale.RU, null);
+    authService.register(phoneRegister(second), MailLocale.RU, null);
+    authService.register(phoneRegister(third), MailLocale.RU, null);
+
+    for (String phone : new String[] {first, second, third}) {
+      assertNull(userRepository.findByPhone(phone).orElseThrow().getEmail());
+    }
+  }
+
+  @Test
   void registerByPhone_duplicatePhone_rejected() {
     String phone = uniquePhone();
     authService.register(phoneRegister(phone), MailLocale.RU, null);

@@ -224,6 +224,18 @@ public class AdminUserController {
     Role prev = target.getRole();
     Role next = request.getRole();
 
+    // Staff sign-in is gated on an emailed 2FA code, so an account with no
+    // confirmed email cannot complete it. Since V52 made users.email nullable,
+    // phone-registered accounts reach this endpoint with email == null —
+    // promoting one would hand out a role its owner can never actually use.
+    // Refuse here, where the admin can still act on it (ask the user to add an
+    // email in their profile first), rather than at their next login.
+    if ((next == Role.ADMIN || next == Role.SUPPORT)
+        && !(target.getEmail() != null && Boolean.TRUE.equals(target.getEmailVerified()))) {
+      throw new ForbiddenOperationException(
+          "User must have a verified email before being granted a staff role");
+    }
+
     target.setRole(next);
     target = userRepository.save(target);
 
