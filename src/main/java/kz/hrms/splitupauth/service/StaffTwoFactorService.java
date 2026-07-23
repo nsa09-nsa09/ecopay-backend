@@ -48,6 +48,16 @@ public class StaffTwoFactorService {
       throw new TwoFactorChallengeException("2FA is not required for this account");
     }
 
+    // Backstop for the guard in AdminUserController.changeRole. Reachable for
+    // accounts promoted before that guard existed, or seeded straight into the
+    // DB. Without it MimeMessageHelper.setTo(null) raises IllegalArgumentException
+    // — unmapped, so the operator gets an opaque 500 instead of being told what
+    // is actually wrong with the account.
+    if (user.getEmail() == null || user.getEmail().isBlank()) {
+      throw new TwoFactorChallengeException(
+          "This staff account has no email address to send the sign-in code to");
+    }
+
     String code = generate6DigitCode();
     LocalDateTime now = LocalDateTime.now();
 
