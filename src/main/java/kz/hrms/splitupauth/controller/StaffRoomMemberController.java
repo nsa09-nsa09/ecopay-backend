@@ -25,7 +25,7 @@ public class StaffRoomMemberController {
       @AuthenticationPrincipal User user,
       @Valid @RequestBody RevealIdentifierRequest request,
       HttpServletRequest httpRequest) {
-    return ResponseEntity.ok(
+    return SensitiveResponseHeaders.ok(
         roomMemberService.revealIdentifierForStaff(roomId, memberId, user, request, httpRequest));
   }
 }

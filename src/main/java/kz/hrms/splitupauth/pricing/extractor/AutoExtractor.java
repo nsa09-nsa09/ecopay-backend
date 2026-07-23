@@ -60,9 +60,14 @@ public class AutoExtractor implements PriceExtractor {
 
   Optional<ParsedPrice> sweep(String body, String expectedCurrency) {
     if (body == null || body.isBlank()) return Optional.empty();
+    if (body.length() > 500_000) {
+      body = body.substring(0, 500_000);
+    }
     for (Pattern p : List.of(SWEEP, SWEEP_TRAILING)) {
       Matcher m = p.matcher(body);
+      int candidates = 0;
       while (m.find()) {
+        if (++candidates > 100) return Optional.empty();
         String pre = safeGroup(m, "pre");
         String post = safeGroup(m, "post");
         String context = (pre == null ? "" : pre) + m.group("num") + (post == null ? "" : post);

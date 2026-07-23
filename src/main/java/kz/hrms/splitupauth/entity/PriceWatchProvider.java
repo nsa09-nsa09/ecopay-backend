@@ -58,7 +58,7 @@ public class PriceWatchProvider {
   @Column(name = "plan_name", nullable = false, length = 200)
   private String planName;
 
-  @Column(name = "url", nullable = false, columnDefinition = "TEXT")
+  @Column(name = "url", columnDefinition = "TEXT")
   private String url;
 
   @Column(name = "locale", length = 20)
@@ -111,6 +111,12 @@ public class PriceWatchProvider {
 
   @Column(name = "last_currency", length = 10)
   private String lastCurrency;
+
+  @Column(name = "lease_owner", length = 100)
+  private String leaseOwner;
+
+  @Column(name = "lease_until")
+  private LocalDateTime leaseUntil;
 
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;

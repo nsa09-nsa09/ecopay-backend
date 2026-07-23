@@ -25,7 +25,6 @@ public class CreatePriceWatchProviderRequest {
   @Size(max = 200)
   private String planName;
 
-  @NotBlank
   @Size(max = 2000)
   private String url;
 

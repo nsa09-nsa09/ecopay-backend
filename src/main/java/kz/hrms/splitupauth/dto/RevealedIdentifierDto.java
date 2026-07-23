@@ -1,14 +1,16 @@
 package kz.hrms.splitupauth.dto;
 
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
+import lombok.ToString;
 
-@Data
+@Getter
 @Builder
+@ToString(exclude = "identifierValue")
 public class RevealedIdentifierDto {
   private Long roomId;
   private Long roomMemberId;
   private String identifierType;
   private String identifierValue;
-  private String revealedForReason;
+  private Long revealTtlSeconds;
 }

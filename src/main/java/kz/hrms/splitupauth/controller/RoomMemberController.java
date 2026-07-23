@@ -86,7 +86,7 @@ public class RoomMemberController {
       @AuthenticationPrincipal User user,
       @Valid @RequestBody RevealIdentifierRequest request,
       HttpServletRequest httpRequest) {
-    return ResponseEntity.ok(
+    return SensitiveResponseHeaders.ok(
         roomMemberService.revealIdentifierForOwner(roomId, memberId, user, request, httpRequest));
   }
 }

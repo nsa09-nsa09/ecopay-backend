@@ -16,6 +16,24 @@ Get-Content .env | ForEach-Object {
     }
 }
 
+if (-not $env:FLYWAY_ENABLED) {
+    [System.Environment]::SetEnvironmentVariable("FLYWAY_ENABLED", "false", "Process")
+}
+
+$port = if ($env:SERVER_PORT) { [int]$env:SERVER_PORT } else { 8080 }
+$listeners = netstat -ano | Select-String ":$port\s+.*LISTENING"
+if ($listeners) {
+    Write-Host "Port $port is already in use:" -ForegroundColor Yellow
+    $pids = $listeners | ForEach-Object { ($_ -split '\s+')[-1] } | Sort-Object -Unique
+    foreach ($processId in $pids) {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        $name = if ($process) { $process.ProcessName } else { "unknown" }
+        Write-Host "  PID $processId ($name)" -ForegroundColor Yellow
+    }
+    Write-Host "Stop that process or set SERVER_PORT in .env, e.g. SERVER_PORT=8081." -ForegroundColor Yellow
+    exit 1
+}
+
 Write-Host "Running..." -ForegroundColor Green
 
 .\mvnw.cmd spring-boot:run

@@ -6,10 +6,12 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 @Entity
 @Table(name = "room_member_identifiers")
 @Data
+@ToString(exclude = {"roomMember", "identifierEncrypted"})
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor

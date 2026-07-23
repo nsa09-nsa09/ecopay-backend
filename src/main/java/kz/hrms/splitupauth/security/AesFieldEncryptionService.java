@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 public class AesFieldEncryptionService implements FieldEncryptionService {
 
   private static final String ALGORITHM = "AES/GCM/NoPadding";
+  private static final String CURRENT_PREFIX = "v1:gcm:";
   private static final int TAG_LENGTH_BIT = 128;
   private static final int IV_LENGTH_BYTE = 12;
 
@@ -28,6 +29,11 @@ public class AesFieldEncryptionService implements FieldEncryptionService {
 
   @PostConstruct
   public void init() {
+    if (base64Key == null
+        || base64Key.isBlank()
+        || "replace-with-32-byte-base64-key".equals(base64Key.trim())) {
+      throw new IllegalStateException("Field encryption key must be configured explicitly");
+    }
     byte[] decodedKey = Base64.getDecoder().decode(base64Key);
     if (decodedKey.length != 32) {
       throw new IllegalStateException("Field encryption key must be 32 bytes (Base64 encoded)");
@@ -51,7 +57,7 @@ public class AesFieldEncryptionService implements FieldEncryptionService {
       byteBuffer.put(iv);
       byteBuffer.put(cipherText);
 
-      return Base64.getEncoder().encodeToString(byteBuffer.array());
+      return CURRENT_PREFIX + Base64.getEncoder().encodeToString(byteBuffer.array());
     } catch (Exception ex) {
       throw new IllegalStateException("Failed to encrypt field", ex);
     }
@@ -60,7 +66,11 @@ public class AesFieldEncryptionService implements FieldEncryptionService {
   @Override
   public String decrypt(String encryptedValue) {
     try {
-      byte[] decoded = Base64.getDecoder().decode(encryptedValue);
+      String payload =
+          encryptedValue != null && encryptedValue.startsWith(CURRENT_PREFIX)
+              ? encryptedValue.substring(CURRENT_PREFIX.length())
+              : encryptedValue;
+      byte[] decoded = Base64.getDecoder().decode(payload);
 
       ByteBuffer byteBuffer = ByteBuffer.wrap(decoded);
       byte[] iv = new byte[IV_LENGTH_BYTE];

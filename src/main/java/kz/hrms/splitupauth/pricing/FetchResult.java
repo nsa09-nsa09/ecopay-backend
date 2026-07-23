@@ -24,7 +24,7 @@ public record FetchResult(
 
   public static FetchResult notModified(int status, String etag, String lastModified) {
     return new FetchResult(
-        null, PriceSnapshotOutcome.SUCCESS, status, null, etag, lastModified, true);
+        null, PriceSnapshotOutcome.NOT_MODIFIED, status, null, etag, lastModified, true);
   }
 
   public static FetchResult fetchFailed(Integer status, String message) {
@@ -34,5 +34,9 @@ public record FetchResult(
 
   public static FetchResult blocked(Integer status, String message) {
     return new FetchResult(null, PriceSnapshotOutcome.BLOCKED, status, message, null, null, false);
+  }
+
+  public static FetchResult failed(PriceSnapshotOutcome outcome, Integer status, String message) {
+    return new FetchResult(null, outcome, status, message, null, null, false);
   }
 }

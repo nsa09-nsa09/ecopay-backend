@@ -23,11 +23,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class RegexExtractor implements PriceExtractor {
 
+  private static final int MAX_PATTERN_LENGTH = 500;
+  private static final int MAX_INPUT_LENGTH = 500_000;
+  private static final Pattern NESTED_QUANTIFIER = Pattern.compile("\\([^)]*[+*][^)]*\\)[+*?]");
+
   @Override
   public Optional<ParsedPrice> extract(FetchedPage page, JsonNode config) {
     if (config == null || !config.has("pattern")) return Optional.empty();
     String pattern = config.get("pattern").asText();
     if (pattern == null || pattern.isBlank()) return Optional.empty();
+    if (pattern.length() > MAX_PATTERN_LENGTH || NESTED_QUANTIFIER.matcher(pattern).find()) {
+      return Optional.empty();
+    }
 
     Pattern p;
     try {
@@ -35,9 +42,15 @@ public class RegexExtractor implements PriceExtractor {
     } catch (Exception ex) {
       return Optional.empty();
     }
-    Matcher m = p.matcher(page.body());
+    String input = page.body() == null ? "" : page.body();
+    if (input.length() > MAX_INPUT_LENGTH) {
+      input = input.substring(0, MAX_INPUT_LENGTH);
+    }
+    Matcher m = p.matcher(input);
     if (!m.find()) return Optional.empty();
-    String hit = m.groupCount() >= 1 ? m.group(1) : m.group(0);
+    int group = config.has("group") ? config.get("group").asInt(1) : 1;
+    if (group < 0 || group > m.groupCount()) return Optional.empty();
+    String hit = group == 0 ? m.group(0) : m.group(group);
 
     Optional<java.math.BigDecimal> num = PriceNumberParser.parseNumber(hit);
     if (num.isEmpty()) return Optional.empty();

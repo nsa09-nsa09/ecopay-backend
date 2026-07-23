@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -25,14 +25,14 @@ import kz.hrms.splitupauth.dto.RevealedIdentifierDto;
 import kz.hrms.splitupauth.dto.RoomMemberDto;
 import kz.hrms.splitupauth.entity.Dispute;
 import kz.hrms.splitupauth.entity.DisputeStatus;
+import kz.hrms.splitupauth.entity.IdentifierRevealContextType;
+import kz.hrms.splitupauth.entity.IdentifierRevealOutcome;
 import kz.hrms.splitupauth.entity.IdentifierType;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.ModerationQueue;
 import kz.hrms.splitupauth.entity.ModerationQueueStatus;
-import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
-import kz.hrms.splitupauth.entity.RoomEventLog;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomMemberIdentifier;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -49,7 +49,6 @@ import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.ModerationQueueRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
-import kz.hrms.splitupauth.repository.RoomEventLogRepository;
 import kz.hrms.splitupauth.repository.RoomMemberIdentifierRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -73,13 +72,15 @@ class RoomMemberServiceTest {
   @Mock private RoomMemberMapper roomMemberMapper;
   @Mock private FieldEncryptionService fieldEncryptionService;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
-  @Mock private RoomEventLogRepository roomEventLogRepository;
   @Mock private SupportTicketRepository supportTicketRepository;
   @Mock private ModerationService moderationService;
   @Mock private DisputeRepository disputeRepository;
   @Mock private ModerationQueueRepository moderationQueueRepository;
   @Mock private RoomEventLogger roomEventLogger;
   @Mock private NotificationService notificationService;
+  @Mock private IdentifierRevealPolicy identifierRevealPolicy;
+  @Mock private IdentifierRevealAuditService identifierRevealAuditService;
+  @Mock private InMemoryRateLimiter inMemoryRateLimiter;
 
   private RoomMemberService roomMemberService;
 
@@ -93,19 +94,18 @@ class RoomMemberServiceTest {
             roomMemberMapper,
             fieldEncryptionService,
             paymentTransactionRepository,
-            roomEventLogRepository,
             supportTicketRepository,
             moderationService,
             disputeRepository,
             moderationQueueRepository,
             roomEventLogger,
-            notificationService);
+            notificationService,
+            identifierRevealPolicy,
+            identifierRevealAuditService,
+            inMemoryRateLimiter);
 
     lenient()
         .when(roomMemberRepository.save(any(RoomMember.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient()
-        .when(roomEventLogRepository.save(any(RoomEventLog.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     lenient()
         .when(roomMemberIdentifierRepository.findByRoomMember(any(RoomMember.class)))
@@ -368,9 +368,11 @@ class RoomMemberServiceTest {
     when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
     when(roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(roomMember.getId(), room))
         .thenReturn(Optional.of(roomMember));
-    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS))
-        .thenReturn(false);
+    doThrow(
+            new ForbiddenOperationException(
+                "Identifier can only be revealed after successful payment"))
+        .when(identifierRevealPolicy)
+        .ensureValidSuccessfulPayment(roomMember);
 
     ForbiddenOperationException exception =
         assertThrows(
@@ -381,7 +383,17 @@ class RoomMemberServiceTest {
 
     assertEquals(
         "Identifier can only be revealed after successful payment", exception.getMessage());
-    verify(roomEventLogRepository, never()).save(any(RoomEventLog.class));
+    verify(identifierRevealAuditService)
+        .record(
+            eq(room),
+            eq(roomMember),
+            eq(owner),
+            eq("OWNER"),
+            nullable(IdentifierRevealContextType.class),
+            nullable(Long.class),
+            eq(request.getReasonCode()),
+            eq(IdentifierRevealOutcome.DENIED),
+            any(HttpServletRequest.class));
   }
 
   @Test
@@ -395,9 +407,6 @@ class RoomMemberServiceTest {
     when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
     when(roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(roomMember.getId(), room))
         .thenReturn(Optional.of(roomMember));
-    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS))
-        .thenReturn(true);
     when(roomMemberIdentifierRepository.findByRoomMember(roomMember))
         .thenReturn(Optional.of(identifier));
     when(fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted()))
@@ -409,17 +418,17 @@ class RoomMemberServiceTest {
 
     assertEquals("+77001234567", result.getIdentifierValue());
 
-    ArgumentCaptor<RoomEventLog> logCaptor = ArgumentCaptor.forClass(RoomEventLog.class);
-    verify(roomEventLogRepository).save(logCaptor.capture());
-    RoomEventLog log = logCaptor.getValue();
-
-    assertEquals("OWNER", log.getActorRole());
-    assertEquals(room.getId(), log.getRoom().getId());
-    assertEquals(roomMember.getId(), log.getRoomMember().getId());
-    assertEquals("Owner payment verified", log.getNewState().get("reason").asText());
-    assertEquals("OWNER", log.getNewState().get("audit").get("role").asText());
-    assertEquals(roomMember.getId(), log.getNewState().get("audit").get("memberId").asLong());
-    assertNotNull(log.getCreatedAt());
+    verify(identifierRevealAuditService)
+        .record(
+            eq(room),
+            eq(roomMember),
+            eq(owner),
+            eq("OWNER"),
+            nullable(IdentifierRevealContextType.class),
+            nullable(Long.class),
+            eq(request.getReasonCode()),
+            eq(IdentifierRevealOutcome.SUCCESS),
+            any(HttpServletRequest.class));
   }
 
   @Test
@@ -432,10 +441,6 @@ class RoomMemberServiceTest {
     when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
     when(roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(roomMember.getId(), room))
         .thenReturn(Optional.of(roomMember));
-    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS))
-        .thenReturn(true);
-
     ForbiddenOperationException exception =
         assertThrows(
             ForbiddenOperationException.class,
@@ -446,7 +451,17 @@ class RoomMemberServiceTest {
     assertEquals(
         "Admin/Support can reveal identifier only with moderation, support, or dispute context",
         exception.getMessage());
-    verify(roomEventLogRepository, never()).save(any(RoomEventLog.class));
+    verify(identifierRevealAuditService)
+        .record(
+            eq(room),
+            eq(roomMember),
+            eq(support),
+            eq("SUPPORT"),
+            nullable(IdentifierRevealContextType.class),
+            nullable(Long.class),
+            eq(request.getReasonCode()),
+            eq(IdentifierRevealOutcome.DENIED),
+            any(HttpServletRequest.class));
   }
 
   @Test
@@ -472,9 +487,6 @@ class RoomMemberServiceTest {
     when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
     when(roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(roomMember.getId(), room))
         .thenReturn(Optional.of(roomMember));
-    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS))
-        .thenReturn(true);
     when(supportTicketRepository.findByIdAndRoomMemberAndStatusIn(
             eq(ticket.getId()), eq(roomMember), anyList()))
         .thenReturn(Optional.of(ticket));
@@ -488,15 +500,17 @@ class RoomMemberServiceTest {
             room.getId(), roomMember.getId(), support, request, httpRequest());
 
     assertEquals("+77011234567", result.getIdentifierValue());
-    verify(roomEventLogRepository)
-        .save(
-            argThat(
-                log ->
-                    "SUPPORT".equals(log.getActorRole())
-                        && "SUPPORT".equals(log.getNewState().get("contextType").asText())
-                        && log.getNewState().get("contextId").asLong() == ticket.getId()
-                        && "Active support ticket"
-                            .equals(log.getNewState().get("audit").get("reason").asText())));
+    verify(identifierRevealAuditService)
+        .record(
+            eq(room),
+            eq(roomMember),
+            eq(support),
+            eq("SUPPORT"),
+            eq(IdentifierRevealContextType.SUPPORT),
+            eq(ticket.getId()),
+            eq(request.getReasonCode()),
+            eq(IdentifierRevealOutcome.SUCCESS),
+            any(HttpServletRequest.class));
   }
 
   @Test
@@ -522,9 +536,6 @@ class RoomMemberServiceTest {
     when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
     when(roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(roomMember.getId(), room))
         .thenReturn(Optional.of(roomMember));
-    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS))
-        .thenReturn(true);
     when(moderationQueueRepository.findByIdAndRoomMemberAndStatusIn(
             eq(queue.getId()), eq(roomMember), anyList()))
         .thenReturn(Optional.of(queue));
@@ -538,12 +549,17 @@ class RoomMemberServiceTest {
             room.getId(), roomMember.getId(), admin, request, httpRequest());
 
     assertEquals("+77021234567", result.getIdentifierValue());
-    verify(roomEventLogRepository)
-        .save(
-            argThat(
-                log ->
-                    "ADMIN".equals(log.getActorRole())
-                        && "MODERATION".equals(log.getNewState().get("contextType").asText())));
+    verify(identifierRevealAuditService)
+        .record(
+            eq(room),
+            eq(roomMember),
+            eq(admin),
+            eq("ADMIN"),
+            eq(IdentifierRevealContextType.MODERATION),
+            eq(queue.getId()),
+            eq(request.getReasonCode()),
+            eq(IdentifierRevealOutcome.SUCCESS),
+            any(HttpServletRequest.class));
   }
 
   @Test
@@ -568,9 +584,6 @@ class RoomMemberServiceTest {
     when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
     when(roomMemberRepository.findByIdAndRoomAndDeletedAtIsNull(roomMember.getId(), room))
         .thenReturn(Optional.of(roomMember));
-    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS))
-        .thenReturn(true);
     when(disputeRepository.findByIdAndRoomMemberAndStatusIn(
             eq(dispute.getId()), eq(roomMember), anyList()))
         .thenReturn(Optional.of(dispute));
@@ -584,13 +597,17 @@ class RoomMemberServiceTest {
             room.getId(), roomMember.getId(), admin, request, httpRequest());
 
     assertEquals("+77031234567", result.getIdentifierValue());
-    verify(roomEventLogRepository)
-        .save(
-            argThat(
-                log ->
-                    "DISPUTE".equals(log.getNewState().get("contextType").asText())
-                        && log.getNewState().get("audit").get("contextId").asLong()
-                            == dispute.getId()));
+    verify(identifierRevealAuditService)
+        .record(
+            eq(room),
+            eq(roomMember),
+            eq(admin),
+            eq("ADMIN"),
+            eq(IdentifierRevealContextType.DISPUTE),
+            eq(dispute.getId()),
+            eq(request.getReasonCode()),
+            eq(IdentifierRevealOutcome.SUCCESS),
+            any(HttpServletRequest.class));
   }
 
   private void mockConfirmMemberAccessLookup(Room room, User member, RoomMember roomMember) {

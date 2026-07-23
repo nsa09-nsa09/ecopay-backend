@@ -1,21 +1,20 @@
 package kz.hrms.splitupauth.service;
 
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.*;
 import kz.hrms.splitupauth.security.FieldEncryptionService;
 import kz.hrms.splitupauth.util.ContactIdentifiers;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -32,13 +31,42 @@ public class RoomMemberService {
   private final RoomMemberMapper roomMemberMapper;
   private final FieldEncryptionService fieldEncryptionService;
   private final PaymentTransactionRepository paymentTransactionRepository;
-  private final RoomEventLogRepository roomEventLogRepository;
   private final SupportTicketRepository supportTicketRepository;
   private final ModerationService moderationService;
   private final DisputeRepository disputeRepository;
   private final ModerationQueueRepository moderationQueueRepository;
   private final RoomEventLogger roomEventLogger;
   private final NotificationService notificationService;
+  private final IdentifierRevealPolicy identifierRevealPolicy;
+  private final IdentifierRevealAuditService identifierRevealAuditService;
+  private final InMemoryRateLimiter inMemoryRateLimiter;
+
+  @Value("${app.identifier-reveal.ttl-seconds:30}")
+  private long identifierRevealTtlSeconds;
+
+  @Value("${app.rate-limit.identifier-reveal.owner.burst-max:5}")
+  private int ownerRevealBurstMax;
+
+  @Value("${app.rate-limit.identifier-reveal.owner.burst-window-seconds:60}")
+  private long ownerRevealBurstWindowSeconds;
+
+  @Value("${app.rate-limit.identifier-reveal.owner.daily-max:30}")
+  private int ownerRevealDailyMax;
+
+  @Value("${app.rate-limit.identifier-reveal.owner.daily-window-seconds:86400}")
+  private long ownerRevealDailyWindowSeconds;
+
+  @Value("${app.rate-limit.identifier-reveal.staff.burst-max:10}")
+  private int staffRevealBurstMax;
+
+  @Value("${app.rate-limit.identifier-reveal.staff.burst-window-seconds:60}")
+  private long staffRevealBurstWindowSeconds;
+
+  @Value("${app.rate-limit.identifier-reveal.staff.daily-max:80}")
+  private int staffRevealDailyMax;
+
+  @Value("${app.rate-limit.identifier-reveal.staff.daily-window-seconds:86400}")
+  private long staffRevealDailyWindowSeconds;
 
   @Transactional
   public RoomMemberDto joinRoom(Long roomId, User currentUser, JoinRoomRequest request) {
@@ -556,22 +584,30 @@ public class RoomMemberService {
             .filter(r -> r.getDeletedAt() == null)
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-    if (!room.getOwner().getId().equals(currentUser.getId())) {
-      throw new ForbiddenOperationException("Only room owner can reveal member identifier");
-    }
-
     RoomMember roomMember =
         roomMemberRepository
             .findByIdAndRoomAndDeletedAtIsNull(memberId, room)
             .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
 
-    boolean hasSuccessfulPayment =
-        paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS);
-
-    if (!hasSuccessfulPayment) {
-      throw new ForbiddenOperationException(
-          "Identifier can only be revealed after successful payment");
+    try {
+      identifierRevealPolicy.canOwnerReveal(room, roomMember, currentUser, request);
+      identifierRevealPolicy.ensureValidSuccessfulPayment(roomMember);
+      checkRevealRateLimit(
+          "owner", currentUser, roomMember, room, request, null, null, httpRequest);
+    } catch (TooManyRequestsException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      auditRevealAttempt(
+          room,
+          roomMember,
+          currentUser,
+          "OWNER",
+          null,
+          null,
+          request,
+          IdentifierRevealOutcome.DENIED,
+          httpRequest);
+      throw ex;
     }
 
     RoomMemberIdentifier identifier =
@@ -580,17 +616,17 @@ public class RoomMemberService {
             .orElseThrow(() -> new ResourceNotFoundException("Identifier not found"));
 
     String decryptedIdentifier =
-        fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
-    saveIdentifierRevealAudit(
+        decryptIdentifier(
+            room, roomMember, currentUser, "OWNER", request, null, null, identifier, httpRequest);
+    auditRevealAttempt(
         room,
         roomMember,
         currentUser,
         "OWNER",
-        "IDENTIFIER_REVEALED_OWNER",
-        request.getReason(),
-        identifier,
         null,
         null,
+        request,
+        IdentifierRevealOutcome.SUCCESS,
         httpRequest);
 
     return RevealedIdentifierDto.builder()
@@ -598,7 +634,7 @@ public class RoomMemberService {
         .roomMemberId(roomMember.getId())
         .identifierType(identifier.getIdentifierType().name())
         .identifierValue(decryptedIdentifier)
-        .revealedForReason(request.getReason())
+        .revealTtlSeconds(identifierRevealTtlSeconds)
         .build();
   }
 
@@ -622,9 +658,35 @@ public class RoomMemberService {
             .findByIdAndRoomAndDeletedAtIsNull(memberId, room)
             .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
 
-    ensureSuccessfulPayment(roomMember);
-
-    RevealContextInfo revealContext = resolveRevealContext(roomMember, currentUser, request);
+    RevealContextInfo revealContext = null;
+    try {
+      revealContext = resolveRevealContext(roomMember, currentUser, request);
+      identifierRevealPolicy.canStaffReveal(roomMember, request, revealContext.type());
+      identifierRevealPolicy.ensureValidSuccessfulPayment(roomMember);
+      checkRevealRateLimit(
+          "staff",
+          currentUser,
+          roomMember,
+          room,
+          request,
+          revealContext.type(),
+          revealContext.id(),
+          httpRequest);
+    } catch (TooManyRequestsException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      auditRevealAttempt(
+          room,
+          roomMember,
+          currentUser,
+          currentUser.getRole().name(),
+          revealContext == null ? null : revealContext.type(),
+          revealContext == null ? null : revealContext.id(),
+          request,
+          IdentifierRevealOutcome.DENIED,
+          httpRequest);
+      throw ex;
+    }
 
     RoomMemberIdentifier identifier =
         roomMemberIdentifierRepository
@@ -632,17 +694,25 @@ public class RoomMemberService {
             .orElseThrow(() -> new ResourceNotFoundException("Identifier not found"));
 
     String decryptedIdentifier =
-        fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
-    saveIdentifierRevealAudit(
+        decryptIdentifier(
+            room,
+            roomMember,
+            currentUser,
+            currentUser.getRole().name(),
+            request,
+            revealContext.type(),
+            revealContext.id(),
+            identifier,
+            httpRequest);
+    auditRevealAttempt(
         room,
         roomMember,
         currentUser,
         currentUser.getRole().name(),
-        "IDENTIFIER_REVEALED_STAFF",
-        request.getReason(),
-        identifier,
-        revealContext.type().name(),
+        revealContext.type(),
         revealContext.id(),
+        request,
+        IdentifierRevealOutcome.SUCCESS,
         httpRequest);
 
     return RevealedIdentifierDto.builder()
@@ -650,7 +720,7 @@ public class RoomMemberService {
         .roomMemberId(roomMember.getId())
         .identifierType(identifier.getIdentifierType().name())
         .identifierValue(decryptedIdentifier)
-        .revealedForReason(request.getReason())
+        .revealTtlSeconds(identifierRevealTtlSeconds)
         .build();
   }
 
@@ -692,17 +762,6 @@ public class RoomMemberService {
     }
 
     return "RISK_REVIEW";
-  }
-
-  private void ensureSuccessfulPayment(RoomMember roomMember) {
-    boolean hasSuccessfulPayment =
-        paymentTransactionRepository.existsByRoomMember_IdAndStatus(
-            roomMember.getId(), PaymentTransactionStatus.SUCCESS);
-
-    if (!hasSuccessfulPayment) {
-      throw new ForbiddenOperationException(
-          "Identifier can only be revealed after successful payment");
-    }
   }
 
   private boolean hasOpenSupportTicket(RoomMember roomMember) {
@@ -829,65 +888,121 @@ public class RoomMemberService {
   }
 
   private void ensureContextAssignment(User assignedUser, User currentUser, String contextLabel) {
-    if (assignedUser != null && !assignedUser.getId().equals(currentUser.getId())) {
+    if (assignedUser == null) {
+      throw new ForbiddenOperationException(contextLabel + " must be assigned before reveal");
+    }
+    if (!assignedUser.getId().equals(currentUser.getId())) {
       throw new ForbiddenOperationException(contextLabel + " is assigned to another staff member");
     }
   }
 
-  private void saveIdentifierRevealAudit(
+  private void checkRevealRateLimit(
+      String actorBucket,
+      User actor,
+      RoomMember roomMember,
+      Room room,
+      RevealIdentifierRequest request,
+      IdentifierRevealContextType contextType,
+      Long contextId,
+      HttpServletRequest httpRequest) {
+    int burstMax = actorBucket.equals("staff") ? staffRevealBurstMax : ownerRevealBurstMax;
+    long burstWindow =
+        actorBucket.equals("staff") ? staffRevealBurstWindowSeconds : ownerRevealBurstWindowSeconds;
+    int dailyMax = actorBucket.equals("staff") ? staffRevealDailyMax : ownerRevealDailyMax;
+    long dailyWindow =
+        actorBucket.equals("staff") ? staffRevealDailyWindowSeconds : ownerRevealDailyWindowSeconds;
+
+    try {
+      if (burstMax > 0) {
+        inMemoryRateLimiter.check(
+            "identifier-reveal:" + actorBucket + ":burst:actor:" + actor.getId(),
+            burstMax,
+            burstWindow,
+            "Too many identifier reveal attempts. Try again later.");
+        inMemoryRateLimiter.check(
+            "identifier-reveal:" + actorBucket + ":burst:member:" + roomMember.getId(),
+            burstMax,
+            burstWindow,
+            "Too many identifier reveal attempts. Try again later.");
+      }
+      if (dailyMax > 0) {
+        inMemoryRateLimiter.check(
+            "identifier-reveal:" + actorBucket + ":daily:actor:" + actor.getId(),
+            dailyMax,
+            dailyWindow,
+            "Too many identifier reveal attempts. Try again later.");
+        inMemoryRateLimiter.check(
+            "identifier-reveal:" + actorBucket + ":daily:member:" + roomMember.getId(),
+            dailyMax,
+            dailyWindow,
+            "Too many identifier reveal attempts. Try again later.");
+      }
+    } catch (TooManyRequestsException ex) {
+      auditRevealAttempt(
+          room,
+          roomMember,
+          actor,
+          actorBucket.equals("staff") ? actor.getRole().name() : "OWNER",
+          contextType,
+          contextId,
+          request,
+          IdentifierRevealOutcome.RATE_LIMITED,
+          httpRequest);
+      throw ex;
+    }
+  }
+
+  private String decryptIdentifier(
       Room room,
       RoomMember roomMember,
       User actor,
       String actorRole,
-      String eventType,
-      String reason,
-      RoomMemberIdentifier identifier,
-      String contextType,
+      RevealIdentifierRequest request,
+      IdentifierRevealContextType contextType,
       Long contextId,
+      RoomMemberIdentifier identifier,
       HttpServletRequest httpRequest) {
-    LocalDateTime auditTimestamp = LocalDateTime.now();
-    ObjectNode newState = JsonNodeFactory.instance.objectNode();
-    newState.put("reason", reason);
-    newState.put("identifierType", identifier.getIdentifierType().name());
-    newState.put("revealedBy", actorRole);
-
-    if (contextType != null) {
-      newState.put("contextType", contextType);
+    try {
+      return fieldEncryptionService.decrypt(identifier.getIdentifierEncrypted());
+    } catch (RuntimeException ex) {
+      auditRevealAttempt(
+          room,
+          roomMember,
+          actor,
+          actorRole,
+          contextType,
+          contextId,
+          request,
+          IdentifierRevealOutcome.DECRYPTION_FAILED,
+          httpRequest);
+      throw ex;
     }
+  }
 
-    if (contextId != null) {
-      newState.put("contextId", contextId);
-    }
-
-    ObjectNode auditNode = newState.putObject("audit");
-    auditNode.put("actorId", actor.getId());
-    auditNode.put("role", actorRole);
-    auditNode.put("reason", reason);
-    auditNode.put("roomId", room.getId());
-    auditNode.put("memberId", roomMember.getId());
-    auditNode.put("timestamp", auditTimestamp.toString());
-
-    if (contextType != null) {
-      auditNode.put("contextType", contextType);
-    }
-
-    if (contextId != null) {
-      auditNode.put("contextId", contextId);
-    }
-
-    roomEventLogRepository.save(
-        RoomEventLog.builder()
-            .eventId(UUID.randomUUID())
-            .actorUser(actor)
-            .actorRole(actorRole)
-            .room(room)
-            .roomMember(roomMember)
-            .eventType(eventType)
-            .newState(newState)
-            .ipAddress(httpRequest.getRemoteAddr())
-            .userAgent(httpRequest.getHeader("User-Agent"))
-            .createdAt(auditTimestamp)
-            .build());
+  private void auditRevealAttempt(
+      Room room,
+      RoomMember roomMember,
+      User actor,
+      String actorRole,
+      IdentifierRevealContextType contextType,
+      Long contextId,
+      RevealIdentifierRequest request,
+      IdentifierRevealOutcome outcome,
+      HttpServletRequest httpRequest) {
+    IdentifierRevealReasonCode reasonCode =
+        request.getReasonCode() == null
+            ? IdentifierRevealReasonCode.ACCESS_ISSUE
+            : request.getReasonCode();
+    identifierRevealAuditService.record(
+        room,
+        roomMember,
+        actor,
+        actorRole,
+        contextType,
+        contextId,
+        reasonCode,
+        outcome,
+        httpRequest);
   }
 
   private record RevealContextInfo(IdentifierRevealContextType type, Long id) {}

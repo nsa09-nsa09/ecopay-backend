@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.controller;
 
 import jakarta.validation.Valid;
+import java.security.Principal;
 import java.util.List;
 import kz.hrms.splitupauth.dto.CreatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.dto.PriceChangeDto;
@@ -10,9 +11,11 @@ import kz.hrms.splitupauth.dto.TestPriceExtractionRequest;
 import kz.hrms.splitupauth.dto.TestPriceExtractionResponse;
 import kz.hrms.splitupauth.dto.UpdatePriceWatchProviderRequest;
 import kz.hrms.splitupauth.pricing.AdminPricingService;
+import kz.hrms.splitupauth.pricing.PriceWatchAdminRateLimiter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminPricingController {
 
   private final AdminPricingService adminPricingService;
+  private final PriceWatchAdminRateLimiter rateLimiter;
 
   @GetMapping("/providers")
   public ResponseEntity<List<PriceWatchProviderDto>> listProviders() {
@@ -40,8 +44,10 @@ public class AdminPricingController {
   }
 
   @PostMapping("/providers")
+  @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<PriceWatchProviderDto> createProvider(
-      @Valid @RequestBody CreatePriceWatchProviderRequest req) {
+      @Valid @RequestBody CreatePriceWatchProviderRequest req, Principal principal) {
+    rateLimiter.check(actor(principal), "create");
     return ResponseEntity.status(HttpStatus.CREATED).body(adminPricingService.createProvider(req));
   }
 
@@ -51,12 +57,17 @@ public class AdminPricingController {
   }
 
   @PutMapping("/providers/{id}")
+  @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<PriceWatchProviderDto> updateProvider(
-      @PathVariable Long id, @Valid @RequestBody UpdatePriceWatchProviderRequest req) {
+      @PathVariable Long id,
+      @Valid @RequestBody UpdatePriceWatchProviderRequest req,
+      Principal principal) {
+    rateLimiter.check(actor(principal), "update");
     return ResponseEntity.ok(adminPricingService.updateProvider(id, req));
   }
 
   @DeleteMapping("/providers/{id}")
+  @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<Void> deleteProvider(@PathVariable Long id) {
     adminPricingService.deleteProvider(id);
     return ResponseEntity.noContent().build();
@@ -69,7 +80,10 @@ public class AdminPricingController {
    * AdminPricingService#triggerCheck} for the scheduler.
    */
   @PostMapping("/providers/{id}/check")
-  public ResponseEntity<PriceWatchProviderDto> checkProvider(@PathVariable Long id) {
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<PriceWatchProviderDto> checkProvider(
+      @PathVariable Long id, Principal principal) {
+    rateLimiter.check(actor(principal), "check");
     return ResponseEntity.ok(adminPricingService.checkNow(id));
   }
 
@@ -78,8 +92,10 @@ public class AdminPricingController {
    * the admin's Upsert modal so a bad selector/regex can be caught before the row is saved.
    */
   @PostMapping("/providers/test")
+  @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<TestPriceExtractionResponse> testExtraction(
-      @Valid @RequestBody TestPriceExtractionRequest req) {
+      @Valid @RequestBody TestPriceExtractionRequest req, Principal principal) {
+    rateLimiter.check(actor(principal), "test");
     return ResponseEntity.ok(adminPricingService.testExtraction(req));
   }
 
@@ -98,7 +114,12 @@ public class AdminPricingController {
   }
 
   @PostMapping("/changes/{id}/ack")
+  @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<PriceChangeDto> ackChange(@PathVariable Long id) {
     return ResponseEntity.ok(adminPricingService.acknowledgeChange(id));
+  }
+
+  private static String actor(Principal principal) {
+    return principal == null ? "unknown" : principal.getName();
   }
 }

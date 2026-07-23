@@ -56,7 +56,7 @@ public class PriceSnapshot {
   private LocalDateTime capturedAt;
 
   @Enumerated(EnumType.STRING)
-  @Column(name = "outcome", nullable = false, length = 20)
+  @Column(name = "outcome", nullable = false, length = 40)
   private PriceSnapshotOutcome outcome;
 
   @Column(name = "http_status")
@@ -64,6 +64,9 @@ public class PriceSnapshot {
 
   @Column(name = "raw_excerpt", columnDefinition = "TEXT")
   private String rawExcerpt;
+
+  @Column(name = "body_hash", length = 64)
+  private String bodyHash;
 
   @Column(name = "error_message", columnDefinition = "TEXT")
   private String errorMessage;

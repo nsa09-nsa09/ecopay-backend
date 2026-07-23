@@ -8,6 +8,7 @@ import kz.hrms.splitupauth.pricing.PriceNumberParser;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 import org.springframework.stereotype.Component;
 
 /**
@@ -24,21 +25,27 @@ import org.springframework.stereotype.Component;
 @Component
 public class CssSelectorExtractor implements PriceExtractor {
 
+  private static final int MAX_SELECTOR_LENGTH = 300;
+  private static final int MAX_MATCHED_NODES = 50;
+
   @Override
   public Optional<ParsedPrice> extract(FetchedPage page, JsonNode config) {
     if (config == null || !config.has("selector")) return Optional.empty();
     String selector = config.get("selector").asText();
     if (selector == null || selector.isBlank()) return Optional.empty();
+    if (selector.length() > MAX_SELECTOR_LENGTH) return Optional.empty();
 
     Document doc = Jsoup.parse(page.body(), page.url() == null ? "" : page.url());
-    Element el;
+    Elements matches;
     try {
-      el = doc.selectFirst(selector);
+      matches = doc.select(selector);
     } catch (Exception ex) {
       // Malformed selector from the admin — return empty and let the outer
       // service record PARSE_FAILED with the error message.
       return Optional.empty();
     }
+    if (matches.isEmpty() || matches.size() > MAX_MATCHED_NODES) return Optional.empty();
+    Element el = matches.first();
     if (el == null) return Optional.empty();
 
     String attr = config.has("attr") ? config.get("attr").asText(null) : null;

@@ -25,6 +25,9 @@ import org.springframework.stereotype.Component;
 public class JsonLdExtractor implements PriceExtractor {
 
   private final ObjectMapper objectMapper;
+  private static final int MAX_BLOCK_CHARS = 200_000;
+  private static final int MAX_NODES = 2_000;
+  private static final int MAX_DEPTH = 30;
 
   @Override
   public Optional<ParsedPrice> extract(FetchedPage page, JsonNode config) {
@@ -32,6 +35,7 @@ public class JsonLdExtractor implements PriceExtractor {
     for (Element script : doc.select("script[type=application/ld+json]")) {
       String raw = script.data();
       if (raw == null || raw.isBlank()) continue;
+      if (raw.length() > MAX_BLOCK_CHARS) continue;
       Optional<ParsedPrice> hit = fromBlock(raw, page.expectedCurrency());
       if (hit.isPresent()) return hit;
     }
@@ -41,7 +45,7 @@ public class JsonLdExtractor implements PriceExtractor {
   private Optional<ParsedPrice> fromBlock(String raw, String hintCurrency) {
     try {
       JsonNode root = objectMapper.readTree(raw);
-      return walk(root, hintCurrency);
+      return walk(root, hintCurrency, 0, new int[] {0});
     } catch (Exception ex) {
       // JSON-LD blocks in the wild are frequently non-strict (trailing commas, JS
       // comments). Failing on one block is fine — the AutoExtractor will fall
@@ -51,11 +55,12 @@ public class JsonLdExtractor implements PriceExtractor {
     }
   }
 
-  private Optional<ParsedPrice> walk(JsonNode node, String hintCurrency) {
+  private Optional<ParsedPrice> walk(JsonNode node, String hintCurrency, int depth, int[] visited) {
     if (node == null || node.isMissingNode() || node.isNull()) return Optional.empty();
+    if (depth > MAX_DEPTH || ++visited[0] > MAX_NODES) return Optional.empty();
     if (node.isArray()) {
       for (JsonNode c : node) {
-        Optional<ParsedPrice> hit = walk(c, hintCurrency);
+        Optional<ParsedPrice> hit = walk(c, hintCurrency, depth + 1, visited);
         if (hit.isPresent()) return hit;
       }
       return Optional.empty();
@@ -75,12 +80,12 @@ public class JsonLdExtractor implements PriceExtractor {
     }
     JsonNode priceSpec = node.get("priceSpecification");
     if (priceSpec != null) {
-      Optional<ParsedPrice> hit = walk(priceSpec, hintCurrency);
+      Optional<ParsedPrice> hit = walk(priceSpec, hintCurrency, depth + 1, visited);
       if (hit.isPresent()) return hit;
     }
     JsonNode offers = node.get("offers");
     if (offers != null) {
-      Optional<ParsedPrice> hit = walk(offers, hintCurrency);
+      Optional<ParsedPrice> hit = walk(offers, hintCurrency, depth + 1, visited);
       if (hit.isPresent()) return hit;
     }
     // Recurse into all remaining fields — many pages nest an offer several
@@ -94,7 +99,7 @@ public class JsonLdExtractor implements PriceExtractor {
           || "offers".equals(e.getKey())) {
         continue;
       }
-      Optional<ParsedPrice> hit = walk(e.getValue(), hintCurrency);
+      Optional<ParsedPrice> hit = walk(e.getValue(), hintCurrency, depth + 1, visited);
       if (hit.isPresent()) return hit;
     }
     return Optional.empty();

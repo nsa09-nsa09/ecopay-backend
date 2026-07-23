@@ -26,6 +26,7 @@ public class TestPriceExtractionResponse {
     SUCCESS,
     PARSE_FAILED,
     FETCH_FAILED,
+    CURRENCY_MISMATCH,
     BLOCKED
   }
 
