@@ -13,6 +13,9 @@
 -- =========================================================
 
 -- 1) Reviews: rescale 1..5 → 2..10 and widen the range check.
+-- V6 created this unnamed CHECK as `check_rating`; some newer schemas may
+-- already use the more descriptive name. Drop either before rescaling.
+ALTER TABLE reviews DROP CONSTRAINT IF EXISTS check_rating;
 ALTER TABLE reviews DROP CONSTRAINT IF EXISTS reviews_rating_check;
 
 UPDATE reviews SET rating = rating * 2;
