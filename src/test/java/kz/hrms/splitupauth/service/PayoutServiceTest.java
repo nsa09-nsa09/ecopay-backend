@@ -1,15 +1,21 @@
 package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
+import kz.hrms.splitupauth.dto.PayoutBalanceDto;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
@@ -88,5 +94,33 @@ class PayoutServiceTest {
   void reverse_nullIntent_isNoop() {
     payoutService.reverseOwnerPayoutForRefund(null, true);
     verifyNoInteractions(payoutRepository);
+  }
+
+  @Test
+  void heldBalance_sumsCurrentHeldPayoutsAndFindsNextRelease() {
+    User owner = User.builder().id(42L).build();
+    LocalDateTime laterRelease = LocalDateTime.now().plusDays(12);
+    LocalDateTime nextRelease = LocalDateTime.now().plusDays(5);
+    when(payoutRepository
+            .findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
+                any(), any(), any(), any()))
+        .thenReturn(
+            List.of(
+                Payout.builder()
+                    .amount(new BigDecimal("1500.25"))
+                    .releaseAt(laterRelease)
+                    .build(),
+                Payout.builder()
+                    .amount(new BigDecimal("499.75"))
+                    .releaseAt(nextRelease)
+                    .build()));
+
+    PayoutBalanceDto balance = payoutService.getHeldBalance(owner);
+
+    assertEquals(0, new BigDecimal("2000.00").compareTo(balance.getHeldAmount()));
+    assertEquals("KZT", balance.getCurrency());
+    assertEquals(2L, balance.getHeldPayoutCount());
+    assertEquals(nextRelease, balance.getNextReleaseAt());
+    assertNotNull(balance.getCalculatedAt());
   }
 }

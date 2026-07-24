@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
+import kz.hrms.splitupauth.dto.PayoutBalanceDto;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
 import kz.hrms.splitupauth.entity.PayoutMethod;
@@ -32,6 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class PayoutService {
 
   private static final int MAX_RETRY = 3;
+  private static final String PAYOUT_CURRENCY = "KZT";
+  private static final List<String> HELD_STATUSES = List.of("PENDING", "PENDING_METHOD");
 
   private final PayoutRepository payoutRepository;
   private final PayoutMethodRepository payoutMethodRepository;
@@ -337,6 +341,42 @@ public class PayoutService {
   @Transactional(readOnly = true)
   public List<Payout> listMine(User user) {
     return payoutRepository.findByUserOrderByCreatedAtDesc(user);
+  }
+
+  /**
+   * Returns the owner's current held balance.
+   *
+   * <p>A payout counts as held only while it remains in a pre-dispatch status and its release time
+   * is still in the future. Reversed/refunded, failed, processing, successful, and already-due
+   * payouts therefore cannot inflate the balance.
+   */
+  @Transactional(readOnly = true)
+  public PayoutBalanceDto getHeldBalance(User user) {
+    LocalDateTime calculatedAt = LocalDateTime.now();
+    List<Payout> held =
+        payoutRepository.findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
+            user, PAYOUT_CURRENCY, HELD_STATUSES, calculatedAt);
+
+    BigDecimal heldAmount =
+        held.stream()
+            .map(Payout::getAmount)
+            .filter(java.util.Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP);
+    LocalDateTime nextReleaseAt =
+        held.stream()
+            .map(Payout::getReleaseAt)
+            .filter(java.util.Objects::nonNull)
+            .min(LocalDateTime::compareTo)
+            .orElse(null);
+
+    return PayoutBalanceDto.builder()
+        .heldAmount(heldAmount)
+        .currency(PAYOUT_CURRENCY)
+        .heldPayoutCount(held.size())
+        .nextReleaseAt(nextReleaseAt)
+        .calculatedAt(calculatedAt)
+        .build();
   }
 
   @Transactional(readOnly = true)

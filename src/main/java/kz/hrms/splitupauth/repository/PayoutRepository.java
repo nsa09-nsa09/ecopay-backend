@@ -19,6 +19,13 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
 
   List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
 
+  /**
+   * Owner payouts that are still inside their hold window. Terminal, reversed, due, and already
+   * processing payouts are deliberately excluded by the status/release predicates.
+   */
+  List<Payout> findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
+      User user, String currency, List<String> statuses, LocalDateTime releaseAt);
+
   /** Payouts in a dispatchable status whose hold window has elapsed (due now). */
   @Query(
       "SELECT p FROM Payout p WHERE p.status IN :statuses "

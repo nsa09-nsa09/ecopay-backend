@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.controller;
 
 import java.util.List;
 import java.util.Map;
+import kz.hrms.splitupauth.dto.PayoutBalanceDto;
 import kz.hrms.splitupauth.dto.PayoutCardBindingConfirmResponse;
 import kz.hrms.splitupauth.dto.PayoutCardBindingResponse;
 import kz.hrms.splitupauth.dto.PayoutDto;
@@ -26,6 +27,11 @@ public class PayoutController {
   @GetMapping("/me")
   public ResponseEntity<List<PayoutDto>> listMine(@AuthenticationPrincipal User user) {
     return ResponseEntity.ok(payoutService.listMine(user).stream().map(PayoutDto::from).toList());
+  }
+
+  @GetMapping("/balance")
+  public ResponseEntity<PayoutBalanceDto> heldBalance(@AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(payoutService.getHeldBalance(user));
   }
 
   @GetMapping("/{id}")
