@@ -53,7 +53,7 @@ public class RoomResponse {
   private BigDecimal priceTotal;
   private BigDecimal pricePerMember;
 
-  /** ECOpay commission a joining member pays on top of {@link #pricePerMember}. */
+  /** EcoPay commission a joining member pays on top of {@link #pricePerMember}. */
   private BigDecimal pricePerMemberCommission;
 
   /** Total a joining member pays = pricePerMember + pricePerMemberCommission. */

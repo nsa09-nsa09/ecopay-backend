@@ -32,6 +32,12 @@ public class EmailService {
   @Value("${spring.mail.username:}")
   private String fromEmail;
 
+  @Value("${app.brand.name:EcoPay}")
+  private String brandName;
+
+  @Value("${app.brand.public-url:}")
+  private String brandPublicUrl;
+
   @Value("${app.base-url:http://localhost:8080}")
   private String baseUrl;
 
@@ -72,7 +78,7 @@ public class EmailService {
    * click-through link is kept as a fallback for users who prefer it.
    */
   public void sendVerificationEmail(String to, String token, String code, MailLocale locale) {
-    String verifyLink = baseUrl + "/api/v1/auth/verify-email?token=" + token;
+    String verifyLink = backendPublicBase() + "/api/v1/auth/verify-email?token=" + token;
     send(
         to,
         locale.pick("Подтвердите ваш email", "Email-ді растаңыз", "Verify your email address"),
@@ -85,7 +91,7 @@ public class EmailService {
    * address; the account keeps its old email (or none) until the code or link is confirmed.
    */
   public void sendEmailChangeConfirmation(String to, String token, String code, MailLocale locale) {
-    String verifyLink = baseUrl + "/api/v1/auth/verify-email?token=" + token;
+    String verifyLink = backendPublicBase() + "/api/v1/auth/verify-email?token=" + token;
     send(
         to,
         locale.pick(
@@ -128,8 +134,8 @@ public class EmailService {
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
         helper.setFrom(fromEmail.trim());
         helper.setTo(to);
-        helper.setSubject(subject);
-        helper.setText(html, true);
+        helper.setSubject(applyBrand(subject));
+        helper.setText(applyBrand(html), true);
 
         mailSender.send(message);
 
@@ -297,9 +303,9 @@ public class EmailService {
   private String wrap(String heading, String bodyHtml) {
     return "<html><body style=\"font-family:Arial,Helvetica,sans-serif;color:#111;\">"
         + "<h2>"
-        + heading
+        + applyBrand(heading)
         + "</h2>"
-        + bodyHtml
+        + applyBrand(bodyHtml)
         + "</body></html>";
   }
 
@@ -336,6 +342,15 @@ public class EmailService {
   private static String sanitizeFrontendBase(String url) {
     if (url == null) return "";
     return url.replaceAll("/+$", "").replaceFirst(":5173(?=/|$)", "");
+  }
+
+  private String backendPublicBase() {
+    String configured = brandPublicUrl != null && !brandPublicUrl.isBlank() ? brandPublicUrl : baseUrl;
+    return configured == null ? "" : configured.replaceAll("/+$", "");
+  }
+
+  private String applyBrand(String value) {
+    return value == null ? "" : value.replace("EcoPay", brandName);
   }
 
   /** Minimal HTML-escaping so user-derived title/body can't inject markup. */

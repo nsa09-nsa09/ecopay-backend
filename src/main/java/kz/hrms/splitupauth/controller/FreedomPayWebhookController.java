@@ -30,6 +30,7 @@ public class FreedomPayWebhookController {
   private final PaymentService paymentService;
   private final PayoutCardBindingService cardBindingService;
   private final ObjectMapper objectMapper;
+  private static final int MAX_WEBHOOK_PARAM_BYTES = 32_768;
 
   @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
   public ResponseEntity<String> result(@RequestParam Map<String, String> params) {
@@ -43,6 +44,10 @@ public class FreedomPayWebhookController {
   }
 
   private ResponseEntity<String> processWebhook(String script, Map<String, String> params) {
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay webhook rejected before inbox store: payload too large");
+      return errorResponse(script, "payload too large");
+    }
     Map<String, String> safe = new HashMap<>(params);
     GatewayWebhookEvent event = gateway.verifyAndParseWebhook(script, safe);
 
@@ -67,7 +72,9 @@ public class FreedomPayWebhookController {
       inboxRepository.save(inbox);
 
       if (!signatureValid) {
-        inbox.setProcessingStatus("INVALID_SIGNATURE");
+        inbox.setProcessingStatus("DEAD_LETTER");
+        inbox.setAttemptCount(1);
+        inbox.setLastErrorCode("INVALID_SIGNATURE");
         inbox.setProcessedAt(LocalDateTime.now());
         inboxRepository.save(inbox);
         log.warn("Freedom Pay webhook signature invalid for {}", requestId);
@@ -97,6 +104,18 @@ public class FreedomPayWebhookController {
       // Reply ok to avoid endless retries; inbox row remains PENDING for offline retry.
       return okResponse(script);
     }
+  }
+
+  private boolean payloadTooLarge(Map<String, String> params) {
+    int bytes = 0;
+    for (Map.Entry<String, String> entry : params.entrySet()) {
+      bytes += entry.getKey() == null ? 0 : entry.getKey().length();
+      bytes += entry.getValue() == null ? 0 : entry.getValue().length();
+      if (bytes > MAX_WEBHOOK_PARAM_BYTES) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // Freedom Pay requires the merchant reply to be signed (pg_salt + pg_sig).

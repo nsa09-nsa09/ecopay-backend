@@ -80,7 +80,7 @@ public class PayoutCardBindingService {
                   .idempotencyKey(binding.getIdempotencyKey())
                   .amount(cardBindingAmount)
                   .currency("KZT")
-                  .description("Ecopay payout card verification")
+                  .description("EcoPay payout card verification")
                   .userEmail(user.getEmail())
                   .userPhone(user.getPhone())
                   .userId(String.valueOf(user.getId()))

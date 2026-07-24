@@ -25,7 +25,7 @@ public class AdminDashboardKpisDto {
   private BigDecimal totalRevenue;
 
   /**
-   * Real platform income = ECOpay commissions from successfully captured charges (turnover minus
+   * Real platform income = EcoPay commissions from successfully captured charges (turnover minus
    * owner payouts).
    */
   private BigDecimal platformRevenue;

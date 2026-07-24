@@ -23,6 +23,7 @@ import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class PaymentService {
   private final PaymentIntentRepository paymentIntentRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RoomMemberRepository roomMemberRepository;
+  private final RoomRepository roomRepository;
   private final SavedCardRepository savedCardRepository;
   private final RoomMemberService roomMemberService;
   private final PaymentGatewayRegistry gatewayRegistry;
@@ -49,6 +51,7 @@ public class PaymentService {
   private final RoomEventLogger roomEventLogger;
   private final NotificationService notificationService;
   private final CommissionCalculator commissionCalculator;
+  private final MoneyLedgerService moneyLedgerService;
 
   @Transactional
   public PaymentIntentResponse createPaymentIntent(
@@ -82,8 +85,8 @@ public class PaymentService {
     }
 
     PaymentGateway gateway = gatewayRegistry.defaultGateway();
-    // The member pays their tariff share plus the ECOpay commission (owner pays none).
-    // The owner is later paid the share; ECOpay keeps the commission (see PayoutService).
+    // The member pays their tariff share plus the EcoPay commission (owner pays none).
+    // The owner is later paid the share; EcoPay keeps the commission (see PayoutService).
     BigDecimal share = resolveShareAmount(roomMember.getRoom());
     BigDecimal commission = commissionCalculator.commissionFor(share);
     BigDecimal amount = share.add(commission);
@@ -138,7 +141,7 @@ public class PaymentService {
             .idempotencyKey(intent.getIdempotencyKey())
             .amount(amount)
             .currency("KZT")
-            .description("Ecopay membership #" + roomMember.getId())
+            .description("EcoPay membership #" + roomMember.getId())
             .userEmail(currentUser.getEmail())
             .userPhone(currentUser.getPhone())
             .userId(currentUser.getId() == null ? null : String.valueOf(currentUser.getId()))
@@ -179,17 +182,22 @@ public class PaymentService {
       intent.setExternalPaymentId(chargeResp.getExternalPaymentId());
       intent.setPaymentUrl(chargeResp.getPaymentUrl());
       intent.setProviderStatusCode(chargeResp.getProviderStatusCode());
-      // A synchronous, non-redirect success finalizes immediately (saved-card
-      // charges and the dev mock gateway). Real Freedom Pay init always requires
-      // a redirect, so that path still waits for the webhook.
-      if (!chargeResp.isRequiresRedirect()) {
-        intent.setStatus(PaymentIntentStatus.SUCCESS);
-      }
     }
     intent = paymentIntentRepository.save(intent);
 
-    if (intent.getStatus() == PaymentIntentStatus.SUCCESS) {
-      applySuccessfulCharge(intent, null, null);
+    // A synchronous, non-redirect success finalizes immediately (saved-card charges and the dev mock
+    // gateway). Hosted Freedom Pay still waits for webhook/redirect reconciliation.
+    if (chargeResp.isSuccess() && !chargeResp.isRequiresRedirect()) {
+      intent =
+          finalizeSuccessfulPayment(
+              intent.getId(),
+              chargeResp.getExternalPaymentId(),
+              chargeResp.getProviderStatusCode(),
+              null,
+              null,
+              null,
+              currentUser.getId(),
+              "GATEWAY_SYNC_SUCCESS");
     }
 
     return mapToResponse(intent);
@@ -203,6 +211,21 @@ public class PaymentService {
   @Transactional
   public void applySuccessfulCharge(
       PaymentIntent intent, String cardPanMask, String providerSignature) {
+    if (intent == null || intent.getId() == null) {
+      return;
+    }
+    if (intent.getId() != null) {
+      finalizeSuccessfulPayment(
+          intent.getId(),
+          intent.getExternalPaymentId(),
+          intent.getProviderStatusCode(),
+          cardPanMask,
+          providerSignature,
+          null,
+          null,
+          "DIRECT_SUCCESS");
+      return;
+    }
     recordSuccessTransaction(intent, cardPanMask, providerSignature);
     roomMemberService.markMembershipAsPaid(intent.getRoomMember());
     payoutService.createOwnerPayoutForSuccessfulPayment(intent);
@@ -321,14 +344,6 @@ public class PaymentService {
     String mapped = status == null ? "PENDING" : status.getStatus();
 
     if ("SUCCESS".equals(mapped)) {
-      String fromStatus = intent.getStatus().name();
-      intent.setStatus(PaymentIntentStatus.SUCCESS);
-      if (status.getExternalPaymentId() != null && !status.getExternalPaymentId().isBlank()) {
-        intent.setExternalPaymentId(status.getExternalPaymentId());
-      }
-      intent.setProviderStatusCode(status.getProviderStatusCode());
-      intent = paymentIntentRepository.save(intent);
-
       if (Boolean.TRUE.equals(intent.getSaveCardRequested())
           && status.getCardToken() != null
           && !status.getCardToken().isBlank()) {
@@ -339,18 +354,16 @@ public class PaymentService {
             status.getCardPanMask());
       }
 
-      applySuccessfulCharge(intent, status.getCardPanMask(), null);
-
-      eventLogger.log(
-          "INTENT",
-          intent.getId(),
-          "REDIRECT_RECONCILE_SUCCESS",
-          fromStatus,
-          intent.getStatus().name(),
-          currentUser.getId(),
-          null,
-          intent.getIdempotencyKey(),
-          Map.of("externalPaymentId", String.valueOf(intent.getExternalPaymentId())));
+      intent =
+          finalizeSuccessfulPayment(
+              intent.getId(),
+              status.getExternalPaymentId(),
+              status.getProviderStatusCode(),
+              status.getCardPanMask(),
+              null,
+              null,
+              currentUser.getId(),
+              "REDIRECT_RECONCILE_SUCCESS");
     } else if ("FAILED".equals(mapped)) {
       String fromStatus = intent.getStatus().name();
       intent.setStatus(PaymentIntentStatus.FAILED);
@@ -472,12 +485,6 @@ public class PaymentService {
         paymentIntentRepository.save(intent);
         return;
       }
-      String fromStatus = intent.getStatus().name();
-      intent.setStatus(PaymentIntentStatus.SUCCESS);
-      intent.setExternalPaymentId(event.getExternalPaymentId());
-      intent.setProviderStatusCode(event.getProviderStatusCode());
-      intent = paymentIntentRepository.save(intent);
-
       if (Boolean.TRUE.equals(intent.getSaveCardRequested())
           && event.getCardToken() != null
           && !event.getCardToken().isBlank()) {
@@ -488,18 +495,15 @@ public class PaymentService {
             event.getCardPanMask());
       }
 
-      applySuccessfulCharge(intent, event.getCardPanMask(), event.getSignature());
-
-      eventLogger.log(
-          "INTENT",
+      finalizeSuccessfulPayment(
           intent.getId(),
-          "WEBHOOK_SUCCESS",
-          fromStatus,
-          intent.getStatus().name(),
-          null,
+          event.getExternalPaymentId(),
+          event.getProviderStatusCode(),
+          event.getCardPanMask(),
+          event.getSignature(),
           event.getProviderRequestId(),
-          intent.getIdempotencyKey(),
-          Map.of("externalPaymentId", String.valueOf(event.getExternalPaymentId())));
+          null,
+          "WEBHOOK_SUCCESS");
     } else if ("FAILED".equals(event.getResultStatus())) {
       String fromStatus = intent.getStatus().name();
       intent.setStatus(PaymentIntentStatus.FAILED);
@@ -528,8 +532,149 @@ public class PaymentService {
     }
   }
 
+  @Transactional
+  public PaymentIntent finalizeSuccessfulPayment(
+      Long paymentIntentId,
+      String externalPaymentId,
+      String providerStatusCode,
+      String cardPanMask,
+      String providerSignature,
+      String providerRequestId,
+      Long actorUserId,
+      String eventType) {
+    PaymentIntent intent =
+        paymentIntentRepository
+            .findWithLockById(paymentIntentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
+
+    if (intent.getStatus() == PaymentIntentStatus.SUCCESS) {
+      eventLogger.log(
+          "INTENT",
+          intent.getId(),
+          eventType + "_DUPLICATE",
+          "SUCCESS",
+          "SUCCESS",
+          actorUserId,
+          providerRequestId,
+          intent.getIdempotencyKey(),
+          Map.of());
+      return intent;
+    }
+    if (intent.getStatus() != PaymentIntentStatus.PENDING) {
+      return intent;
+    }
+
+    String fromStatus = intent.getStatus().name();
+    if (externalPaymentId != null && !externalPaymentId.isBlank()) {
+      intent.setExternalPaymentId(externalPaymentId);
+    }
+    if (providerStatusCode != null && !providerStatusCode.isBlank()) {
+      intent.setProviderStatusCode(providerStatusCode);
+    }
+    intent.setStatus(PaymentIntentStatus.SUCCESS);
+    intent = paymentIntentRepository.save(intent);
+
+    if (!reservePaidSeatOrMarkCompensation(intent, providerRequestId)) {
+      return intent;
+    }
+
+    recordSuccessTransaction(intent, cardPanMask, providerSignature);
+    roomMemberService.markMembershipAsPaid(intent.getRoomMember());
+    payoutService.createOwnerPayoutForSuccessfulPayment(intent);
+
+    RoomMember member = intent.getRoomMember();
+    roomEventLogger.log(
+        member == null ? null : member.getRoom(),
+        member,
+        intent.getUser(),
+        "MEMBER",
+        "payment_success",
+        Map.of(
+            "intentId",
+            String.valueOf(intent.getId()),
+            "amount",
+            String.valueOf(intent.getAmount())));
+
+    Room room = member == null ? null : member.getRoom();
+    notificationService.notify(
+        intent.getUser(),
+        NotificationType.PAYMENT_SUCCESS,
+        "Payment accepted",
+        "Payment"
+            + (room == null ? "" : " for room \"" + room.getTitle() + "\"")
+            + " in amount "
+            + intent.getAmount()
+            + (room == null ? "" : " " + room.getCurrency())
+            + " succeeded.",
+        room == null ? null : "/rooms/member/" + room.getId(),
+        Map.of("intentId", intent.getId(), "roomId", room == null ? 0L : room.getId()));
+
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        eventType,
+        fromStatus,
+        intent.getStatus().name(),
+        actorUserId,
+        providerRequestId,
+        intent.getIdempotencyKey(),
+        Map.of("externalPaymentId", String.valueOf(intent.getExternalPaymentId())));
+    return intent;
+  }
+
+  private boolean reservePaidSeatOrMarkCompensation(PaymentIntent intent, String providerRequestId) {
+    RoomMember member =
+        roomMemberRepository
+            .findWithLockById(intent.getRoomMember().getId())
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+    Room room =
+        roomRepository
+            .findByIdForUpdate(member.getRoom().getId())
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    long occupiedSlots =
+        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            room, java.util.List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+
+    if (member.getStatus() == MemberStatus.PENDING
+        || member.getStatus() == MemberStatus.ACTIVE
+        || occupiedSlots < room.getMaxMembers() - 1L) {
+      member.setRoom(room);
+      intent.setRoomMember(member);
+      return true;
+    }
+
+    intent.setCompensationRequired(true);
+    intent.setReviewRequired(true);
+    intent.setReviewReason("NO_CAPACITY_AFTER_PROVIDER_SUCCESS");
+    paymentIntentRepository.save(intent);
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        "COMPENSATION_REQUIRED",
+        "SUCCESS",
+        "SUCCESS",
+        null,
+        providerRequestId,
+        intent.getIdempotencyKey(),
+        Map.of("roomId", String.valueOf(room.getId()), "reason", "NO_CAPACITY"));
+    log.error(
+        "Payment intent {} succeeded at provider but room {} has no free capacity; manual refund/review required",
+        intent.getId(),
+        room.getId());
+    return false;
+  }
+
   private void recordSuccessTransaction(
       PaymentIntent intent, String cardPanMask, String providerSignature) {
+    PaymentTransaction existing =
+        paymentTransactionRepository
+            .findFirstByPaymentIntentAndTypeAndStatus(
+                intent, PaymentTransactionType.CHARGE, PaymentTransactionStatus.SUCCESS)
+            .orElse(null);
+    if (existing != null) {
+      return;
+    }
+
     ObjectNode rawPayload = JsonNodeFactory.instance.objectNode();
     rawPayload.put("provider", intent.getProviderName());
     rawPayload.put("paymentIntentId", intent.getId());
@@ -551,7 +696,36 @@ public class PaymentService {
             .providerSignature(providerSignature)
             .cardPanMask(cardPanMask)
             .build();
-    paymentTransactionRepository.save(tx);
+    tx = paymentTransactionRepository.save(tx);
+    RoomMember member = intent.getRoomMember();
+    member.setPaymentIntentId(intent.getId());
+    member.setLatestPaymentTxId(tx.getId());
+    roomMemberRepository.save(member);
+
+    moneyLedgerService.append(
+        "PAYMENT_CAPTURE",
+        intent.getAmount(),
+        "KZT",
+        "CREDIT",
+        intent,
+        tx,
+        null,
+        null,
+        member.getRoom().getOwner(),
+        "capture-intent-" + intent.getId());
+    if (intent.getCommissionAmount() != null && intent.getCommissionAmount().signum() > 0) {
+      moneyLedgerService.append(
+          "PLATFORM_FEE",
+          intent.getCommissionAmount(),
+          "KZT",
+          "CREDIT",
+          intent,
+          tx,
+          null,
+          null,
+          member.getRoom().getOwner(),
+          "platform-fee-intent-" + intent.getId());
+    }
   }
 
   private PaymentIntentResponse mapToResponse(PaymentIntent intent) {
@@ -578,7 +752,7 @@ public class PaymentService {
         .build();
   }
 
-  /** The per-member tariff share (before the ECOpay commission is added on top). */
+  /** The per-member tariff share (before the EcoPay commission is added on top). */
   private BigDecimal resolveShareAmount(Room room) {
     if (room == null) {
       throw new InvalidRequestException(

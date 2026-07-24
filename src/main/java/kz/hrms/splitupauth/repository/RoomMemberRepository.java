@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.repository;
 
+import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -10,6 +11,7 @@ import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -17,6 +19,10 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
   Optional<RoomMember> findByIdAndRoomAndDeletedAtIsNull(Long id, Room room);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select m from RoomMember m where m.id = :id")
+  Optional<RoomMember> findWithLockById(@Param("id") Long id);
 
   Optional<RoomMember> findByRoomAndUserAndDeletedAtIsNull(Room room, User user);
 

@@ -50,7 +50,7 @@ test.describe("Security & IDOR", () => {
     const membership = await joinRoom(request, member.token, room.id);
 
     // Even if a client sends extra fields, the charged amount is server-computed
-    // (member share + ECOpay commission), never client-influenced.
+    // (member share + EcoPay commission), never client-influenced.
     const res = await request.post(`payments/members/${membership.id}/intent`, {
       ...auth(member.token),
       data: { idempotencyKey: `amt-${Date.now()}`, amount: 1, currency: "USD" },

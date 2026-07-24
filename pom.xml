@@ -12,7 +12,7 @@
     <artifactId>ecopay-backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>ecopay-backend</name>
-    <description>Ecopay backend service</description>
+    <description>EcoPay backend service</description>
     <url/>
     <licenses>
         <license/>

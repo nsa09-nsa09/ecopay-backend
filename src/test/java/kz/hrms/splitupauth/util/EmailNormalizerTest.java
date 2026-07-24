@@ -93,7 +93,7 @@ class EmailNormalizerTest {
   @Test
   void suggests_nothingForCorrectOrUnrelatedDomains() {
     assertNull(EmailNormalizer.suggestCorrection("user@gmail.com"));
-    assertNull(EmailNormalizer.suggestCorrection("user@ecosplit.kz"));
+    assertNull(EmailNormalizer.suggestCorrection("user@example.kz"));
   }
 
   @Test

@@ -110,7 +110,7 @@ class ChainIntegrationTest extends AbstractIntegrationTest {
     PaymentIntentResponse intent =
         paymentService.createPaymentIntent(membership.getId(), member, pay);
     assertEquals(PaymentIntentStatus.SUCCESS, intent.getStatus());
-    // Share = 7290.00 / 4 = 1822.50; ECOpay commission for that tier (<= 4000) = 500.00;
+    // Share = 7290.00 / 4 = 1822.50; EcoPay commission for that tier (<= 4000) = 500.00;
     // the member is charged share + commission = 2322.50.
     assertEquals(0, new BigDecimal("1822.50").compareTo(intent.getShareAmount()));
     assertEquals(0, new BigDecimal("500.00").compareTo(intent.getCommissionAmount()));

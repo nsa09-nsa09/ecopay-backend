@@ -2,7 +2,7 @@
   "name": "ecopay-api-e2e",
   "version": "1.0.0",
   "private": true,
-  "description": "API-level E2E tests for the Ecopay business chain (register → room → join → pay → use), run over HTTP against a running backend.",
+  "description": "API-level E2E tests for the EcoPay business chain (register → room → join → pay → use), run over HTTP against a running backend.",
   "type": "module",
   "scripts": {
     "test": "playwright test",

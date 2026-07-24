@@ -49,7 +49,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  *
  * <ol>
  *   <li>guest charge succeeds and the membership advances (APPLIED → PENDING → ACTIVE);
- *   <li>a host payout is created for the share ({@code charge − ECOpay commission}), status
+ *   <li>a host payout is created for the share ({@code charge − EcoPay commission}), status
  *       PENDING, held ~30 days out;
  *   <li>the dispatcher does <b>not</b> pay a held payout early;
  *   <li>once the (compressed) hold elapses, the dispatcher settles the payout SUCCESS to the host's
@@ -144,7 +144,7 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     PaymentIntentResponse intent =
         paymentService.createPaymentIntent(membership.getId(), guest, pay);
     assertEquals(PaymentIntentStatus.SUCCESS, intent.getStatus());
-    // Share = 7290.00 / 4 = 1822.50; ECOpay commission for that tier (<= 4000) = 500.00;
+    // Share = 7290.00 / 4 = 1822.50; EcoPay commission for that tier (<= 4000) = 500.00;
     // the guest is charged share + commission = 2322.50.
     assertEquals(0, new BigDecimal("1822.50").compareTo(intent.getShareAmount()));
     assertEquals(0, new BigDecimal("500.00").compareTo(intent.getCommissionAmount()));
@@ -169,13 +169,13 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     Payout payout = payoutRepository.findByTriggeringPaymentIntent(intentEntity).orElseThrow();
     Long payoutId = payout.getId();
 
-    // The host is paid the full share; ECOpay keeps the commission.
+    // The host is paid the full share; EcoPay keeps the commission.
     // payout = amount - commission = 2322.50 - 500.00 = 1822.50
     BigDecimal expectedPayout = new BigDecimal("1822.50");
     assertEquals(
         0,
         expectedPayout.compareTo(payout.getAmount()),
-        "host payout should be the share (charge minus ECOpay commission)");
+        "host payout should be the share (charge minus EcoPay commission)");
     assertEquals("PENDING", payout.getStatus());
     assertNotNull(payout.getReleaseAt(), "payout must carry a hold/release timestamp");
     assertTrue(

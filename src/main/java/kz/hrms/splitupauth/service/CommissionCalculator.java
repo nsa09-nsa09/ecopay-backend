@@ -6,7 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Tiered ECOpay commission, charged on top of each member's tariff share.
+ * Tiered EcoPay commission, charged on top of each member's tariff share.
  *
  * <p>The room owner never pays a commission — only joining members do. The fee is a <b>fixed amount
  * per tier</b> of the per-member share (not a percentage):
@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
  * </pre>
  *
  * The member is charged {@code share + commission}; the owner is paid the full {@code share};
- * ECOpay keeps the {@code commission}. Thresholds and fees are configurable via {@code
+ * EcoPay keeps the {@code commission}. Thresholds and fees are configurable via {@code
  * app.commission.*} properties so the table can be tuned without a code change.
  */
 @Component
@@ -49,7 +49,7 @@ public class CommissionCalculator {
   private BigDecimal tier4Fee;
 
   /**
-   * ECOpay commission for a given per-member tariff share. A non-positive or null share yields a
+   * EcoPay commission for a given per-member tariff share. A non-positive or null share yields a
    * zero commission (defensive — callers validate the share first).
    */
   public BigDecimal commissionFor(BigDecimal share) {

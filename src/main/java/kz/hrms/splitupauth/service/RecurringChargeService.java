@@ -99,7 +99,7 @@ public class RecurringChargeService {
             .user(member.getUser())
             .amount(lastSuccess.getAmount())
             // Carry the commission breakdown forward so each renewal pays the owner
-            // the share only and ECOpay keeps the same commission.
+            // the share only and EcoPay keeps the same commission.
             .commissionAmount(lastSuccess.getCommissionAmount())
             .status(PaymentIntentStatus.PENDING)
             .providerName(gateway.providerName())
@@ -117,7 +117,7 @@ public class RecurringChargeService {
                   .idempotencyKey(intent.getIdempotencyKey())
                   .amount(intent.getAmount())
                   .currency("KZT")
-                  .description("Ecopay recurring " + member.getRoom().getTitle())
+                  .description("EcoPay recurring " + member.getRoom().getTitle())
                   .userEmail(member.getUser().getEmail())
                   .userPhone(member.getUser().getPhone())
                   .build(),
@@ -129,7 +129,17 @@ public class RecurringChargeService {
         paymentIntentRepository.save(intent);
         // Record the transaction + create the owner payout for this renewal
         // (previously missing → owner was never paid for recurring periods).
-        paymentService.applySuccessfulCharge(intent, null, null);
+        intent.setStatus(PaymentIntentStatus.PENDING);
+        intent = paymentIntentRepository.save(intent);
+        paymentService.finalizeSuccessfulPayment(
+            intent.getId(),
+            resp.getExternalPaymentId(),
+            resp.getProviderStatusCode(),
+            null,
+            null,
+            null,
+            null,
+            "RECURRING_SUCCESS");
       } else {
         intent.setStatus(PaymentIntentStatus.FAILED);
         intent.setFailureCode(resp.getFailureCode());

@@ -15,7 +15,7 @@ test.describe("Usage & payouts", () => {
     expect(Array.isArray(payouts)).toBe(true);
     const forRoom = payouts.find((p: any) => p.roomId === room.id);
     expect(forRoom, "owner has a payout for this room").toBeTruthy();
-    // The owner is paid the full tariff share (the member separately covered the ECOpay
+    // The owner is paid the full tariff share (the member separately covered the EcoPay
     // commission on top). No percentage fee is withheld from the owner payout anymore.
     expect(Number(forRoom.amount)).toBeCloseTo(1822.5, 1);
     expect(forRoom.currency).toBe("KZT");

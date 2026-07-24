@@ -36,6 +36,7 @@ public class RefundService {
   private final PaymentEventLogger eventLogger;
   private final PayoutService payoutService;
   private final NotificationService notificationService;
+  private final MoneyLedgerService moneyLedgerService;
 
   /**
    * User-initiated refund request — owner of the original payment can request a (partial) refund.
@@ -51,7 +52,7 @@ public class RefundService {
 
     PaymentTransaction tx =
         paymentTransactionRepository
-            .findById(request.getPaymentTransactionId())
+            .findWithLockById(request.getPaymentTransactionId())
             .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
 
     // IDOR check: only the original payer can request a refund.
@@ -65,9 +66,10 @@ public class RefundService {
       throw new InvalidRequestException("Only successful CHARGE can be refunded");
     }
 
+    BigDecimal amount = normalizeRefundAmount(request.getAmount());
     BigDecimal already = refundTransactionRepository.sumActiveRefundAmounts(tx);
     BigDecimal remaining = tx.getAmount().subtract(already);
-    if (request.getAmount().compareTo(remaining) > 0) {
+    if (amount.compareTo(remaining) > 0) {
       throw new InvalidRequestException("REFUND_AMOUNT_EXCEEDED: " + remaining + " available");
     }
 
@@ -75,7 +77,7 @@ public class RefundService {
         RefundTransaction.builder()
             .paymentTransaction(tx)
             .status(RefundStatus.PENDING)
-            .amount(request.getAmount())
+            .amount(amount)
             .currency(tx.getCurrency())
             .reason(request.getReason())
             .idempotencyKey(request.getIdempotencyKey())
@@ -139,7 +141,7 @@ public class RefundService {
       return;
     }
     RefundTransaction refund =
-        refundTransactionRepository.findByProviderRefundId(providerRefundId).orElse(null);
+        refundTransactionRepository.findWithLockByProviderRefundId(providerRefundId).orElse(null);
     if (refund == null) {
       log.warn("Refund webhook references unknown provider refund id {}", providerRefundId);
       return;
@@ -179,7 +181,7 @@ public class RefundService {
   public RefundTransactionResponse getMine(User currentUser, Long refundId) {
     RefundTransaction refund =
         refundTransactionRepository
-            .findById(refundId)
+            .findWithLockById(refundId)
             .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
     boolean isOwner =
         refund.getPaymentTransaction().getPaymentIntent() != null
@@ -204,6 +206,24 @@ public class RefundService {
             ? PaymentTransactionStatus.REFUNDED_FULL
             : PaymentTransactionStatus.REFUNDED_PARTIAL);
     paymentTransactionRepository.save(tx);
+    moneyLedgerService.append(
+        "REFUND",
+        refund.getAmount(),
+        refund.getCurrency(),
+        "DEBIT",
+        tx.getPaymentIntent(),
+        tx,
+        refund,
+        null,
+        tx.getRoom() == null ? null : tx.getRoom().getOwner(),
+        "refund-" + refund.getId());
+    if (fullRefund && tx.getRoomMember() != null) {
+      RoomMember member = tx.getRoomMember();
+      if (member.getStatus() == MemberStatus.PENDING || member.getStatus() == MemberStatus.ACTIVE) {
+        member.setStatus(MemberStatus.CANCELLED_BEFORE_PAYMENT);
+        member.setEndedAt(java.time.LocalDateTime.now());
+      }
+    }
     // Clawback: don't pay the owner for money that's been refunded.
     payoutService.reverseOwnerPayoutForRefund(tx.getPaymentIntent(), fullRefund);
   }
@@ -222,15 +242,18 @@ public class RefundService {
 
     PaymentTransaction paymentTransaction =
         paymentTransactionRepository
-            .findById(request.getPaymentTransactionId())
+            .findWithLockById(request.getPaymentTransactionId())
             .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
 
     if (paymentTransaction.getType() != PaymentTransactionType.CHARGE) {
       throw new InvalidRequestException("Refund can only be created for CHARGE transaction");
     }
 
-    if (request.getAmount().compareTo(paymentTransaction.getAmount()) > 0) {
-      throw new InvalidRequestException("Refund amount cannot exceed original payment amount");
+    BigDecimal amount = normalizeRefundAmount(request.getAmount());
+    BigDecimal already = refundTransactionRepository.sumActiveRefundAmounts(paymentTransaction);
+    BigDecimal remaining = paymentTransaction.getAmount().subtract(already);
+    if (amount.compareTo(remaining) > 0) {
+      throw new InvalidRequestException("Refund amount cannot exceed available captured balance");
     }
 
     Dispute dispute = null;
@@ -247,7 +270,7 @@ public class RefundService {
             .dispute(dispute)
             .adminUser(currentUser)
             .status(RefundStatus.PENDING)
-            .amount(request.getAmount())
+            .amount(amount)
             .currency(paymentTransaction.getCurrency())
             .reason(request.getReason())
             .idempotencyKey(request.getIdempotencyKey())
@@ -294,7 +317,7 @@ public class RefundService {
 
     RefundTransaction refund =
         refundTransactionRepository
-            .findById(refundId)
+            .findWithLockById(refundId)
             .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
 
     if (refund.getStatus() != RefundStatus.PENDING) {
@@ -377,6 +400,17 @@ public class RefundService {
   private void ensureAdmin(User currentUser) {
     if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
       throw new ForbiddenOperationException("Admin access required");
+    }
+  }
+
+  private BigDecimal normalizeRefundAmount(BigDecimal amount) {
+    if (amount == null || amount.signum() <= 0) {
+      throw new InvalidRequestException("Refund amount must be greater than zero");
+    }
+    try {
+      return amount.setScale(2, java.math.RoundingMode.UNNECESSARY);
+    } catch (ArithmeticException ex) {
+      throw new InvalidRequestException("Refund amount must have at most 2 decimal places");
     }
   }
 

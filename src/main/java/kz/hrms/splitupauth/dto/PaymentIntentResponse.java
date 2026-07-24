@@ -11,13 +11,13 @@ public class PaymentIntentResponse {
   private Long id;
   private String idempotencyKey;
 
-  /** Total charged to the member = tariff share + ECOpay commission. */
+  /** Total charged to the member = tariff share + EcoPay commission. */
   private BigDecimal amount;
 
   /** The member's tariff share (the portion the owner receives). */
   private BigDecimal shareAmount;
 
-  /** The ECOpay commission added on top of the share. */
+  /** The EcoPay commission added on top of the share. */
   private BigDecimal commissionAmount;
 
   private String currency;

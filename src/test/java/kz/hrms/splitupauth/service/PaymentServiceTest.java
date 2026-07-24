@@ -14,11 +14,13 @@ import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ class PaymentServiceTest {
   @Mock private PaymentIntentRepository paymentIntentRepository;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private RoomMemberRepository roomMemberRepository;
+  @Mock private RoomRepository roomRepository;
   @Mock private SavedCardRepository savedCardRepository;
   @Mock private RoomMemberService roomMemberService;
   @Mock private PaymentGatewayRegistry gatewayRegistry;
@@ -42,6 +45,7 @@ class PaymentServiceTest {
   @Mock private RoomEventLogger roomEventLogger;
   @Mock private NotificationService notificationService;
   @Mock private CommissionCalculator commissionCalculator;
+  @Mock private MoneyLedgerService moneyLedgerService;
 
   private PaymentService paymentService;
 
@@ -52,6 +56,7 @@ class PaymentServiceTest {
             paymentIntentRepository,
             paymentTransactionRepository,
             roomMemberRepository,
+            roomRepository,
             savedCardRepository,
             roomMemberService,
             gatewayRegistry,
@@ -61,13 +66,14 @@ class PaymentServiceTest {
             refundService,
             roomEventLogger,
             notificationService,
-            commissionCalculator);
+            commissionCalculator,
+            moneyLedgerService);
   }
 
   private PaymentIntent pendingIntent(BigDecimal amount) {
     User user = User.builder().id(1L).email("m@test.kz").build();
-    Room room = Room.builder().id(2L).build();
-    RoomMember member = RoomMember.builder().id(3L).user(user).room(room).build();
+    Room room = Room.builder().id(2L).maxMembers(2).build();
+    RoomMember member = RoomMember.builder().id(3L).user(user).room(room).status(MemberStatus.APPLIED).build();
     return PaymentIntent.builder()
         .id(100L)
         .idempotencyKey("k-100")
@@ -79,11 +85,28 @@ class PaymentServiceTest {
         .build();
   }
 
+  private void stubFreeCapacity(PaymentIntent intent) {
+    when(roomMemberRepository.findWithLockById(intent.getRoomMember().getId()))
+        .thenReturn(Optional.of(intent.getRoomMember()));
+    when(roomRepository.findByIdForUpdate(intent.getRoomMember().getRoom().getId()))
+        .thenReturn(Optional.of(intent.getRoomMember().getRoom()));
+    when(paymentTransactionRepository.findFirstByPaymentIntentAndTypeAndStatus(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(paymentTransactionRepository.save(any()))
+        .thenAnswer(
+            i -> {
+              var tx = (kz.hrms.splitupauth.entity.PaymentTransaction) i.getArgument(0);
+              tx.setId(200L);
+              return tx;
+            });
+  }
+
   @Test
   void webhookSuccessWithMatchingAmount_marksPaidAndCreatesPayout() {
     PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
     when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
     when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    stubFreeCapacity(intent);
 
     GatewayWebhookEvent event =
         GatewayWebhookEvent.builder()
@@ -199,5 +222,25 @@ class PaymentServiceTest {
 
     verify(roomMemberService, never()).markMembershipAsPaid(any());
     verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
+  }
+
+  @Test
+  void finalizer_whenRoomIsFull_marksCompensationRequiredWithoutSideEffects() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(roomMemberRepository.findWithLockById(3L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(roomRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(intent.getRoomMember().getRoom()));
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(any(), any())).thenReturn(1L);
+
+    PaymentIntent result =
+        paymentService.finalizeSuccessfulPayment(
+            100L, "EXT-1", "ok", null, null, "req-1", null, "WEBHOOK_SUCCESS");
+
+    assertEquals(PaymentIntentStatus.SUCCESS, result.getStatus());
+    assertEquals(true, result.getCompensationRequired());
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
+    verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
+    verify(paymentTransactionRepository, never()).save(any());
   }
 }

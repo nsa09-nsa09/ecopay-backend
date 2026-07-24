@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -20,6 +22,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -39,28 +42,43 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
   private final JwtAuthenticationFilter jwtAuthenticationFilter;
+  private final SameOriginCookieEndpointFilter sameOriginCookieEndpointFilter;
   private final CorsProperties corsProperties;
+  private final Environment environment;
 
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    boolean devProfile = environment.acceptsProfiles(Profiles.of("dev"));
+    boolean prodProfile = environment.acceptsProfiles(Profiles.of("prod"));
+
     http.csrf(AbstractHttpConfigurer::disable)
         .cors(cors -> cors.configurationSource(corsConfigurationSource()))
         .headers(
             headers ->
                 headers
-                    // Browser security headers (DoD). nosniff + frameOptions DENY are also
-                    // Spring defaults; CSP/HSTS/Referrer-Policy are added explicitly.
-                    .contentSecurityPolicy(
-                        csp ->
-                            csp.policyDirectives(
-                                "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"))
+                    .contentTypeOptions(contentType -> {})
+                    .addHeaderWriter(
+                        new StaticHeadersWriter(
+                            "Permissions-Policy",
+                            "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"))
                     .frameOptions(frame -> frame.deny())
                     .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER))
                     .httpStrictTransportSecurity(
-                        hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000)))
+                        hsts -> {
+                          if (prodProfile) {
+                            hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000);
+                          } else {
+                            hsts.disable();
+                          }
+                        }))
         .authorizeHttpRequests(
             auth ->
-                auth.requestMatchers(
+                {
+                  if (devProfile) {
+                    auth.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
+                        .permitAll();
+                  }
+                  auth.requestMatchers(
                         "/api/v1/auth/register",
                         "/api/v1/auth/login",
                         "/api/v1/auth/login/2fa/verify",
@@ -75,11 +93,7 @@ public class SecurityConfig {
                         "/api/v1/auth/resend-phone-code",
                         "/api/v1/auth/resend-verification",
                         "/api/v1/webhooks/**",
-                        "/v3/api-docs/**",
-                        "/swagger-ui/**",
-                        "/swagger-ui.html",
-                        "/actuator/health",
-                        "/actuator/health/**")
+                        "/actuator/health")
                     .permitAll()
                     .requestMatchers("/ws", "/ws/**")
                     .permitAll()
@@ -128,9 +142,11 @@ public class SecurityConfig {
                     .requestMatchers("/api/v1/admin/**")
                     .hasAuthority("ADMIN")
                     .anyRequest()
-                    .authenticated())
+                    .authenticated();
+                })
         .sessionManagement(
             session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .addFilterBefore(sameOriginCookieEndpointFilter, UsernamePasswordAuthenticationFilter.class)
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
     return http.build();
@@ -141,7 +157,8 @@ public class SecurityConfig {
     CorsConfiguration config = new CorsConfiguration();
     config.setAllowedOrigins(corsProperties.getAllowedOrigins());
     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-    config.setAllowedHeaders(List.of("*"));
+    config.setAllowedHeaders(
+        List.of("Authorization", "Content-Type", "Accept", "Accept-Language", "X-Requested-With"));
     config.setExposedHeaders(List.of("Authorization"));
     config.setAllowCredentials(true);
     config.setMaxAge(3600L);

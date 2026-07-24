@@ -43,6 +43,12 @@ public class AuthController {
   @Value("${jwt.refresh-expiration}")
   private long refreshExpirationMs;
 
+  @Value("${app.auth.refresh-cookie-secure:true}")
+  private boolean refreshCookieSecure;
+
+  @Value("${app.auth.refresh-token-body-enabled:false}")
+  private boolean refreshTokenBodyEnabled;
+
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(
       @Valid @RequestBody RegisterRequest request,
@@ -137,16 +143,16 @@ public class AuthController {
   }
 
   /**
-   * Refresh the access token. The refresh token is preferred from the httpOnly cookie (new client),
-   * but we still accept it in the request body so an older frontend that hasn't been redeployed yet
-   * keeps working.
+   * Refresh the access token. The refresh token is preferred from the httpOnly cookie. Deprecated
+   * request-body mode is disabled by default and can only be re-enabled with an explicit config
+   * flag during a controlled migration.
    */
   @PostMapping("/refresh")
   public ResponseEntity<AuthResponse> refreshToken(
       @CookieValue(name = REFRESH_COOKIE_NAME, required = false) String cookieToken,
       @RequestBody(required = false) RefreshTokenRequest body,
       HttpServletResponse response) {
-    String token = pickRefreshToken(cookieToken, body);
+    String token = pickRefreshToken(cookieToken, body, true);
     if (token == null) {
       throw new InvalidRequestException("Refresh token is required");
     }
@@ -160,15 +166,15 @@ public class AuthController {
   }
 
   /**
-   * Revoke the refresh token and clear the cookie. Accepts the token from cookie first, body
-   * second, and no-ops silently if neither is present (client already forgot it).
+   * Revoke the refresh token and clear the cookie. Deprecated request-body mode follows the same
+   * explicit config flag as /refresh, and no-ops silently if neither source is present.
    */
   @PostMapping("/logout")
   public ResponseEntity<Void> logout(
       @CookieValue(name = REFRESH_COOKIE_NAME, required = false) String cookieToken,
       @RequestBody(required = false) RefreshTokenRequest body,
       HttpServletResponse response) {
-    String token = pickRefreshToken(cookieToken, body);
+    String token = pickRefreshToken(cookieToken, body, false);
     if (token != null) {
       authService.logout(token);
     }
@@ -219,12 +225,19 @@ public class AuthController {
     return ResponseEntity.noContent().build();
   }
 
-  private String pickRefreshToken(String cookieToken, RefreshTokenRequest body) {
+  private String pickRefreshToken(
+      String cookieToken, RefreshTokenRequest body, boolean requiredWhenBodyDisabled) {
     if (cookieToken != null && !cookieToken.isBlank()) {
       return cookieToken;
     }
     if (body != null && body.getRefreshToken() != null && !body.getRefreshToken().isBlank()) {
+      if (!refreshTokenBodyEnabled) {
+        throw new InvalidRequestException("Refresh token body mode is disabled");
+      }
       return body.getRefreshToken();
+    }
+    if (requiredWhenBodyDisabled && !refreshTokenBodyEnabled) {
+      return null;
     }
     return null;
   }
@@ -233,7 +246,7 @@ public class AuthController {
     ResponseCookie cookie =
         ResponseCookie.from(REFRESH_COOKIE_NAME, refreshToken)
             .httpOnly(true)
-            .secure(true)
+            .secure(refreshCookieSecure)
             .sameSite("Lax")
             .path(REFRESH_COOKIE_PATH)
             .maxAge(Duration.ofSeconds(refreshExpirationMs / 1000))
@@ -245,7 +258,7 @@ public class AuthController {
     ResponseCookie cookie =
         ResponseCookie.from(REFRESH_COOKIE_NAME, "")
             .httpOnly(true)
-            .secure(true)
+            .secure(refreshCookieSecure)
             .sameSite("Lax")
             .path(REFRESH_COOKIE_PATH)
             .maxAge(0)

@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.repository;
 
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -7,6 +8,7 @@ import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -27,5 +29,13 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
 
   Optional<Payout> findByProviderPayoutId(String providerPayoutId);
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.providerPayoutId = :providerPayoutId")
+  Optional<Payout> findWithLockByProviderPayoutId(@Param("providerPayoutId") String providerPayoutId);
+
   Optional<Payout> findByTriggeringPaymentIntent(PaymentIntent triggeringPaymentIntent);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.id = :id")
+  Optional<Payout> findWithLockById(@Param("id") Long id);
 }

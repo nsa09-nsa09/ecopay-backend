@@ -29,6 +29,7 @@ class PayoutServiceTest {
   @Mock private PaymentEventLogger eventLogger;
   @Mock private SavedCardRepository savedCardRepository;
   @Mock private NotificationService notificationService;
+  @Mock private MoneyLedgerService moneyLedgerService;
 
   private PayoutService payoutService;
 
@@ -41,7 +42,8 @@ class PayoutServiceTest {
             gatewayRegistry,
             eventLogger,
             savedCardRepository,
-            notificationService);
+            notificationService,
+            moneyLedgerService);
   }
 
   @Test

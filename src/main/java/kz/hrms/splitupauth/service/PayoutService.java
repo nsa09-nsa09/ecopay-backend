@@ -4,7 +4,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
 import kz.hrms.splitupauth.entity.PayoutMethod;
@@ -40,6 +39,7 @@ public class PayoutService {
   private final PaymentEventLogger eventLogger;
   private final SavedCardRepository savedCardRepository;
   private final NotificationService notificationService;
+  private final MoneyLedgerService moneyLedgerService;
 
   /**
    * Days a captured payment is held in the merchant balance before the owner payout is dispatched.
@@ -56,13 +56,20 @@ public class PayoutService {
     if (intent.getRoomMember() == null || intent.getRoomMember().getRoom() == null) {
       return null;
     }
+    Payout existing = payoutRepository.findByTriggeringPaymentIntent(intent).orElse(null);
+    if (existing != null) {
+      return existing;
+    }
     User owner = intent.getRoomMember().getRoom().getOwner();
     // The member was charged (share + commission). The owner is paid the full share;
-    // ECOpay keeps the commission. Owners never pay a commission themselves.
+    // EcoPay keeps the commission. Owners never pay a commission themselves.
     BigDecimal commission =
         intent.getCommissionAmount() == null ? BigDecimal.ZERO : intent.getCommissionAmount();
     BigDecimal payoutAmount =
         intent.getAmount().subtract(commission).setScale(2, RoundingMode.HALF_UP);
+    if (payoutAmount.signum() <= 0) {
+      throw new InvalidRequestException("Payout amount must be greater than zero");
+    }
 
     // Hold the payout: capture happened now, but the owner is only paid once the hold
     // window elapses. The dispatcher skips payouts until releaseAt is reached.
@@ -78,9 +85,21 @@ public class PayoutService {
             .currency("KZT")
             .status("PENDING")
             .releaseAt(releaseAt)
-            .idempotencyKey("payout-" + intent.getId() + "-" + UUID.randomUUID())
+            .idempotencyKey("payout-intent-" + intent.getId())
             .build();
     payout = payoutRepository.save(payout);
+
+    moneyLedgerService.append(
+        "OWNER_HOLD",
+        payoutAmount,
+        "KZT",
+        "CREDIT",
+        intent,
+        null,
+        null,
+        payout,
+        owner,
+        "owner-hold-intent-" + intent.getId());
 
     eventLogger.log(
         "PAYOUT",
@@ -124,7 +143,7 @@ public class PayoutService {
 
   @Transactional
   public void dispatchPayout(Long payoutId) {
-    Payout payout = payoutRepository.findById(payoutId).orElse(null);
+    Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
     if (payout == null) return;
     if (!"PENDING".equals(payout.getStatus()) && !"PENDING_METHOD".equals(payout.getStatus()))
       return;
@@ -161,13 +180,14 @@ public class PayoutService {
                       .destinationCardToken(method.getProviderCardToken())
                       .amount(payout.getAmount())
                       .currency(payout.getCurrency())
-                      .description("Ecopay payout #" + payout.getId())
+                      .description("EcoPay payout #" + payout.getId())
                       .build());
 
       if (resp.isSuccess()) {
         payout.setStatus("SUCCESS");
         payout.setProviderPayoutId(resp.getExternalPayoutId());
         payout.setProcessedAt(LocalDateTime.now());
+        appendPayoutSuccessLedger(payout);
       } else if (resp.isPending()) {
         payout.setStatus("PROCESSING");
         payout.setProviderPayoutId(resp.getExternalPayoutId());
@@ -196,7 +216,7 @@ public class PayoutService {
       log.warn("Payout webhook without provider payout id, ignoring");
       return;
     }
-    Payout payout = payoutRepository.findByProviderPayoutId(providerPayoutId).orElse(null);
+    Payout payout = payoutRepository.findWithLockByProviderPayoutId(providerPayoutId).orElse(null);
     if (payout == null) {
       log.warn("Payout webhook references unknown provider payout id {}", providerPayoutId);
       return;
@@ -209,6 +229,9 @@ public class PayoutService {
       payout.setFailureReason("Provider reported payout failure");
     }
     payout.setProcessedAt(LocalDateTime.now());
+    if (success) {
+      appendPayoutSuccessLedger(payout);
+    }
     payoutRepository.save(payout);
     log.info("Payout {} marked {} by provider callback", payout.getId(), payout.getStatus());
 
@@ -225,6 +248,31 @@ public class PayoutService {
           "/payment/payout",
           java.util.Map.of("payoutId", payout.getId()));
     }
+  }
+
+  private void appendPayoutSuccessLedger(Payout payout) {
+    moneyLedgerService.append(
+        "HOLD_RELEASE",
+        payout.getAmount(),
+        payout.getCurrency(),
+        "DEBIT",
+        payout.getTriggeringPaymentIntent(),
+        null,
+        null,
+        payout,
+        payout.getUser(),
+        "hold-release-payout-" + payout.getId());
+    moneyLedgerService.append(
+        "PAYOUT",
+        payout.getAmount(),
+        payout.getCurrency(),
+        "DEBIT",
+        payout.getTriggeringPaymentIntent(),
+        null,
+        null,
+        payout,
+        payout.getUser(),
+        "payout-" + payout.getId());
   }
 
   /**

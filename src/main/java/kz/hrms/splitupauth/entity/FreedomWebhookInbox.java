@@ -48,6 +48,19 @@ public class FreedomWebhookInbox {
   @Builder.Default
   private String processingStatus = "PENDING";
 
+  @Column(name = "attempt_count", nullable = false)
+  @Builder.Default
+  private Integer attemptCount = 0;
+
+  @Column(name = "next_retry_at")
+  private LocalDateTime nextRetryAt;
+
+  @Column(name = "last_error_code", length = 80)
+  private String lastErrorCode;
+
+  @Column(name = "lease_until")
+  private LocalDateTime leaseUntil;
+
   @Column(name = "error_message", columnDefinition = "TEXT")
   private String errorMessage;
 
@@ -55,5 +68,6 @@ public class FreedomWebhookInbox {
   protected void onCreate() {
     if (receivedAt == null) receivedAt = LocalDateTime.now();
     if (processingStatus == null) processingStatus = "PENDING";
+    if (attemptCount == null) attemptCount = 0;
   }
 }

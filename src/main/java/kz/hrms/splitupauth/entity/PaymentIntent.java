@@ -37,12 +37,12 @@ public class PaymentIntent {
   @JoinColumn(name = "user_id", nullable = false)
   private User user;
 
-  /** Total charged to the member = tariff share + ECOpay commission. */
+  /** Total charged to the member = tariff share + EcoPay commission. */
   @Column(nullable = false, precision = 12, scale = 2)
   private BigDecimal amount;
 
   /**
-   * ECOpay commission portion of {@link #amount}. The owner payout is {@code amount -
+   * EcoPay commission portion of {@link #amount}. The owner payout is {@code amount -
    * commissionAmount} (i.e. the member's tariff share).
    */
   @Column(name = "commission_amount", nullable = false, precision = 12, scale = 2)
@@ -85,6 +85,17 @@ public class PaymentIntent {
   @Column(name = "failure_message", columnDefinition = "TEXT")
   private String failureMessage;
 
+  @Column(name = "compensation_required", nullable = false)
+  @Builder.Default
+  private Boolean compensationRequired = false;
+
+  @Column(name = "review_required", nullable = false)
+  @Builder.Default
+  private Boolean reviewRequired = false;
+
+  @Column(name = "review_reason", length = 100)
+  private String reviewReason;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 
@@ -99,6 +110,12 @@ public class PaymentIntent {
     }
     if (saveCardRequested == null) {
       saveCardRequested = false;
+    }
+    if (compensationRequired == null) {
+      compensationRequired = false;
+    }
+    if (reviewRequired == null) {
+      reviewRequired = false;
     }
   }
 

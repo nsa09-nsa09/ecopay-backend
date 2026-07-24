@@ -150,7 +150,7 @@ IMPORTANT. This document is a template draft and must be reviewed by qualified l
 
 Operator: [full name], BIN [___]
 Address: [___]
-Support email: support@ecopay.kz
+Support email: [configured support email]
 Phone: +7 747 226 6885
 
 By using the Service, you confirm your agreement to these Terms of Service.

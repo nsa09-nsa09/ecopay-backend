@@ -1,4 +1,4 @@
-# Ecopay Backend
+# EcoPay Backend
 
 ## CI/CD
 

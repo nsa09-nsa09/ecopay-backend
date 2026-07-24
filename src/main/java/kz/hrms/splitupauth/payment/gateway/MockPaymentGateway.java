@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.payment.gateway;
 
 import java.util.Map;
 import java.util.UUID;
+import kz.hrms.splitupauth.util.SecurityLogSanitizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -57,7 +58,7 @@ public class MockPaymentGateway implements PaymentGateway {
         "[MOCK-GATEWAY] chargeWithToken intent={} amount={} token={} -> SUCCESS ({})",
         request.getIntentId(),
         request.getAmount(),
-        savedCardToken,
+        SecurityLogSanitizer.tokenPresent(savedCardToken),
         ext);
     return GatewayChargeResponse.builder()
         .success(true)

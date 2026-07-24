@@ -123,7 +123,7 @@ IMPORTANT. This document is a template draft and must be reviewed by qualified d
 
 Operator: [full name], BIN [___]
 Address: [___]
-Email for personal-data matters: support@ecopay.kz
+Email for personal-data matters: [configured support email]
 Phone: +7 747 226 6885
 
 By ticking the consent checkbox, you confirm that you have read this Consent and Privacy Policy and consent to the processing of your personal data on the stated terms.

@@ -74,7 +74,7 @@ public class AdminDashboardService {
             PaymentTransactionStatus.SUCCESS,
             PaymentTransactionStatus.REFUNDED_PARTIAL,
             PaymentTransactionStatus.REFUNDED_FULL);
-    // Platform income = ECOpay commission on the same successful charges as totalRevenue,
+    // Platform income = EcoPay commission on the same successful charges as totalRevenue,
     // so platformRevenue ≤ totalRevenue by construction.
     BigDecimal platformRevenue =
         singleBigDecimal(
@@ -337,7 +337,7 @@ public class AdminDashboardService {
         fromTs,
         toTs);
 
-    // Platform commission (real ECOpay income) in the same window and buckets as revenue,
+    // Platform commission (real EcoPay income) in the same window and buckets as revenue,
     // using the same fx conversion so the two series are directly comparable in KZT.
     String commissionSql =
         "SELECT to_char(date_trunc(?, t.created_at), ?) AS bucket, "

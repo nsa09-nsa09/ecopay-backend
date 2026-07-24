@@ -47,7 +47,7 @@ public class FreedomPayGateway implements PaymentGateway {
             : String.valueOf(request.getIntentId()));
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_currency", request.getCurrency() != null ? request.getCurrency() : "KZT");
-    params.put("pg_description", nonNull(request.getDescription(), "Ecopay payment"));
+    params.put("pg_description", nonNull(request.getDescription(), "EcoPay payment"));
     params.put("pg_user_phone", nonNull(request.getUserPhone(), ""));
     params.put("pg_user_contact_email", nonNull(request.getUserEmail(), ""));
     params.put("pg_result_url", urlResolver.resultUrl());
@@ -93,7 +93,7 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_recurring_profile", savedCardToken);
     params.put("pg_order_id", String.valueOf(request.getIntentId()));
     params.put("pg_amount", formatAmount(request.getAmount()));
-    params.put("pg_description", nonNull(request.getDescription(), "Ecopay subscription"));
+    params.put("pg_description", nonNull(request.getDescription(), "EcoPay subscription"));
 
     String sig = signatureService.signWithMerchantSecret("recurring.php", params);
     params.put("pg_sig", sig);
@@ -146,7 +146,7 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_card_token", request.getDestinationCardToken());
     params.put("pg_order_id", String.valueOf(request.getPayoutId()));
-    params.put("pg_description", nonNull(request.getDescription(), "Ecopay payout"));
+    params.put("pg_description", nonNull(request.getDescription(), "EcoPay payout"));
     params.put("pg_result_url", urlResolver.payoutResultUrl());
 
     String sig = signatureService.signWithPayoutSecret("payouts.php", params);
@@ -281,10 +281,23 @@ public class FreedomPayGateway implements PaymentGateway {
 
     String paymentId = params.get("pg_payment_id");
     String salt = params.get("pg_salt");
+    String eventType =
+        firstNonBlank(params.get("pg_event_type"), params.get("pg_payout_id") == null ? null : "PAYOUT",
+            params.get("pg_refund_id") == null ? null : "REFUND", "CHARGE");
+    String providerReference =
+        firstNonBlank(paymentId, params.get("pg_refund_id"), params.get("pg_payout_id"), params.get("pg_order_id"), "missing");
     String requestId =
-        paymentId != null
-            ? paymentId + ":" + (salt == null ? "" : salt)
-            : "no-payment-id:" + System.currentTimeMillis();
+        PROVIDER_NAME
+            + ":"
+            + properties.getMerchantId()
+            + ":"
+            + script
+            + ":"
+            + eventType
+            + ":"
+            + providerReference
+            + ":"
+            + (salt == null ? "" : salt);
 
     // pg_result: 1 = success, 0 = failure, 2 = not completed yet.
     String resultRaw = params.get("pg_result");
