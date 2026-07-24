@@ -10,4 +10,8 @@ set -a
 source .env
 set +a
 
+if [ -z "${FLYWAY_ENABLED:-}" ]; then
+  export FLYWAY_ENABLED=false
+fi
+
 ./mvnw spring-boot:run
