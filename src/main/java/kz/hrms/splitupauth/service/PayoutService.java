@@ -128,6 +128,7 @@ public class PayoutService {
    * to dispatch them. Held payouts (releaseAt in the future) are skipped until due.
    */
   @Scheduled(fixedDelay = 60_000)
+  @Transactional
   public void processPendingPayouts() {
     List<Payout> pending =
         payoutRepository.findDispatchable(

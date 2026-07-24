@@ -16,7 +16,7 @@ public final class SecurityLogSanitizer {
       return value;
     }
     String withoutBearer = BEARER_TOKEN.matcher(value).replaceAll("Bearer [redacted]");
-    return SENSITIVE_PAIR.matcher(withoutBearer).replaceAll("$1=[redacted]");
+    return SENSITIVE_PAIR.matcher(withoutBearer).replaceAll("[redacted]");
   }
 
   public static String tokenPresent(String value) {
