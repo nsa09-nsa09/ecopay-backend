@@ -28,4 +28,8 @@ public interface PaymentTransactionRepository
 
   List<PaymentTransaction> findByRoomMember_IdAndStatusAndTypeOrderByCreatedAtDesc(
       Long roomMemberId, PaymentTransactionStatus status, PaymentTransactionType type);
+
+  /** Captured member charges in a room, used after a confirmed owner breach. */
+  List<PaymentTransaction> findByRoom_IdAndStatusAndTypeOrderByCreatedAtAsc(
+      Long roomId, PaymentTransactionStatus status, PaymentTransactionType type);
 }

@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.ApplyDisputeSanctionsRequest;
+import kz.hrms.splitupauth.dto.CreateRoomComplaintRequest;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
 import kz.hrms.splitupauth.dto.DisputeDecisionRequest;
 import kz.hrms.splitupauth.dto.DisputeResponse;
@@ -18,6 +19,7 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.*;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -34,10 +36,59 @@ public class DisputeService {
   private final AdminActionLogRepository adminActionLogRepository;
   private final RoomEventLogRepository roomEventLogRepository;
   private final RoomRepository roomRepository;
+  private final RoomMemberRepository roomMemberRepository;
+  private final PaymentTransactionRepository paymentTransactionRepository;
+  private final RefundTransactionRepository refundTransactionRepository;
   private final UserRepository userRepository;
   private final RefundService refundService;
   private final ReputationService reputationService;
   private final NotificationService notificationService;
+
+  /**
+   * Opens an administrator-visible case directly from a paid room member. A report of an owner
+   * breach must not depend on a support agent manually escalating a generic ticket first.
+   */
+  @Transactional
+  public DisputeResponse openMemberComplaint(
+      Long roomId, User currentUser, CreateRoomComplaintRequest request) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    RoomMember member =
+        roomMemberRepository
+            .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+            .orElseThrow(() -> new ForbiddenOperationException("You are not a member of this room"));
+
+    if (member.getStatus() != MemberStatus.PENDING && member.getStatus() != MemberStatus.ACTIVE) {
+      throw new InvalidRequestException("Only a paid active or pending membership can be reported");
+    }
+    if (!paymentTransactionRepository.existsByRoomMember_IdAndStatus(
+        member.getId(), PaymentTransactionStatus.SUCCESS)) {
+      throw new InvalidRequestException("A successful payment is required before opening a complaint");
+    }
+    if (disputeRepository.existsByRoomMemberAndStatusIn(
+        member, List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW))) {
+      throw new InvalidRequestException("There is already an open complaint for this membership");
+    }
+
+    // A newly opened case prevents automatic activation while administrators investigate it.
+    member.setRequiresAdminReview(true);
+    roomMemberRepository.save(member);
+
+    Dispute dispute =
+        Dispute.builder()
+            .room(room)
+            .roomMember(member)
+            .openedByUser(currentUser)
+            .reasonCode(request.getReasonCode().trim().toUpperCase())
+            .description(TextSanitizer.sanitize(request.getDescription()))
+            .status(DisputeStatus.OPEN)
+            .build();
+    return map(disputeRepository.save(dispute));
+  }
 
   @Transactional
   public DisputeResponse openFromTicket(Long ticketId, User currentUser) {
@@ -272,6 +323,11 @@ public class DisputeService {
             .findById(disputeId)
             .orElseThrow(() -> new ResourceNotFoundException("Dispute not found"));
 
+    if (dispute.getStatus() == DisputeStatus.RESOLVED
+        || dispute.getStatus() == DisputeStatus.REJECTED) {
+      throw new InvalidRequestException("Closed dispute cannot receive owner-violation sanctions");
+    }
+
     Room room = dispute.getRoom();
     if (room == null) {
       throw new InvalidRequestException("Dispute is not linked to room");
@@ -333,20 +389,26 @@ public class DisputeService {
             .userAgent(httpRequest.getHeader("User-Agent"))
             .build());
 
-    if (Boolean.TRUE.equals(request.getCreateRefund())) {
-      if (request.getPaymentTransactionId() == null || request.getRefundAmount() == null) {
-        throw new InvalidRequestException(
-            "Payment transaction and refund amount are required when createRefund=true");
+    // Once an owner breach is confirmed, every paid participant in the now-blocked room receives
+    // their still-refundable captured payment. This avoids making an administrator copy payment
+    // ids and amounts by hand, and makes duplicate clicks safe through the idempotency key.
+    List<PaymentTransaction> capturedCharges =
+        paymentTransactionRepository.findByRoom_IdAndStatusAndTypeOrderByCreatedAtAsc(
+            room.getId(), PaymentTransactionStatus.SUCCESS, PaymentTransactionType.CHARGE);
+    if (capturedCharges.isEmpty()) {
+      throw new InvalidRequestException("No successful member payments are available for refund");
+    }
+    for (PaymentTransaction charge : capturedCharges) {
+      var remaining = charge.getAmount().subtract(refundTransactionRepository.sumActiveRefundAmounts(charge));
+      if (remaining.signum() <= 0) {
+        continue;
       }
-
       CreateRefundRequest refundRequest = new CreateRefundRequest();
-      refundRequest.setPaymentTransactionId(request.getPaymentTransactionId());
+      refundRequest.setPaymentTransactionId(charge.getId());
       refundRequest.setDisputeId(dispute.getId());
-      refundRequest.setAmount(request.getRefundAmount());
+      refundRequest.setAmount(remaining);
       refundRequest.setReason(request.getReason());
-      refundRequest.setIdempotencyKey(
-          "dispute-" + dispute.getId() + "-refund-" + request.getPaymentTransactionId());
-
+      refundRequest.setIdempotencyKey("dispute-" + dispute.getId() + "-refund-" + charge.getId());
       refundService.createRefund(currentUser, refundRequest, httpRequest);
     }
 

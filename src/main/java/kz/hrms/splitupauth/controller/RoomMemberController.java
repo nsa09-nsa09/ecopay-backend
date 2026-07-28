@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import java.util.List;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.service.DisputeService;
 import kz.hrms.splitupauth.service.InMemoryRateLimiter;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 public class RoomMemberController {
 
   private final RoomMemberService roomMemberService;
+  private final DisputeService disputeService;
   private final InMemoryRateLimiter rateLimiter;
 
   @Value("${app.rate-limit.room-join.max:20}")
@@ -77,6 +79,16 @@ public class RoomMemberController {
   public ResponseEntity<MyRoomMembershipDto> confirmMemberAccess(
       @PathVariable Long roomId, @AuthenticationPrincipal User user) {
     return ResponseEntity.ok(roomMemberService.confirmMemberAccess(roomId, user));
+  }
+
+  /** Opens an administrator-visible case when a paid member reports an owner breach. */
+  @PostMapping("/{roomId}/members/me/complaints")
+  public ResponseEntity<DisputeResponse> createComplaint(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody CreateRoomComplaintRequest request) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(disputeService.openMemberComplaint(roomId, user, request));
   }
 
   @PostMapping("/{roomId}/members/{memberId}/reveal-identifier")
