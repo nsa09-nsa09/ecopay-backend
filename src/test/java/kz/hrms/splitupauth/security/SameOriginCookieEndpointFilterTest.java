@@ -32,6 +32,18 @@ class SameOriginCookieEndpointFilterTest {
   }
 
   @Test
+  void samePublicOriginPassesWithoutCorsConfiguration() throws ServletException, IOException {
+    MockHttpServletRequest request = requestWithCookie("Origin", "https://shop.ecopay.kz");
+    request.setScheme("https");
+    request.setServerName("shop.ecopay.kz");
+    request.setServerPort(443);
+
+    MockHttpServletResponse response = execute(request);
+
+    assertEquals(200, response.getStatus());
+  }
+
+  @Test
   void foreignOriginIsForbidden() throws ServletException, IOException {
     MockHttpServletResponse response = execute(requestWithCookie("Origin", "https://evil.example"));
 
