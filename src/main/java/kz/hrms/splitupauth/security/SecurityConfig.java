@@ -124,6 +124,8 @@ public class SecurityConfig {
                     // /api/v1/admin/** matcher further down).
                     .requestMatchers(HttpMethod.GET, "/api/v1/news", "/api/v1/news/**")
                     .permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/stories", "/api/v1/stories/**")
+                    .permitAll()
                     // Public room browsing only: the catalog list and a single room by id.
                     // Everything deeper under a room (members, membership) requires auth,
                     // and falls through to anyRequest().authenticated() below.

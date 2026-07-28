@@ -34,6 +34,9 @@ public enum AdminActionType {
   NEWS_CREATED,
   NEWS_UPDATED,
   NEWS_DELETED,
+  STORY_CREATED,
+  STORY_UPDATED,
+  STORY_DELETED,
   LEGAL_DOCUMENT_UPDATED,
   /**
    * Read-only sentinel used by {@code AdminActionTypeConverter} when the DB row carries an

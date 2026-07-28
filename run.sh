@@ -14,4 +14,8 @@ if [ -z "${FLYWAY_ENABLED:-}" ]; then
   export FLYWAY_ENABLED=false
 fi
 
+if [ -z "${JPA_DDL_AUTO:-}" ]; then
+  export JPA_DDL_AUTO=update
+fi
+
 ./mvnw spring-boot:run

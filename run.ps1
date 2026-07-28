@@ -20,6 +20,10 @@ if (-not $env:FLYWAY_ENABLED) {
     [System.Environment]::SetEnvironmentVariable("FLYWAY_ENABLED", "false", "Process")
 }
 
+if (-not $env:JPA_DDL_AUTO) {
+    [System.Environment]::SetEnvironmentVariable("JPA_DDL_AUTO", "update", "Process")
+}
+
 $port = if ($env:SERVER_PORT) { [int]$env:SERVER_PORT } else { 8080 }
 $listeners = netstat -ano | Select-String ":$port\s+.*LISTENING"
 if ($listeners) {

@@ -32,6 +32,7 @@ public class FreedomWebhookRetryScheduler {
   private int maxAttempts;
 
   @Scheduled(fixedDelayString = "${app.webhooks.freedom.retry-delay-ms:60000}")
+  @Transactional
   public void retryDueWebhooks() {
     for (FreedomWebhookInbox inbox : inboxRepository.findRetryable(LocalDateTime.now())) {
       try {
