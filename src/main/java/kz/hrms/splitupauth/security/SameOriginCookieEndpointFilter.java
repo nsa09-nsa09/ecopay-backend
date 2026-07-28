@@ -53,7 +53,12 @@ public class SameOriginCookieEndpointFilter extends OncePerRequestFilter {
     String origin = request.getHeader("Origin");
     if (origin != null && !origin.isBlank()) {
       String normalized = normalizeOrigin(origin);
-      if (normalized != null && allowedOrigins.contains(normalized)) {
+      // Requests proxied through the public SPA are same-origin in the browser. Do not require
+      // that public origin to be duplicated in APP_CORS_ALLOWED_ORIGINS just to refresh a cookie.
+      // server.forward-headers-strategy=framework has already applied the proxy's public host and
+      // scheme before this filter runs.
+      if (normalized != null
+          && (normalized.equals(requestOrigin(request)) || allowedOrigins.contains(normalized))) {
         return SameOriginDecision.allow();
       }
       return SameOriginDecision.deny("Cross-site cookie endpoint request");
@@ -142,6 +147,22 @@ public class SameOriginCookieEndpointFilter extends OncePerRequestFilter {
     } catch (IllegalArgumentException e) {
       return null;
     }
+  }
+
+  private static String requestOrigin(HttpServletRequest request) {
+    String scheme = request.getScheme();
+    String host = request.getServerName();
+    int port = request.getServerPort();
+    if (scheme == null || host == null || host.isBlank()) {
+      return null;
+    }
+    String authority =
+        port == -1
+                || ("https".equalsIgnoreCase(scheme) && port == 443)
+                || ("http".equalsIgnoreCase(scheme) && port == 80)
+            ? host
+            : host + ":" + port;
+    return normalizeOrigin(scheme + "://" + authority);
   }
 
   private record SameOriginDecision(boolean allowed, String reason) {
