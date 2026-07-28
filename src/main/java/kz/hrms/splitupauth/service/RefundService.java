@@ -152,6 +152,7 @@ public class RefundService {
     if (success) {
       refund.setStatus(RefundStatus.SUCCESS);
       applyRefundToParentTransaction(refund);
+      notifyRefundIssued(refund);
     } else {
       refund.setStatus(RefundStatus.FAILED);
     }
@@ -290,7 +291,63 @@ public class RefundService {
             .userAgent(httpRequest.getHeader("User-Agent"))
             .build());
 
+    // A confirmed owner violation must actually reach the payment provider. In production a
+    // provider may acknowledge the request as PENDING and settle it via webhook; in dev the mock
+    // settles synchronously and this immediately updates the membership and owner payout.
+    dispatchRefund(refund);
+
     return map(refund);
+  }
+
+  private void dispatchRefund(RefundTransaction refund) {
+    try {
+      PaymentTransaction transaction = refund.getPaymentTransaction();
+      GatewayRefundResponse response =
+          gatewayRegistry
+              .defaultGateway()
+              .refund(
+                  GatewayRefundRequest.builder()
+                      .refundId(refund.getId())
+                      .idempotencyKey(refund.getIdempotencyKey())
+                      .externalPaymentId(transaction.getExternalTransactionId())
+                      .amount(refund.getAmount())
+                      .currency(refund.getCurrency())
+                      .reason(refund.getReason())
+                      .build());
+
+      if (response.isSuccess()) {
+        refund.setStatus(RefundStatus.SUCCESS);
+        refund.setProviderRefundId(response.getExternalRefundId());
+        applyRefundToParentTransaction(refund);
+        notifyRefundIssued(refund);
+      } else if (response.isPending()) {
+        refund.setProviderRefundId(response.getExternalRefundId());
+      } else {
+        refund.setStatus(RefundStatus.FAILED);
+      }
+      refundTransactionRepository.save(refund);
+    } catch (Exception ex) {
+      log.error("Refund dispatch failed for {}: {}", refund.getId(), ex.getMessage());
+      // Keep the persisted request PENDING for provider-webhook reconciliation or manual retry.
+    }
+  }
+
+  private void notifyRefundIssued(RefundTransaction refund) {
+    User recipient =
+        refund.getPaymentTransaction() != null
+                && refund.getPaymentTransaction().getPaymentIntent() != null
+            ? refund.getPaymentTransaction().getPaymentIntent().getUser()
+            : null;
+    if (recipient == null) {
+      return;
+    }
+    notificationService.notify(
+        recipient,
+        NotificationType.REFUND_ISSUED,
+        "Refund issued",
+        "A refund of " + refund.getAmount() + " " + refund.getCurrency() + " has been issued.",
+        "/payment/refund",
+        java.util.Map.of("refundId", refund.getId()));
   }
 
   @Transactional(readOnly = true)
