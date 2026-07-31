@@ -18,6 +18,7 @@ import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PaymentReservationRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -27,11 +28,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentServiceTest {
 
   @Mock private PaymentIntentRepository paymentIntentRepository;
+  @Mock private PaymentReservationRepository paymentReservationRepository;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private RoomMemberRepository roomMemberRepository;
   @Mock private RoomRepository roomRepository;
@@ -46,6 +49,7 @@ class PaymentServiceTest {
   @Mock private NotificationService notificationService;
   @Mock private CommissionCalculator commissionCalculator;
   @Mock private MoneyLedgerService moneyLedgerService;
+  @Mock private PlatformTransactionManager transactionManager;
 
   private PaymentService paymentService;
 
@@ -54,6 +58,7 @@ class PaymentServiceTest {
     paymentService =
         new PaymentService(
             paymentIntentRepository,
+            paymentReservationRepository,
             paymentTransactionRepository,
             roomMemberRepository,
             roomRepository,
@@ -67,7 +72,8 @@ class PaymentServiceTest {
             roomEventLogger,
             notificationService,
             commissionCalculator,
-            moneyLedgerService);
+            moneyLedgerService,
+            transactionManager);
   }
 
   private PaymentIntent pendingIntent(BigDecimal amount) {

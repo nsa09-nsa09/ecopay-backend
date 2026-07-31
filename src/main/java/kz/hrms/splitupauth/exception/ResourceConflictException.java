@@ -6,7 +6,19 @@ package kz.hrms.splitupauth.exception;
  * testimonial for the same user). Mapped to HTTP 409 Conflict in {@link GlobalExceptionHandler}.
  */
 public class ResourceConflictException extends RuntimeException {
+  private final String code;
+
   public ResourceConflictException(String message) {
     super(message);
+    this.code = null;
+  }
+
+  public ResourceConflictException(String code, String message) {
+    super(message);
+    this.code = code;
+  }
+
+  public String getCode() {
+    return code;
   }
 }

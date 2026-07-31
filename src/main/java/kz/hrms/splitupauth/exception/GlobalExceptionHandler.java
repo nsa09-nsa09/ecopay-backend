@@ -97,6 +97,10 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ResourceConflictException.class)
   public ResponseEntity<ErrorResponse> handleResourceConflict(ResourceConflictException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+    error.setCode(ex.getCode());
+    if (ex.getCode() != null) {
+      error.setErrors(Map.of("code", ex.getCode()));
+    }
     return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
   }
 

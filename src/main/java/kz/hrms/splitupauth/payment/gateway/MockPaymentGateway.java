@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.payment.gateway;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import kz.hrms.splitupauth.util.SecurityLogSanitizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,9 @@ public class MockPaymentGateway implements PaymentGateway {
 
   public static final String PROVIDER_NAME = "mock";
 
+  private final AtomicInteger chargeAttempts = new AtomicInteger();
+  private final AtomicInteger payoutAttempts = new AtomicInteger();
+
   private static String newId(String prefix) {
     // UUID keeps external ids unique even across app restarts (no in-memory counter
     // that resets and collides with persisted transactions).
@@ -36,6 +40,7 @@ public class MockPaymentGateway implements PaymentGateway {
 
   @Override
   public GatewayChargeResponse initCharge(GatewayChargeRequest request) {
+    chargeAttempts.incrementAndGet();
     String ext = newId("MOCK-PAY-");
     log.info(
         "[MOCK-GATEWAY] initCharge intent={} amount={} -> SUCCESS ({})",
@@ -53,6 +58,7 @@ public class MockPaymentGateway implements PaymentGateway {
   @Override
   public GatewayChargeResponse chargeWithToken(
       GatewayChargeRequest request, String savedCardToken) {
+    chargeAttempts.incrementAndGet();
     String ext = newId("MOCK-PAY-");
     log.info(
         "[MOCK-GATEWAY] chargeWithToken intent={} amount={} token={} -> SUCCESS ({})",
@@ -84,6 +90,7 @@ public class MockPaymentGateway implements PaymentGateway {
 
   @Override
   public GatewayPayoutResponse payout(GatewayPayoutRequest request) {
+    payoutAttempts.incrementAndGet();
     log.info(
         "[MOCK-GATEWAY] payout {} amount={} -> SUCCESS",
         request.getPayoutId(),
@@ -110,5 +117,18 @@ public class MockPaymentGateway implements PaymentGateway {
     // The mock flow finalizes synchronously, so webhooks are not used.
     // Return null to signal "no verifiable event" if one ever arrives.
     return null;
+  }
+
+  public int chargeAttempts() {
+    return chargeAttempts.get();
+  }
+
+  public int payoutAttempts() {
+    return payoutAttempts.get();
+  }
+
+  public void resetCounters() {
+    chargeAttempts.set(0);
+    payoutAttempts.set(0);
   }
 }

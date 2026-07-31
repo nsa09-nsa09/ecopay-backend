@@ -28,8 +28,14 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
 
   /** Payouts in a dispatchable status whose hold window has elapsed (due now). */
   @Query(
-      "SELECT p FROM Payout p WHERE p.status IN :statuses "
+      "SELECT p FROM Payout p WHERE ("
+          + "p.status IN :statuses "
           + "AND (p.releaseAt IS NULL OR p.releaseAt <= :now) "
+          + "AND (p.nextRetryAt IS NULL OR p.nextRetryAt <= :now)) "
+          + "OR (p.status = 'PROCESSING' "
+          + "AND p.providerPayoutId IS NULL "
+          + "AND p.leaseUntil IS NOT NULL "
+          + "AND p.leaseUntil <= :now) "
           + "ORDER BY p.createdAt ASC")
   List<Payout> findDispatchable(
       @Param("statuses") List<String> statuses, @Param("now") LocalDateTime now);

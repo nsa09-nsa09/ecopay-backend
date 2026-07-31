@@ -12,6 +12,7 @@ import kz.hrms.splitupauth.dto.PaymentIntentResponse;
 import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
+import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeResponse;
@@ -21,6 +22,7 @@ import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PaymentReservationRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -28,7 +30,10 @@ import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +43,7 @@ public class PaymentService {
   private static final int MONEY_SCALE = 2;
 
   private final PaymentIntentRepository paymentIntentRepository;
+  private final PaymentReservationRepository paymentReservationRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RoomMemberRepository roomMemberRepository;
   private final RoomRepository roomRepository;
@@ -52,9 +58,88 @@ public class PaymentService {
   private final NotificationService notificationService;
   private final CommissionCalculator commissionCalculator;
   private final MoneyLedgerService moneyLedgerService;
+  private final PlatformTransactionManager transactionManager;
 
-  @Transactional
   public PaymentIntentResponse createPaymentIntent(
+      Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
+    PreparedPayment prepared;
+    try {
+      prepared =
+          tx()
+              .execute(
+                  status -> createIntentAndReservation(roomMemberId, currentUser, request));
+    } catch (DataIntegrityViolationException ex) {
+      PaymentIntent existing =
+          tx()
+              .execute(
+                  status ->
+                      paymentIntentRepository
+                          .findByIdempotencyKey(request.getIdempotencyKey())
+                          .orElse(null));
+      if (existing != null) {
+        PaymentIntent sameRequest =
+            tx()
+                .execute(
+                    status ->
+                        requireSameIdempotentRequest(
+                            existing, roomMemberId, currentUser, request));
+        return mapToResponse(sameRequest);
+      }
+      throw ex;
+    }
+
+    PaymentIntent intent = prepared.intent();
+    if (intent.getStatus() != PaymentIntentStatus.PENDING || prepared.chargeRequest() == null) {
+      return mapToResponse(intent);
+    }
+
+    GatewayChargeResponse chargeResp;
+    try {
+      PaymentGateway gateway = gatewayRegistry.resolve(intent.getProviderName());
+      chargeResp =
+          prepared.savedCardToken() != null
+              ? gateway.chargeWithToken(prepared.chargeRequest(), prepared.savedCardToken())
+              : gateway.initCharge(prepared.chargeRequest());
+    } catch (Exception ex) {
+      log.error(
+          "Gateway charge initiation failed for intent {}: {}", intent.getId(), ex.getMessage());
+      PaymentIntent failed =
+          tx()
+              .execute(
+                  status ->
+                      failIntentAndReleaseReservation(
+                          intent.getId(),
+                          "GATEWAY_INIT_FAILED",
+                          "Gateway initiation failed: " + ex.getMessage(),
+                          currentUser.getId(),
+                          ex.getMessage()));
+      return mapToResponse(failed);
+    }
+
+    PaymentIntent updated =
+        tx().execute(status -> applyGatewayInitResponse(intent.getId(), chargeResp, currentUser.getId()));
+
+    if (chargeResp.isSuccess() && !chargeResp.isRequiresRedirect()) {
+      Long updatedIntentId = updated.getId();
+      updated =
+          tx()
+              .execute(
+                  status ->
+                      finalizeSuccessfulPayment(
+                          updatedIntentId,
+                          chargeResp.getExternalPaymentId(),
+                          chargeResp.getProviderStatusCode(),
+                          null,
+                          null,
+                          null,
+                          currentUser.getId(),
+                          "GATEWAY_SYNC_SUCCESS"));
+    }
+
+    return mapToResponse(updated);
+  }
+
+  private PreparedPayment createIntentAndReservation(
       Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
     RoomMember roomMember =
         roomMemberRepository
@@ -76,7 +161,8 @@ public class PaymentService {
     PaymentIntent existing =
         paymentIntentRepository.findByIdempotencyKey(request.getIdempotencyKey()).orElse(null);
     if (existing != null) {
-      return mapToResponse(existing);
+      existing = requireSameIdempotentRequest(existing, roomMemberId, currentUser, request);
+      return PreparedPayment.existing(existing);
     }
 
     if (roomMember.getStatus() != MemberStatus.APPLIED) {
@@ -92,6 +178,7 @@ public class PaymentService {
     BigDecimal amount = share.add(commission);
 
     SavedCard savedCard = null;
+    String savedCardToken = null;
     if (request.getSavedCardId() != null) {
       savedCard =
           savedCardRepository
@@ -99,6 +186,22 @@ public class PaymentService {
               .filter(c -> c.getUser().getId().equals(currentUser.getId()))
               .filter(c -> c.getStatus() == SavedCardStatus.ACTIVE)
               .orElseThrow(() -> new InvalidRequestException("Saved card not found or inactive"));
+      savedCardToken = savedCard.getProviderToken();
+    }
+
+    Room lockedRoom =
+        roomRepository
+            .findByIdForUpdate(roomMember.getRoom().getId())
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    long paidSeats =
+        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            lockedRoom, java.util.List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+    LocalDateTime now = LocalDateTime.now();
+    long activeReservations =
+        paymentReservationRepository.countByRoomAndStatusAndExpiresAtAfter(
+            lockedRoom, PaymentReservationStatus.RESERVED, now);
+    if (paidSeats + activeReservations >= lockedRoom.getMaxMembers() - 1L) {
+      throw new ResourceConflictException("ROOM_FULL", "Room is full");
     }
 
     PaymentIntent intent =
@@ -112,9 +215,17 @@ public class PaymentService {
             .providerName(gateway.providerName())
             .saveCardRequested(Boolean.TRUE.equals(request.getSaveCard()))
             .savedCard(savedCard)
-            .expiresAt(LocalDateTime.now().plusMinutes(30))
+            .expiresAt(now.plusMinutes(30))
             .build();
     intent = paymentIntentRepository.save(intent);
+    paymentReservationRepository.save(
+        PaymentReservation.builder()
+            .paymentIntent(intent)
+            .roomMember(roomMember)
+            .room(lockedRoom)
+            .status(PaymentReservationStatus.RESERVED)
+            .expiresAt(intent.getExpiresAt())
+            .build());
 
     eventLogger.log(
         "INTENT",
@@ -147,60 +258,28 @@ public class PaymentService {
             .userId(currentUser.getId() == null ? null : String.valueOf(currentUser.getId()))
             .saveCardRequested(intent.getSaveCardRequested())
             .build();
+    return new PreparedPayment(intent, savedCardToken, chargeReq);
+  }
 
-    GatewayChargeResponse chargeResp;
-    try {
-      chargeResp =
-          savedCard != null
-              ? gateway.chargeWithToken(chargeReq, savedCard.getProviderToken())
-              : gateway.initCharge(chargeReq);
-    } catch (Exception ex) {
-      log.error(
-          "Gateway charge initiation failed for intent {}: {}", intent.getId(), ex.getMessage());
-      intent.setStatus(PaymentIntentStatus.FAILED);
-      intent.setFailureMessage("Gateway initiation failed: " + ex.getMessage());
-      intent = paymentIntentRepository.save(intent);
-      eventLogger.log(
-          "INTENT",
-          intent.getId(),
-          "GATEWAY_INIT_FAILED",
-          "PENDING",
-          "FAILED",
-          currentUser.getId(),
-          null,
-          intent.getIdempotencyKey(),
-          Map.of("error", ex.getMessage()));
-      return mapToResponse(intent);
-    }
-
+  private PaymentIntent applyGatewayInitResponse(
+      Long intentId, GatewayChargeResponse chargeResp, Long actorUserId) {
+    PaymentIntent intent =
+        paymentIntentRepository
+            .findWithLockById(intentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
     if (!chargeResp.isSuccess()) {
       intent.setStatus(PaymentIntentStatus.FAILED);
       intent.setProviderStatusCode(chargeResp.getProviderStatusCode());
       intent.setFailureCode(chargeResp.getFailureCode());
       intent.setFailureMessage(chargeResp.getFailureMessage());
+      releaseReservation(intent, "GATEWAY_FAILED");
     } else {
       intent.setExternalPaymentId(chargeResp.getExternalPaymentId());
       intent.setPaymentUrl(chargeResp.getPaymentUrl());
       intent.setProviderStatusCode(chargeResp.getProviderStatusCode());
     }
     intent = paymentIntentRepository.save(intent);
-
-    // A synchronous, non-redirect success finalizes immediately (saved-card charges and the dev mock
-    // gateway). Hosted Freedom Pay still waits for webhook/redirect reconciliation.
-    if (chargeResp.isSuccess() && !chargeResp.isRequiresRedirect()) {
-      intent =
-          finalizeSuccessfulPayment(
-              intent.getId(),
-              chargeResp.getExternalPaymentId(),
-              chargeResp.getProviderStatusCode(),
-              null,
-              null,
-              null,
-              currentUser.getId(),
-              "GATEWAY_SYNC_SUCCESS");
-    }
-
-    return mapToResponse(intent);
+    return intent;
   }
 
   /**
@@ -274,6 +353,7 @@ public class PaymentService {
       intent.setStatus(PaymentIntentStatus.FAILED);
       intent.setFailureCode("EXPIRED");
       intent.setFailureMessage("Payment was not completed before the intent expired");
+      releaseReservation(intent, "INTENT_EXPIRED");
       paymentIntentRepository.save(intent);
       eventLogger.log(
           "INTENT",
@@ -370,6 +450,7 @@ public class PaymentService {
       intent.setProviderStatusCode(status.getProviderStatusCode());
       intent.setFailureCode("GATEWAY_FAILED");
       intent.setFailureMessage("Gateway reported the payment as failed");
+      releaseReservation(intent, "REDIRECT_RECONCILE_FAILED");
       intent = paymentIntentRepository.save(intent);
 
       eventLogger.log(
@@ -456,6 +537,7 @@ public class PaymentService {
                 + " does not match intent amount "
                 + intent.getAmount());
         paymentIntentRepository.save(intent);
+        releaseReservation(intent, "AMOUNT_MISMATCH");
         eventLogger.log(
             "INTENT",
             intent.getId(),
@@ -482,6 +564,7 @@ public class PaymentService {
         intent.setStatus(PaymentIntentStatus.FAILED);
         intent.setFailureCode("CURRENCY_MISMATCH");
         intent.setFailureMessage("Callback currency " + event.getCurrency() + " is not KZT");
+        releaseReservation(intent, "CURRENCY_MISMATCH");
         paymentIntentRepository.save(intent);
         return;
       }
@@ -511,6 +594,7 @@ public class PaymentService {
       intent.setProviderStatusCode(event.getProviderStatusCode());
       intent.setFailureCode(event.getFailureCode());
       intent.setFailureMessage(event.getFailureMessage());
+      releaseReservation(intent, "WEBHOOK_FAILED");
       paymentIntentRepository.save(intent);
 
       eventLogger.log(
@@ -574,7 +658,7 @@ public class PaymentService {
     intent.setStatus(PaymentIntentStatus.SUCCESS);
     intent = paymentIntentRepository.save(intent);
 
-    if (!reservePaidSeatOrMarkCompensation(intent, providerRequestId)) {
+    if (!consumeReservedSeatOrMarkCompensation(intent, providerRequestId)) {
       return intent;
     }
 
@@ -622,7 +706,7 @@ public class PaymentService {
     return intent;
   }
 
-  private boolean reservePaidSeatOrMarkCompensation(PaymentIntent intent, String providerRequestId) {
+  private boolean consumeReservedSeatOrMarkCompensation(PaymentIntent intent, String providerRequestId) {
     RoomMember member =
         roomMemberRepository
             .findWithLockById(intent.getRoomMember().getId())
@@ -631,6 +715,23 @@ public class PaymentService {
         roomRepository
             .findByIdForUpdate(member.getRoom().getId())
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    PaymentReservation reservation =
+        paymentReservationRepository.findWithLockByPaymentIntentId(intent.getId()).orElse(null);
+    if (reservation != null) {
+      if (reservation.getStatus() == PaymentReservationStatus.RESERVED
+          && reservation.getExpiresAt().isAfter(LocalDateTime.now())) {
+        reservation.setStatus(PaymentReservationStatus.CONSUMED);
+        reservation.setConsumedAt(LocalDateTime.now());
+        paymentReservationRepository.save(reservation);
+        member.setRoom(room);
+        intent.setRoomMember(member);
+        return true;
+      }
+      markCompensationRequired(intent, providerRequestId, room, "RESERVATION_NOT_ACTIVE");
+      return false;
+    }
+
     long occupiedSlots =
         roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
             room, java.util.List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
@@ -643,9 +744,15 @@ public class PaymentService {
       return true;
     }
 
+    markCompensationRequired(intent, providerRequestId, room, "NO_CAPACITY");
+    return false;
+  }
+
+  private void markCompensationRequired(
+      PaymentIntent intent, String providerRequestId, Room room, String reason) {
     intent.setCompensationRequired(true);
     intent.setReviewRequired(true);
-    intent.setReviewReason("NO_CAPACITY_AFTER_PROVIDER_SUCCESS");
+    intent.setReviewReason(reason);
     paymentIntentRepository.save(intent);
     eventLogger.log(
         "INTENT",
@@ -656,12 +763,79 @@ public class PaymentService {
         null,
         providerRequestId,
         intent.getIdempotencyKey(),
-        Map.of("roomId", String.valueOf(room.getId()), "reason", "NO_CAPACITY"));
+        Map.of("roomId", String.valueOf(room.getId()), "reason", reason));
     log.error(
-        "Payment intent {} succeeded at provider but room {} has no free capacity; manual refund/review required",
+        "Payment intent {} succeeded at provider but room {} cannot consume reservation ({}); manual refund/review required",
         intent.getId(),
-        room.getId());
-    return false;
+        room.getId(),
+        reason);
+  }
+
+  private PaymentIntent failIntentAndReleaseReservation(
+      Long intentId, String failureCode, String failureMessage, Long actorUserId, String error) {
+    PaymentIntent intent =
+        paymentIntentRepository
+            .findWithLockById(intentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
+    intent.setStatus(PaymentIntentStatus.FAILED);
+    intent.setFailureCode(failureCode);
+    intent.setFailureMessage(failureMessage);
+    releaseReservation(intent, failureCode);
+    intent = paymentIntentRepository.save(intent);
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        failureCode,
+        "PENDING",
+        "FAILED",
+        actorUserId,
+        null,
+        intent.getIdempotencyKey(),
+        Map.of("error", String.valueOf(error)));
+    return intent;
+  }
+
+  private void releaseReservation(PaymentIntent intent, String reason) {
+    PaymentReservation reservation =
+        paymentReservationRepository.findWithLockByPaymentIntentId(intent.getId()).orElse(null);
+    if (reservation == null || reservation.getStatus() != PaymentReservationStatus.RESERVED) {
+      return;
+    }
+    reservation.setStatus(PaymentReservationStatus.RELEASED);
+    reservation.setReleasedAt(LocalDateTime.now());
+    reservation.setReleaseReason(reason);
+    paymentReservationRepository.save(reservation);
+  }
+
+  private PaymentIntent requireSameIdempotentRequest(
+      PaymentIntent existing, Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
+    boolean sameUser =
+        existing.getUser() != null && existing.getUser().getId().equals(currentUser.getId());
+    boolean sameMember =
+        existing.getRoomMember() != null && existing.getRoomMember().getId().equals(roomMemberId);
+    Long existingSavedCardId =
+        existing.getSavedCard() == null ? null : existing.getSavedCard().getId();
+    boolean sameSavedCard = java.util.Objects.equals(existingSavedCardId, request.getSavedCardId());
+    boolean sameSaveCard =
+        java.util.Objects.equals(
+            Boolean.TRUE.equals(existing.getSaveCardRequested()),
+            Boolean.TRUE.equals(request.getSaveCard()));
+    if (!sameUser || !sameMember || !sameSavedCard || !sameSaveCard) {
+      throw new ResourceConflictException(
+          "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key belongs to a different payment request");
+    }
+    return existing;
+  }
+
+  private TransactionTemplate tx() {
+    return new TransactionTemplate(transactionManager);
+  }
+
+  private record PreparedPayment(
+      PaymentIntent intent, String savedCardToken, GatewayChargeRequest chargeRequest) {
+    static PreparedPayment existing(PaymentIntent intent) {
+      return new PreparedPayment(intent, null, null);
+    }
   }
 
   private void recordSuccessTransaction(

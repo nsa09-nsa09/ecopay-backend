@@ -74,6 +74,12 @@ public class Payout {
   @Column(name = "release_at")
   private LocalDateTime releaseAt;
 
+  @Column(name = "next_retry_at")
+  private LocalDateTime nextRetryAt;
+
+  @Column(name = "lease_until")
+  private LocalDateTime leaseUntil;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 

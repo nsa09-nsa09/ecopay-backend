@@ -63,7 +63,12 @@ public class SupportTicket {
 
   @PrePersist
   protected void onCreate() {
-    createdAt = LocalDateTime.now();
+    if (createdAt == null) {
+      createdAt = LocalDateTime.now();
+    }
+    if (updatedAt == null) {
+      updatedAt = createdAt;
+    }
 
     if (status == null) {
       status = SupportTicketStatus.OPEN;
