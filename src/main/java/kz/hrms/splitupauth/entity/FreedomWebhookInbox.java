@@ -31,6 +31,10 @@ public class FreedomWebhookInbox {
   @Column(name = "provider_request_id", nullable = false, unique = true, length = 200)
   private String providerRequestId;
 
+  @Column(name = "callback_script", nullable = false, length = 30)
+  @Builder.Default
+  private String callbackScript = "result";
+
   @JdbcTypeCode(SqlTypes.JSON)
   @Column(name = "raw_body", nullable = false, columnDefinition = "jsonb")
   private JsonNode rawBody;
@@ -61,12 +65,22 @@ public class FreedomWebhookInbox {
   @Column(name = "lease_until")
   private LocalDateTime leaseUntil;
 
+  @Column(name = "lease_owner", length = 100)
+  private String leaseOwner;
+
+  @Column(name = "last_attempt_at")
+  private LocalDateTime lastAttemptAt;
+
+  @Column(name = "dead_lettered_at")
+  private LocalDateTime deadLetteredAt;
+
   @Column(name = "error_message", columnDefinition = "TEXT")
   private String errorMessage;
 
   @PrePersist
   protected void onCreate() {
     if (receivedAt == null) receivedAt = LocalDateTime.now();
+    if (callbackScript == null) callbackScript = "result";
     if (processingStatus == null) processingStatus = "PENDING";
     if (attemptCount == null) attemptCount = 0;
   }

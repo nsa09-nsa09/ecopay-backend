@@ -143,8 +143,10 @@ public class RefundService {
     RefundTransaction refund =
         refundTransactionRepository.findWithLockByProviderRefundId(providerRefundId).orElse(null);
     if (refund == null) {
-      log.warn("Refund webhook references unknown provider refund id {}", providerRefundId);
-      return;
+      throw new FreedomWebhookProcessingException(
+          "REFUND_NOT_FOUND",
+          "Webhook references unknown provider refund " + providerRefundId,
+          true);
     }
     if (refund.getStatus() != RefundStatus.PENDING) {
       return; // terminal — idempotent no-op

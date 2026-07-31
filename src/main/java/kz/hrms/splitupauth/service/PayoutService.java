@@ -223,8 +223,10 @@ public class PayoutService {
     }
     Payout payout = payoutRepository.findWithLockByProviderPayoutId(providerPayoutId).orElse(null);
     if (payout == null) {
-      log.warn("Payout webhook references unknown provider payout id {}", providerPayoutId);
-      return;
+      throw new FreedomWebhookProcessingException(
+          "PAYOUT_NOT_FOUND",
+          "Webhook references unknown provider payout " + providerPayoutId,
+          true);
     }
     if ("SUCCESS".equals(payout.getStatus()) || "FAILED".equals(payout.getStatus())) {
       return; // terminal — idempotent no-op
