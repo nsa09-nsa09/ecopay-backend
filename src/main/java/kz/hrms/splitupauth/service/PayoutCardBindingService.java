@@ -212,8 +212,8 @@ public class PayoutCardBindingService {
     if (bindingId == null) return;
     PayoutCardBinding binding = bindingRepository.findById(bindingId).orElse(null);
     if (binding == null) {
-      log.warn("Binding webhook for unknown binding {}", bindingId);
-      return;
+      throw new FreedomWebhookProcessingException(
+          "BINDING_NOT_FOUND", "Webhook references unknown card binding " + bindingId, true);
     }
     if ("SUCCESS".equals(binding.getStatus()) || "FAILED".equals(binding.getStatus())) {
       return; // terminal — idempotent no-op

@@ -1,15 +1,10 @@
 package kz.hrms.splitupauth.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import kz.hrms.splitupauth.entity.FreedomWebhookInbox;
-import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
-import kz.hrms.splitupauth.repository.FreedomWebhookInboxRepository;
-import kz.hrms.splitupauth.service.PaymentService;
-import kz.hrms.splitupauth.service.PayoutCardBindingService;
+import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -25,16 +20,13 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 public class FreedomPayWebhookController {
 
-  private final FreedomPayGateway gateway;
-  private final FreedomWebhookInboxRepository inboxRepository;
-  private final PaymentService paymentService;
-  private final PayoutCardBindingService cardBindingService;
-  private final ObjectMapper objectMapper;
   private static final int MAX_WEBHOOK_PARAM_BYTES = 32_768;
+
+  private final FreedomPayGateway gateway;
+  private final FreedomWebhookInboxCoordinator inboxCoordinator;
 
   @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
   public ResponseEntity<String> result(@RequestParam Map<String, String> params) {
-    // Freedom Pay signs callbacks with the last path segment of the result URL.
     return processWebhook("result", params);
   }
 
@@ -48,91 +40,43 @@ public class FreedomPayWebhookController {
       log.warn("Freedom Pay webhook rejected before inbox store: payload too large");
       return errorResponse(script, "payload too large");
     }
-    Map<String, String> safe = new HashMap<>(params);
-    GatewayWebhookEvent event = gateway.verifyAndParseWebhook(script, safe);
 
-    boolean signatureValid = gateway.verifyWebhookSignature(script, safe);
-    String requestId = event.getProviderRequestId();
-
-    // Inbox dedup — UNIQUE(provider_request_id) guarantees once-only.
     try {
-      FreedomWebhookInbox existing =
-          inboxRepository.findByProviderRequestId(requestId).orElse(null);
-      if (existing != null) {
-        log.info("Duplicate Freedom Pay webhook for {}, replying ok", requestId);
-        return okResponse(script);
-      }
-      FreedomWebhookInbox inbox =
-          FreedomWebhookInbox.builder()
-              .providerRequestId(requestId)
-              .rawBody(objectMapper.valueToTree(safe))
-              .signatureValid(signatureValid)
-              .processingStatus("PENDING")
-              .build();
-      inboxRepository.save(inbox);
-
-      if (!signatureValid) {
-        inbox.setProcessingStatus("DEAD_LETTER");
-        inbox.setAttemptCount(1);
-        inbox.setLastErrorCode("INVALID_SIGNATURE");
-        inbox.setProcessedAt(LocalDateTime.now());
-        inboxRepository.save(inbox);
-        log.warn("Freedom Pay webhook signature invalid for {}", requestId);
+      FreedomWebhookInboxCoordinator.Acceptance accepted =
+          inboxCoordinator.acceptAndProcess(script, new HashMap<>(params));
+      if (accepted.invalidSignature()) {
+        log.warn("Freedom Pay webhook signature invalid; inbox={}", accepted.inboxId());
         return errorResponse(script, "invalid signature");
       }
-
-      // Payout-card binding callbacks carry a "cardbind-{id}" order id (kept out of the
-      // numeric PaymentIntent space). Route them to the binding finalizer; everything else
-      // is a normal charge/refund/payout event.
-      String orderId = safe.get("pg_order_id");
-      if (orderId != null && orderId.startsWith("cardbind-")) {
-        Long bindingId = parseLongOrNull(orderId.substring("cardbind-".length()));
-        boolean success =
-            "1".equals(safe.get("pg_result")) || "SUCCESS".equals(event.getResultStatus());
-        cardBindingService.applyBindingWebhook(
-            bindingId, success, event.getCardToken(), event.getCardPanMask());
-      } else {
-        paymentService.applyWebhookEvent(event);
-      }
-
-      inbox.setProcessingStatus("PROCESSED");
-      inbox.setProcessedAt(LocalDateTime.now());
-      inboxRepository.save(inbox);
       return okResponse(script);
-    } catch (Exception ex) {
-      log.error("Freedom Pay webhook handler failed: {}", ex.getMessage(), ex);
-      // Reply ok to avoid endless retries; inbox row remains PENDING for offline retry.
-      return okResponse(script);
+    } catch (RuntimeException ex) {
+      // Never acknowledge a callback that was not durably stored. Freedom Pay will retry it.
+      log.error("Freedom Pay webhook could not be stored: {}", ex.getMessage(), ex);
+      return errorResponse(script, "temporarily unavailable");
     }
   }
 
   private boolean payloadTooLarge(Map<String, String> params) {
-    int bytes = 0;
+    long bytes = 0;
     for (Map.Entry<String, String> entry : params.entrySet()) {
-      bytes += entry.getKey() == null ? 0 : entry.getKey().length();
-      bytes += entry.getValue() == null ? 0 : entry.getValue().length();
-      if (bytes > MAX_WEBHOOK_PARAM_BYTES) {
-        return true;
-      }
+      bytes +=
+          entry.getKey() == null
+              ? 0
+              : entry.getKey().getBytes(StandardCharsets.UTF_8).length;
+      bytes +=
+          entry.getValue() == null
+              ? 0
+              : entry.getValue().getBytes(StandardCharsets.UTF_8).length;
+      if (bytes > MAX_WEBHOOK_PARAM_BYTES) return true;
     }
     return false;
   }
 
-  // Freedom Pay requires the merchant reply to be signed (pg_salt + pg_sig).
   private ResponseEntity<String> okResponse(String script) {
     return ResponseEntity.ok(gateway.buildWebhookResponse(script, "ok", "Order processed"));
   }
 
   private ResponseEntity<String> errorResponse(String script, String description) {
     return ResponseEntity.ok(gateway.buildWebhookResponse(script, "error", description));
-  }
-
-  private static Long parseLongOrNull(String s) {
-    if (s == null || s.isBlank()) return null;
-    try {
-      return Long.parseLong(s.trim());
-    } catch (NumberFormatException e) {
-      return null;
-    }
   }
 }

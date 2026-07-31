@@ -490,15 +490,17 @@ public class PaymentService {
     }
 
     if (event.getIntentId() == null) {
-      log.warn("Webhook event without intent id, ignoring");
-      return;
+      throw new FreedomWebhookProcessingException(
+          "MISSING_INTENT_ID", "Webhook event has no payment intent id", false);
     }
 
     PaymentIntent intent =
         paymentIntentRepository.findWithLockById(event.getIntentId()).orElse(null);
     if (intent == null) {
-      log.warn("Webhook references unknown intent id {}", event.getIntentId());
-      return;
+      throw new FreedomWebhookProcessingException(
+          "INTENT_NOT_FOUND",
+          "Webhook references unknown payment intent " + event.getIntentId(),
+          true);
     }
 
     intent.setLastWebhookAt(LocalDateTime.now());
