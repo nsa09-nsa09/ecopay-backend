@@ -130,6 +130,14 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
 
   /** Owners must have an active default payout card before the money can be dispatched to them. */
   private void givePayoutCard(User owner) {
+    Long existingCards =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM payout_methods WHERE user_id = ? AND is_default = TRUE AND status = 'ACTIVE'",
+            Long.class,
+            owner.getId());
+    if (existingCards != null && existingCards > 0) {
+      return;
+    }
     jdbcTemplate.update(
         "INSERT INTO payout_methods (user_id, provider_name, provider_card_token, pan_mask, "
             + "is_default, status, created_at) VALUES (?, 'mock', ?, '6666', TRUE, "
@@ -143,13 +151,16 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
   }
 
   private RoomResponse createDigitalRoom(User host, String title) {
+    givePayoutCard(host);
     CreateRoomRequest create = new CreateRoomRequest();
     create.setServiceId(2L);
     create.setTariffPlanId(2L);
     create.setCategoryId(1L);
     create.setRoomType(RoomType.DIGITAL);
     create.setTitle(title);
-    create.setStartDate(LocalDateTime.now(mutableClock).plusMonths(2));
+    // RoomService validates against the system clock; keep this independent of the mutable payout
+    // clock used to compress the hold window below.
+    create.setStartDate(LocalDateTime.now().plusMonths(2));
     return roomService.createRoom(host, create);
   }
 
@@ -181,7 +192,7 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     create.setRoomType(RoomType.DIGITAL);
     create.setTitle("E2E Netflix");
     // Seats/price/currency/period come from the seeded tariff plan (V10): 7290.00 / 4 monthly.
-    create.setStartDate(LocalDateTime.now(mutableClock).plusMonths(2));
+    create.setStartDate(LocalDateTime.now().plusMonths(2));
     RoomResponse room = roomService.createRoom(host, create);
     assertEquals(RoomStatus.OPEN, room.getStatus());
 
