@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import lombok.Builder;
 import lombok.Data;
@@ -28,6 +29,10 @@ public class PaymentIntentResponse {
   private String paymentUrl;
   private Boolean requiresRedirect;
   private Boolean saveCardRequested;
+  private LocalDateTime expiresAt;
+  private Boolean compensationRequired;
+  private Boolean reviewRequired;
+  private String reviewReason;
   private String failureCode;
   private String failureMessage;
 }

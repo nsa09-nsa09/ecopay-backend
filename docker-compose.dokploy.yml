@@ -4,29 +4,52 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:?SPRING_PROFILES_ACTIVE must be set to prod in Dokploy Environment}
       POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set in Dokploy Environment (service name of the external Postgres)}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in Dokploy Environment}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in Dokploy Environment}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in Dokploy Environment}
+      POSTGRES_URL_PARAMS: ${POSTGRES_URL_PARAMS:-}
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in Dokploy Environment}
       JWT_ACCESS_EXPIRATION: ${JWT_ACCESS_EXPIRATION:-900000}
       JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-604800000}
       APP_SECURITY_FIELD_ENCRYPTION_KEY: ${APP_SECURITY_FIELD_ENCRYPTION_KEY:?APP_SECURITY_FIELD_ENCRYPTION_KEY must be set in Dokploy Environment}
+      APP_AUTH_REFRESH_COOKIE_SECURE: ${APP_AUTH_REFRESH_COOKIE_SECURE:-true}
+      APP_AUTH_REFRESH_TOKEN_BODY_ENABLED: ${APP_AUTH_REFRESH_TOKEN_BODY_ENABLED:-false}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:?APP_CORS_ALLOWED_ORIGINS must be set in Dokploy Environment}
       APP_BRAND_NAME: ${APP_BRAND_NAME:-EcoPay}
-      APP_SUPPORT_EMAIL: ${APP_SUPPORT_EMAIL:-}
-      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
-      # APP_BASE_URL is optional: avatar URLs auto-derive from the request host
-      # (X-Forwarded-* honoured). Set it in the Dokploy Environment only if you want
-      # email-verification links to use the public backend URL instead of the default.
+      APP_SUPPORT_EMAIL: ${APP_SUPPORT_EMAIL:?APP_SUPPORT_EMAIL must be set in Dokploy Environment}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:?APP_PUBLIC_URL must be set in Dokploy Environment}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL must be set to the public backend HTTPS origin}
+      APP_FRONTEND_URL: ${APP_FRONTEND_URL:?APP_FRONTEND_URL must be set to the public frontend HTTPS origin}
       APP_RATE_LIMIT_LOGIN_ATTEMPTS: ${APP_RATE_LIMIT_LOGIN_ATTEMPTS:-5}
       APP_RATE_LIMIT_LOGIN_DURATION_MINUTES: ${APP_RATE_LIMIT_LOGIN_DURATION_MINUTES:-15}
-      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_HOST: ${MAIL_HOST:?MAIL_HOST must be set in Dokploy Environment}
       MAIL_PORT: ${MAIL_PORT:-587}
-      MAIL_USERNAME: ${MAIL_USERNAME:-}
-      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_USERNAME: ${MAIL_USERNAME:?MAIL_USERNAME must be set in Dokploy Environment}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:?MAIL_PASSWORD must be set in Dokploy Environment}
+      MAIL_CONNECT_TIMEOUT_MS: ${MAIL_CONNECT_TIMEOUT_MS:-5000}
+      MAIL_READ_TIMEOUT_MS: ${MAIL_READ_TIMEOUT_MS:-5000}
+      MAIL_WRITE_TIMEOUT_MS: ${MAIL_WRITE_TIMEOUT_MS:-5000}
+      PAYMENTS_PROVIDER: ${PAYMENTS_PROVIDER:?PAYMENTS_PROVIDER must be set to freedompay}
+      FREEDOMPAY_BASE_URL: ${FREEDOMPAY_BASE_URL:?FREEDOMPAY_BASE_URL must be set to FreedomPay LIVE API URL}
+      FREEDOMPAY_MERCHANT_ID: ${FREEDOMPAY_MERCHANT_ID:?FREEDOMPAY_MERCHANT_ID must be set in Dokploy Environment}
+      FREEDOMPAY_SECRET_KEY: ${FREEDOMPAY_SECRET_KEY:?FREEDOMPAY_SECRET_KEY must be set in Dokploy Environment}
+      FREEDOMPAY_PAYOUT_SECRET_KEY: ${FREEDOMPAY_PAYOUT_SECRET_KEY:?FREEDOMPAY_PAYOUT_SECRET_KEY must be set in Dokploy Environment}
+      FREEDOMPAY_RESULT_URL: ${FREEDOMPAY_RESULT_URL:?FREEDOMPAY_RESULT_URL must be a public HTTPS callback URL}
+      FREEDOMPAY_PAYOUT_RESULT_URL: ${FREEDOMPAY_PAYOUT_RESULT_URL:?FREEDOMPAY_PAYOUT_RESULT_URL must be a public HTTPS callback URL}
+      FREEDOMPAY_SUCCESS_URL: ${FREEDOMPAY_SUCCESS_URL:?FREEDOMPAY_SUCCESS_URL must be a public HTTPS frontend URL}
+      FREEDOMPAY_FAILURE_URL: ${FREEDOMPAY_FAILURE_URL:?FREEDOMPAY_FAILURE_URL must be a public HTTPS frontend URL}
+      FREEDOMPAY_TEST_MODE: ${FREEDOMPAY_TEST_MODE:?FREEDOMPAY_TEST_MODE must be set to 0 for production}
+      FREEDOMPAY_RECURRING_LIFETIME_DAYS: ${FREEDOMPAY_RECURRING_LIFETIME_DAYS:-156}
+      APP_PAYOUT_CARD_BINDING_AMOUNT: ${APP_PAYOUT_CARD_BINDING_AMOUNT:-100}
+      SMS_PROVIDER: ${SMS_PROVIDER:?SMS_PROVIDER must be set to mobizon}
+      MOBIZON_BASE_URL: ${MOBIZON_BASE_URL:?MOBIZON_BASE_URL must be set to Mobizon HTTPS API origin}
+      MOBIZON_API_KEY: ${MOBIZON_API_KEY:?MOBIZON_API_KEY must be set in Dokploy Environment}
+      MOBIZON_FROM: ${MOBIZON_FROM:?MOBIZON_FROM must be set in Dokploy Environment}
+      APP_PHONE_DEV_BYPASS_CODE: ${APP_PHONE_DEV_BYPASS_CODE:-}
       # S3-compatible object storage for avatars (Cloudflare R2)
       S3_REGION: ${S3_REGION:-auto}
       S3_BUCKET: ${S3_BUCKET:?S3_BUCKET must be set in Dokploy Environment}
@@ -34,6 +57,9 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set in Dokploy Environment}
       S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY must be set in Dokploy Environment}
       S3_PATH_STYLE_ACCESS: ${S3_PATH_STYLE_ACCESS:-true}
+      APP_DEV_AUTO_VERIFY_EMAIL: ${APP_DEV_AUTO_VERIFY_EMAIL:-false}
+      APP_EMAIL_MX_CHECK_ENABLED: ${APP_EMAIL_MX_CHECK_ENABLED:-true}
+      APP_EMAIL_STARTUP_CHECK_ENABLED: ${APP_EMAIL_STARTUP_CHECK_ENABLED:-true}
     restart: unless-stopped
     expose:
       - "8080"

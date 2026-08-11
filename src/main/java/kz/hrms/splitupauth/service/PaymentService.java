@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import kz.hrms.splitupauth.dto.ConfirmPaymentRequest;
 import kz.hrms.splitupauth.dto.CreatePaymentIntentRequest;
@@ -41,6 +42,19 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class PaymentService {
 
   private static final int MONEY_SCALE = 2;
+  private static final long PAYMENT_INTENT_TTL_MINUTES = 30;
+  private static final List<PaymentIntentStatus> OPEN_INTENT_STATUSES =
+      List.of(
+          PaymentIntentStatus.PENDING,
+          PaymentIntentStatus.UNKNOWN,
+          PaymentIntentStatus.RECONCILING);
+  private static final List<PaymentIntentStatus> PROVIDER_CAPTURED_STATUSES =
+      List.of(
+          PaymentIntentStatus.SUCCESS,
+          PaymentIntentStatus.REFUND_REQUIRED,
+          PaymentIntentStatus.REFUND_PENDING,
+          PaymentIntentStatus.REFUNDED,
+          PaymentIntentStatus.REQUIRES_REVIEW);
 
   private final PaymentIntentRepository paymentIntentRepository;
   private final PaymentReservationRepository paymentReservationRepository;
@@ -85,6 +99,11 @@ public class PaymentService {
                             existing, roomMemberId, currentUser, request));
         return mapToResponse(sameRequest);
       }
+      PaymentIntent openIntent =
+          tx().execute(status -> findOpenIntentForMember(roomMemberId, currentUser));
+      if (openIntent != null) {
+        return mapToResponse(openIntent);
+      }
       throw ex;
     }
 
@@ -107,10 +126,8 @@ public class PaymentService {
           tx()
               .execute(
                   status ->
-                      failIntentAndReleaseReservation(
+                      markIntentUnknownAfterGatewayException(
                           intent.getId(),
-                          "GATEWAY_INIT_FAILED",
-                          "Gateway initiation failed: " + ex.getMessage(),
                           currentUser.getId(),
                           ex.getMessage()));
       return mapToResponse(failed);
@@ -165,6 +182,11 @@ public class PaymentService {
       return PreparedPayment.existing(existing);
     }
 
+    existing = findOpenIntentForMember(roomMemberId, currentUser);
+    if (existing != null) {
+      return PreparedPayment.existing(existing);
+    }
+
     if (roomMember.getStatus() != MemberStatus.APPLIED) {
       throw new InvalidRequestException(
           "Payment intent can only be created for APPLIED membership");
@@ -193,9 +215,15 @@ public class PaymentService {
         roomRepository
             .findByIdForUpdate(roomMember.getRoom().getId())
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    existing = findOpenIntentForMember(roomMemberId, currentUser);
+    if (existing != null) {
+      return PreparedPayment.existing(existing);
+    }
+
     long paidSeats =
         roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
-            lockedRoom, java.util.List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+            lockedRoom, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
     LocalDateTime now = LocalDateTime.now();
     long activeReservations =
         paymentReservationRepository.countByRoomAndStatusAndExpiresAtAfter(
@@ -215,7 +243,7 @@ public class PaymentService {
             .providerName(gateway.providerName())
             .saveCardRequested(Boolean.TRUE.equals(request.getSaveCard()))
             .savedCard(savedCard)
-            .expiresAt(now.plusMinutes(30))
+            .expiresAt(now.plusMinutes(PAYMENT_INTENT_TTL_MINUTES))
             .build();
     intent = paymentIntentRepository.save(intent);
     paymentReservationRepository.save(
@@ -249,6 +277,8 @@ public class PaymentService {
     GatewayChargeRequest chargeReq =
         GatewayChargeRequest.builder()
             .intentId(intent.getId())
+            .roomMemberId(roomMember.getId())
+            .roomId(lockedRoom.getId())
             .idempotencyKey(intent.getIdempotencyKey())
             .amount(amount)
             .currency("KZT")
@@ -305,7 +335,7 @@ public class PaymentService {
           "DIRECT_SUCCESS");
       return;
     }
-    recordSuccessTransaction(intent, cardPanMask, providerSignature);
+    recordSuccessTransaction(intent, cardPanMask, providerSignature, true);
     roomMemberService.markMembershipAsPaid(intent.getRoomMember());
     payoutService.createOwnerPayoutForSuccessfulPayment(intent);
 
@@ -346,11 +376,17 @@ public class PaymentService {
    */
   @Transactional
   public int expireStalePendingIntents() {
-    var stale =
-        paymentIntentRepository.findByStatusAndExpiresAtBefore(
-            PaymentIntentStatus.PENDING, LocalDateTime.now());
+    List<PaymentIntent> stale =
+        OPEN_INTENT_STATUSES.stream()
+            .flatMap(
+                status ->
+                    paymentIntentRepository
+                        .findByStatusAndExpiresAtBefore(status, LocalDateTime.now())
+                        .stream())
+            .toList();
     for (PaymentIntent intent : stale) {
-      intent.setStatus(PaymentIntentStatus.FAILED);
+      String fromStatus = intent.getStatus().name();
+      intent.setStatus(PaymentIntentStatus.EXPIRED);
       intent.setFailureCode("EXPIRED");
       intent.setFailureMessage("Payment was not completed before the intent expired");
       releaseReservation(intent, "INTENT_EXPIRED");
@@ -359,15 +395,15 @@ public class PaymentService {
           "INTENT",
           intent.getId(),
           "EXPIRED",
-          "PENDING",
-          "FAILED",
+          fromStatus,
+          "EXPIRED",
           null,
           null,
           intent.getIdempotencyKey(),
           Map.of("expiresAt", String.valueOf(intent.getExpiresAt())));
     }
     if (!stale.isEmpty()) {
-      log.info("Expired {} stale PENDING payment intents", stale.size());
+      log.info("Expired {} stale open payment intents", stale.size());
     }
     return stale.size();
   }
@@ -380,6 +416,15 @@ public class PaymentService {
             .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
     if (!intent.getUser().getId().equals(currentUser.getId())) {
       throw new ForbiddenOperationException("Not your payment intent");
+    }
+    return mapToResponse(intent);
+  }
+
+  @Transactional(readOnly = true)
+  public PaymentIntentResponse getCurrentPaymentIntentForMember(Long roomMemberId, User currentUser) {
+    PaymentIntent intent = findOpenIntentForMember(roomMemberId, currentUser);
+    if (intent == null) {
+      throw new ResourceNotFoundException("Open payment intent not found");
     }
     return mapToResponse(intent);
   }
@@ -402,8 +447,13 @@ public class PaymentService {
       throw new ForbiddenOperationException("Not your payment intent");
     }
 
-    // Already terminal (e.g. the webhook arrived first) — nothing to do.
-    if (intent.getStatus() != PaymentIntentStatus.PENDING) {
+    // Already captured at provider (e.g. the webhook arrived first) - nothing to do.
+    if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
+      return mapToResponse(intent);
+    }
+    if (!OPEN_INTENT_STATUSES.contains(intent.getStatus())
+        && intent.getStatus() != PaymentIntentStatus.EXPIRED
+        && intent.getStatus() != PaymentIntentStatus.FAILED) {
       return mapToResponse(intent);
     }
 
@@ -418,6 +468,23 @@ public class PaymentService {
       status = gateway.getStatus(intent.getExternalPaymentId());
     } catch (Exception ex) {
       log.warn("Status reconcile failed for intent {}: {}", intent.getId(), ex.getMessage());
+      if (OPEN_INTENT_STATUSES.contains(intent.getStatus())) {
+        String fromStatus = intent.getStatus().name();
+        intent.setStatus(PaymentIntentStatus.RECONCILING);
+        intent.setFailureCode("GATEWAY_STATUS_UNKNOWN");
+        intent.setFailureMessage("Gateway status check failed: " + ex.getMessage());
+        intent = paymentIntentRepository.save(intent);
+        eventLogger.log(
+            "INTENT",
+            intent.getId(),
+            "REDIRECT_RECONCILE_UNKNOWN",
+            fromStatus,
+            intent.getStatus().name(),
+            currentUser.getId(),
+            null,
+            intent.getIdempotencyKey(),
+            Map.of("error", String.valueOf(ex.getMessage())));
+      }
       return mapToResponse(intent);
     }
 
@@ -505,8 +572,8 @@ public class PaymentService {
 
     intent.setLastWebhookAt(LocalDateTime.now());
 
-    if (intent.getStatus() == PaymentIntentStatus.SUCCESS) {
-      // SUCCESS is terminal; only audit the duplicate.
+    if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
+      // Provider-captured states are terminal from the charging perspective; audit duplicates.
       eventLogger.log(
           "INTENT",
           intent.getId(),
@@ -633,20 +700,22 @@ public class PaymentService {
             .findWithLockById(paymentIntentId)
             .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
 
-    if (intent.getStatus() == PaymentIntentStatus.SUCCESS) {
+    if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
       eventLogger.log(
           "INTENT",
           intent.getId(),
           eventType + "_DUPLICATE",
-          "SUCCESS",
-          "SUCCESS",
+          intent.getStatus().name(),
+          intent.getStatus().name(),
           actorUserId,
           providerRequestId,
           intent.getIdempotencyKey(),
           Map.of());
       return intent;
     }
-    if (intent.getStatus() != PaymentIntentStatus.PENDING) {
+    if (!OPEN_INTENT_STATUSES.contains(intent.getStatus())
+        && intent.getStatus() != PaymentIntentStatus.EXPIRED
+        && intent.getStatus() != PaymentIntentStatus.FAILED) {
       return intent;
     }
 
@@ -657,14 +726,62 @@ public class PaymentService {
     if (providerStatusCode != null && !providerStatusCode.isBlank()) {
       intent.setProviderStatusCode(providerStatusCode);
     }
-    intent.setStatus(PaymentIntentStatus.SUCCESS);
-    intent = paymentIntentRepository.save(intent);
-
-    if (!consumeReservedSeatOrMarkCompensation(intent, providerRequestId)) {
+    SeatConsumptionResult seat = consumeReservedSeatIfAvailable(intent);
+    if (!seat.accepted()) {
+      PaymentTransaction chargeTx = recordSuccessTransaction(intent, cardPanMask, providerSignature, false);
+      intent.setStatus(PaymentIntentStatus.REFUND_REQUIRED);
+      intent.setCompensationRequired(true);
+      intent.setReviewRequired(true);
+      intent.setReviewReason(seat.reason());
+      intent = paymentIntentRepository.save(intent);
+      eventLogger.log(
+          "INTENT",
+          intent.getId(),
+          "COMPENSATION_REQUIRED",
+          fromStatus,
+          intent.getStatus().name(),
+          actorUserId,
+          providerRequestId,
+          intent.getIdempotencyKey(),
+          Map.of(
+              "roomId",
+              String.valueOf(intent.getRoomMember().getRoom().getId()),
+              "reason",
+              seat.reason()));
+      log.error(
+          "Payment intent {} succeeded at provider but room {} cannot consume reservation ({}); automatic refund required",
+          intent.getId(),
+          intent.getRoomMember().getRoom().getId(),
+          seat.reason());
+      try {
+        RefundTransaction refund =
+            refundService.createAutomaticCompensationRefund(chargeTx, seat.reason());
+        if (refund.getStatus() == RefundStatus.SUCCESS) {
+          intent.setStatus(PaymentIntentStatus.REFUNDED);
+          intent.setReviewRequired(false);
+        } else if (refund.getStatus() == RefundStatus.PENDING) {
+          intent.setStatus(PaymentIntentStatus.REFUND_PENDING);
+        } else {
+          intent.setStatus(PaymentIntentStatus.REQUIRES_REVIEW);
+          intent.setReviewRequired(true);
+        }
+      } catch (Exception ex) {
+        log.error("Automatic compensation refund failed for intent {}: {}", intent.getId(), ex.getMessage());
+        intent.setStatus(PaymentIntentStatus.REQUIRES_REVIEW);
+        intent.setReviewRequired(true);
+        intent.setReviewReason(seat.reason() + ": " + ex.getMessage());
+      }
+      intent = paymentIntentRepository.save(intent);
       return intent;
     }
 
-    recordSuccessTransaction(intent, cardPanMask, providerSignature);
+    intent.setStatus(PaymentIntentStatus.SUCCESS);
+    intent.setCompensationRequired(false);
+    intent.setReviewRequired(false);
+    intent.setReviewReason(null);
+    intent = paymentIntentRepository.save(intent);
+
+    recordSuccessTransaction(intent, cardPanMask, providerSignature, true);
     roomMemberService.markMembershipAsPaid(intent.getRoomMember());
     payoutService.createOwnerPayoutForSuccessfulPayment(intent);
 
@@ -708,7 +825,7 @@ public class PaymentService {
     return intent;
   }
 
-  private boolean consumeReservedSeatOrMarkCompensation(PaymentIntent intent, String providerRequestId) {
+  private SeatConsumptionResult consumeReservedSeatIfAvailable(PaymentIntent intent) {
     RoomMember member =
         roomMemberRepository
             .findWithLockById(intent.getRoomMember().getId())
@@ -720,57 +837,73 @@ public class PaymentService {
 
     PaymentReservation reservation =
         paymentReservationRepository.findWithLockByPaymentIntentId(intent.getId()).orElse(null);
+    LocalDateTime now = LocalDateTime.now();
     if (reservation != null) {
-      if (reservation.getStatus() == PaymentReservationStatus.RESERVED
-          && reservation.getExpiresAt().isAfter(LocalDateTime.now())) {
+      if (reservation.getStatus() == PaymentReservationStatus.RESERVED) {
+        boolean reservationStillActive = reservation.getExpiresAt().isAfter(now);
+        if (!reservationStillActive && !hasCapacityForLateSuccess(room, member)) {
+          return SeatConsumptionResult.rejected("NO_CAPACITY_AFTER_RESERVATION_EXPIRY");
+        }
         reservation.setStatus(PaymentReservationStatus.CONSUMED);
-        reservation.setConsumedAt(LocalDateTime.now());
+        reservation.setConsumedAt(now);
         paymentReservationRepository.save(reservation);
         member.setRoom(room);
         intent.setRoomMember(member);
-        return true;
+        return SeatConsumptionResult.ok();
       }
-      markCompensationRequired(intent, providerRequestId, room, "RESERVATION_NOT_ACTIVE");
-      return false;
+      return SeatConsumptionResult.rejected("RESERVATION_NOT_ACTIVE");
     }
 
-    long occupiedSlots =
-        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
-            room, java.util.List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
-
-    if (member.getStatus() == MemberStatus.PENDING
-        || member.getStatus() == MemberStatus.ACTIVE
-        || occupiedSlots < room.getMaxMembers() - 1L) {
+    if (hasCapacityForLateSuccess(room, member)) {
       member.setRoom(room);
       intent.setRoomMember(member);
-      return true;
+      return SeatConsumptionResult.ok();
     }
 
-    markCompensationRequired(intent, providerRequestId, room, "NO_CAPACITY");
-    return false;
+    return SeatConsumptionResult.rejected("NO_CAPACITY");
   }
 
-  private void markCompensationRequired(
-      PaymentIntent intent, String providerRequestId, Room room, String reason) {
-    intent.setCompensationRequired(true);
-    intent.setReviewRequired(true);
-    intent.setReviewReason(reason);
-    paymentIntentRepository.save(intent);
+  private boolean hasCapacityForLateSuccess(Room room, RoomMember member) {
+    long occupiedSlots =
+        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+    return member.getStatus() == MemberStatus.PENDING
+        || member.getStatus() == MemberStatus.ACTIVE
+        || occupiedSlots < room.getMaxMembers() - 1L;
+  }
+
+  private record SeatConsumptionResult(boolean accepted, String reason) {
+    static SeatConsumptionResult ok() {
+      return new SeatConsumptionResult(true, null);
+    }
+
+    static SeatConsumptionResult rejected(String reason) {
+      return new SeatConsumptionResult(false, reason);
+    }
+  }
+
+  private PaymentIntent markIntentUnknownAfterGatewayException(
+      Long intentId, Long actorUserId, String error) {
+    PaymentIntent intent =
+        paymentIntentRepository
+            .findWithLockById(intentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
+    String fromStatus = intent.getStatus().name();
+    intent.setStatus(PaymentIntentStatus.UNKNOWN);
+    intent.setFailureCode("GATEWAY_INIT_UNKNOWN");
+    intent.setFailureMessage("Gateway initiation result is unknown: " + error);
+    intent = paymentIntentRepository.save(intent);
     eventLogger.log(
         "INTENT",
         intent.getId(),
-        "COMPENSATION_REQUIRED",
-        "SUCCESS",
-        "SUCCESS",
+        "GATEWAY_INIT_UNKNOWN",
+        fromStatus,
+        intent.getStatus().name(),
+        actorUserId,
         null,
-        providerRequestId,
         intent.getIdempotencyKey(),
-        Map.of("roomId", String.valueOf(room.getId()), "reason", reason));
-    log.error(
-        "Payment intent {} succeeded at provider but room {} cannot consume reservation ({}); manual refund/review required",
-        intent.getId(),
-        room.getId(),
-        reason);
+        Map.of("error", String.valueOf(error)));
+    return intent;
   }
 
   private PaymentIntent failIntentAndReleaseReservation(
@@ -794,6 +927,21 @@ public class PaymentService {
         null,
         intent.getIdempotencyKey(),
         Map.of("error", String.valueOf(error)));
+    return intent;
+  }
+
+  private PaymentIntent findOpenIntentForMember(Long roomMemberId, User currentUser) {
+    PaymentIntent intent =
+        paymentIntentRepository
+            .findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
+                roomMemberId, OPEN_INTENT_STATUSES)
+            .orElse(null);
+    if (intent == null) {
+      return null;
+    }
+    if (intent.getUser() == null || !intent.getUser().getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("Not your payment intent");
+    }
     return intent;
   }
 
@@ -840,15 +988,18 @@ public class PaymentService {
     }
   }
 
-  private void recordSuccessTransaction(
-      PaymentIntent intent, String cardPanMask, String providerSignature) {
+  private PaymentTransaction recordSuccessTransaction(
+      PaymentIntent intent,
+      String cardPanMask,
+      String providerSignature,
+      boolean updateMemberPaymentPointers) {
     PaymentTransaction existing =
         paymentTransactionRepository
             .findFirstByPaymentIntentAndTypeAndStatus(
                 intent, PaymentTransactionType.CHARGE, PaymentTransactionStatus.SUCCESS)
             .orElse(null);
     if (existing != null) {
-      return;
+      return existing;
     }
 
     ObjectNode rawPayload = JsonNodeFactory.instance.objectNode();
@@ -874,9 +1025,11 @@ public class PaymentService {
             .build();
     tx = paymentTransactionRepository.save(tx);
     RoomMember member = intent.getRoomMember();
-    member.setPaymentIntentId(intent.getId());
-    member.setLatestPaymentTxId(tx.getId());
-    roomMemberRepository.save(member);
+    if (updateMemberPaymentPointers) {
+      member.setPaymentIntentId(intent.getId());
+      member.setLatestPaymentTxId(tx.getId());
+      roomMemberRepository.save(member);
+    }
 
     moneyLedgerService.append(
         "PAYMENT_CAPTURE",
@@ -902,6 +1055,7 @@ public class PaymentService {
           member.getRoom().getOwner(),
           "platform-fee-intent-" + intent.getId());
     }
+    return tx;
   }
 
   private PaymentIntentResponse mapToResponse(PaymentIntent intent) {
@@ -923,6 +1077,10 @@ public class PaymentService {
         .requiresRedirect(
             intent.getPaymentUrl() != null && intent.getStatus() == PaymentIntentStatus.PENDING)
         .saveCardRequested(intent.getSaveCardRequested())
+        .expiresAt(intent.getExpiresAt())
+        .compensationRequired(intent.getCompensationRequired())
+        .reviewRequired(intent.getReviewRequired())
+        .reviewReason(intent.getReviewReason())
         .failureCode(intent.getFailureCode())
         .failureMessage(intent.getFailureMessage())
         .build();

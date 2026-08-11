@@ -18,6 +18,12 @@ public interface PaymentIntentRepository extends JpaRepository<PaymentIntent, Lo
 
   Optional<PaymentIntent> findFirstByRoomMemberOrderByCreatedAtDesc(RoomMember roomMember);
 
+  Optional<PaymentIntent> findFirstByRoomMemberAndStatusOrderByCreatedAtDesc(
+      RoomMember roomMember, PaymentIntentStatus status);
+
+  Optional<PaymentIntent> findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
+      Long roomMemberId, List<PaymentIntentStatus> statuses);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<PaymentIntent> findWithLockById(Long id);
 

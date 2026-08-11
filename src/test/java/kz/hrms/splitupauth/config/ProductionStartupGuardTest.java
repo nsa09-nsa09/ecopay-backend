@@ -31,7 +31,9 @@ class ProductionStartupGuardTest {
 
     assertThrows(
         IllegalStateException.class,
-        () -> new ProductionStartupGuard(validEnvironment(), corsProperties, liveFreedomPay()).run(null));
+        () ->
+            new ProductionStartupGuard(validEnvironment(), corsProperties, liveFreedomPay())
+                .run(null));
   }
 
   @Test
@@ -44,6 +46,30 @@ class ProductionStartupGuardTest {
         () -> new ProductionStartupGuard(validEnvironment(), validCors(), freedomPay).run(null));
   }
 
+  @Test
+  void devPhoneBypassFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.phone.dev-bypass-code", "000000");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void loggingSmsFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("ecopay.sms.provider", "logging");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void weakenedFlywayValidationFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("spring.flyway.ignore-migration-patterns", "*:missing");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
   private ProductionStartupGuard guard(MockEnvironment environment) {
     return new ProductionStartupGuard(environment, validCors(), liveFreedomPay());
   }
@@ -53,14 +79,24 @@ class ProductionStartupGuardTest {
     environment.setActiveProfiles("prod");
     environment
         .withProperty("ecopay.payments.provider", "freedompay")
+        .withProperty("ecopay.payments.freedompay.merchant-id", "live-merchant")
+        .withProperty("ecopay.payments.freedompay.secret-key", "live-secret")
+        .withProperty("ecopay.payments.freedompay.payout-secret-key", "live-payout-secret")
         .withProperty("jwt.secret", strongSecret())
         .withProperty("app.security.field-encryption-key", strongSecret())
         .withProperty("app.base-url", "https://api.ecopay.kz")
         .withProperty("app.frontend-url", "https://app.ecopay.kz")
+        .withProperty("ecopay.sms.provider", "mobizon")
+        .withProperty("ecopay.sms.mobizon.base-url", "https://api.mobizon.kz")
+        .withProperty("ecopay.sms.mobizon.api-key", "live-mobizon-key")
+        .withProperty("ecopay.sms.mobizon.from", "EcoPay")
+        .withProperty("app.phone.dev-bypass-code", "")
         .withProperty("app.auth.refresh-cookie-secure", "true")
         .withProperty("springdoc.api-docs.enabled", "false")
         .withProperty("springdoc.swagger-ui.enabled", "false")
         .withProperty("spring.jpa.show-sql", "false")
+        .withProperty("spring.flyway.validate-on-migrate", "true")
+        .withProperty("spring.flyway.ignore-migration-patterns", "")
         .withProperty("server.forward-headers-strategy", "framework");
     return environment;
   }
@@ -73,6 +109,10 @@ class ProductionStartupGuardTest {
 
   private static FreedomPayProperties liveFreedomPay() {
     FreedomPayProperties properties = new FreedomPayProperties();
+    properties.setBaseUrl("https://api.freedompay.kz");
+    properties.setMerchantId("live-merchant");
+    properties.setSecretKey("live-secret");
+    properties.setPayoutSecretKey("live-payout-secret");
     properties.setTestMode("0");
     properties.setResultUrl("https://api.ecopay.kz/api/v1/webhooks/freedompay/result");
     properties.setPayoutResultUrl("https://api.ecopay.kz/api/v1/webhooks/freedompay/payout-result");

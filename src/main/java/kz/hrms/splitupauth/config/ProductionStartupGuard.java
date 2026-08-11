@@ -6,6 +6,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import kz.hrms.splitupauth.payment.gateway.MockPaymentGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
@@ -32,7 +33,18 @@ public class ProductionStartupGuard implements ApplicationRunner {
         MockPaymentGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
         violations,
         "payment provider is mock");
+    reject(
+        !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
+        violations,
+        "payment provider is not production FreedomPay");
     reject(!isFreedomPayLiveMode(), violations, "FreedomPay test mode is enabled");
+    reject(
+        isSandboxOrTestHost(hostOf(freedomPayProperties.getBaseUrl())),
+        violations,
+        "FreedomPay base URL points to sandbox/test host");
+    rejectBlank("ecopay.payments.freedompay.merchant-id", violations);
+    rejectBlank("ecopay.payments.freedompay.secret-key", violations);
+    rejectBlank("ecopay.payments.freedompay.payout-secret-key", violations);
     reject(!isStrongBase64Secret(prop("jwt.secret")), violations, "JWT secret is missing or weak");
     reject(
         !isStrongBase64Secret(prop("app.security.field-encryption-key")),
@@ -40,9 +52,12 @@ public class ProductionStartupGuard implements ApplicationRunner {
         "field encryption key is missing or weak");
     reject(!isHttpsPublicUrl(prop("app.base-url")), violations, "backend public URL is not HTTPS");
     reject(
-        !isHttpsPublicUrl(prop("app.frontend-url")), violations, "frontend public URL is not HTTPS");
+        !isHttpsPublicUrl(prop("app.frontend-url")),
+        violations,
+        "frontend public URL is not HTTPS");
     validateFreedomPayUrls(violations);
     validateCors(violations);
+    validateSms(violations);
     reject(
         !"true".equalsIgnoreCase(prop("app.auth.refresh-cookie-secure")),
         violations,
@@ -56,6 +71,14 @@ public class ProductionStartupGuard implements ApplicationRunner {
         "true".equalsIgnoreCase(prop("spring.jpa.show-sql")),
         violations,
         "SQL statement logging is enabled");
+    reject(
+        "false".equalsIgnoreCase(prop("spring.flyway.validate-on-migrate")),
+        violations,
+        "Flyway validation is disabled");
+    reject(
+        !prop("spring.flyway.ignore-migration-patterns").isBlank(),
+        violations,
+        "Flyway missing migration validation is weakened");
     reject(
         !List.of("framework", "native").contains(prop("server.forward-headers-strategy")),
         violations,
@@ -72,15 +95,18 @@ public class ProductionStartupGuard implements ApplicationRunner {
     List<String> activeProfiles = List.of(environment.getActiveProfiles());
     reject(!activeProfiles.contains("prod"), violations, "prod profile is not active");
     reject(activeProfiles.contains("dev"), violations, "dev profile is active together with prod");
-    reject(activeProfiles.contains("test"), violations, "test profile is active together with prod");
+    reject(
+        activeProfiles.contains("test"), violations, "test profile is active together with prod");
   }
 
   private void validateFreedomPayUrls(List<String> violations) {
     rejectUnsafeCallback(freedomPayProperties.getResultUrl(), violations, "FreedomPay result URL");
     rejectUnsafeCallback(
         freedomPayProperties.getPayoutResultUrl(), violations, "FreedomPay payout result URL");
-    rejectUnsafeCallback(freedomPayProperties.getSuccessUrl(), violations, "FreedomPay success URL");
-    rejectUnsafeCallback(freedomPayProperties.getFailureUrl(), violations, "FreedomPay failure URL");
+    rejectUnsafeCallback(
+        freedomPayProperties.getSuccessUrl(), violations, "FreedomPay success URL");
+    rejectUnsafeCallback(
+        freedomPayProperties.getFailureUrl(), violations, "FreedomPay failure URL");
   }
 
   private void validateCors(List<String> violations) {
@@ -91,9 +117,31 @@ public class ProductionStartupGuard implements ApplicationRunner {
     for (String origin : corsProperties.getAllowedOrigins()) {
       String normalized = origin == null ? "" : origin.trim().toLowerCase(Locale.ROOT);
       reject(normalized.equals("*"), violations, "CORS allowlist contains wildcard");
-      reject(normalized.startsWith("http://"), violations, "CORS allowlist contains non-HTTPS origin");
-      reject(isPrivateOrLocalHost(hostOf(normalized)), violations, "CORS allowlist contains local/private origin");
+      reject(
+          normalized.startsWith("http://"), violations, "CORS allowlist contains non-HTTPS origin");
+      reject(
+          isPrivateOrLocalHost(hostOf(normalized)),
+          violations,
+          "CORS allowlist contains local/private origin");
     }
+  }
+
+  private void validateSms(List<String> violations) {
+    String provider = prop("ecopay.sms.provider").trim().toLowerCase(Locale.ROOT);
+    reject(provider.isBlank(), violations, "SMS provider is missing");
+    reject(
+        provider.equals("logging") || provider.equals("mock"),
+        violations,
+        "SMS provider is not real");
+    reject(!provider.equals("mobizon"), violations, "SMS provider is not supported for production");
+    rejectBlank("ecopay.sms.mobizon.base-url", violations);
+    reject(
+        !isHttpsPublicUrl(prop("ecopay.sms.mobizon.base-url")),
+        violations,
+        "Mobizon base URL is not HTTPS");
+    rejectBlank("ecopay.sms.mobizon.api-key", violations);
+    rejectBlank("ecopay.sms.mobizon.from", violations);
+    reject(!prop("app.phone.dev-bypass-code").isBlank(), violations, "dev phone bypass is enabled");
   }
 
   private void rejectUnsafeCallback(String url, List<String> violations, String label) {
@@ -104,7 +152,13 @@ public class ProductionStartupGuard implements ApplicationRunner {
   private boolean isFreedomPayLiveMode() {
     String testMode = freedomPayProperties.getTestMode();
     return testMode != null
-        && (testMode.equals("0") || testMode.equalsIgnoreCase("false") || testMode.equalsIgnoreCase("off"));
+        && (testMode.equals("0")
+            || testMode.equalsIgnoreCase("false")
+            || testMode.equalsIgnoreCase("off"));
+  }
+
+  private void rejectBlank(String propertyName, List<String> violations) {
+    reject(prop(propertyName).isBlank(), violations, propertyName + " is missing");
   }
 
   private boolean isStrongBase64Secret(String value) {
@@ -177,6 +231,14 @@ public class ProductionStartupGuard implements ApplicationRunner {
       }
     }
     return false;
+  }
+
+  private static boolean isSandboxOrTestHost(String host) {
+    if (host == null || host.isBlank()) {
+      return true;
+    }
+    String lower = host.toLowerCase(Locale.ROOT);
+    return lower.contains("test") || lower.contains("sandbox") || lower.contains("stage");
   }
 
   private String prop(String name) {

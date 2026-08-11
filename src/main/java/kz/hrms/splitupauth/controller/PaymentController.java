@@ -40,6 +40,12 @@ public class PaymentController {
     return ResponseEntity.ok(paymentService.getPaymentIntent(paymentIntentId, user));
   }
 
+  @GetMapping("/members/{roomMemberId}/intent/current")
+  public ResponseEntity<PaymentIntentResponse> getCurrentPaymentIntent(
+      @PathVariable Long roomMemberId, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(paymentService.getCurrentPaymentIntentForMember(roomMemberId, user));
+  }
+
   @GetMapping("/history")
   public ResponseEntity<PageResponse<PaymentHistoryItemDto>> history(
       @AuthenticationPrincipal User user,

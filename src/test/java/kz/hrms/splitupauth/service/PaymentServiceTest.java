@@ -13,6 +13,8 @@ import java.math.BigDecimal;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
+import kz.hrms.splitupauth.entity.RefundStatus;
+import kz.hrms.splitupauth.entity.RefundTransaction;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
@@ -195,7 +197,7 @@ class PaymentServiceTest {
   }
 
   @Test
-  void expireStalePendingIntents_marksThemFailed() {
+  void expireStalePendingIntents_marksThemExpired() {
     PaymentIntent stale = pendingIntent(new BigDecimal("1822.50"));
     stale.setExpiresAt(java.time.LocalDateTime.now().minusMinutes(31));
     when(paymentIntentRepository.findByStatusAndExpiresAtBefore(
@@ -206,7 +208,7 @@ class PaymentServiceTest {
     int expired = paymentService.expireStalePendingIntents();
 
     assertEquals(1, expired);
-    assertEquals(PaymentIntentStatus.FAILED, stale.getStatus());
+    assertEquals(PaymentIntentStatus.EXPIRED, stale.getStatus());
     assertEquals("EXPIRED", stale.getFailureCode());
   }
 
@@ -260,15 +262,31 @@ class PaymentServiceTest {
     when(roomMemberRepository.findWithLockById(3L)).thenReturn(Optional.of(intent.getRoomMember()));
     when(roomRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(intent.getRoomMember().getRoom()));
     when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(any(), any())).thenReturn(1L);
+    when(paymentTransactionRepository.findFirstByPaymentIntentAndTypeAndStatus(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(paymentTransactionRepository.save(any()))
+        .thenAnswer(
+            i -> {
+              var tx = (kz.hrms.splitupauth.entity.PaymentTransaction) i.getArgument(0);
+              tx.setId(200L);
+              return tx;
+            });
+    when(refundService.createAutomaticCompensationRefund(any(), any()))
+        .thenReturn(
+            RefundTransaction.builder()
+                .id(300L)
+                .status(RefundStatus.PENDING)
+                .build());
 
     PaymentIntent result =
         paymentService.finalizeSuccessfulPayment(
             100L, "EXT-1", "ok", null, null, "req-1", null, "WEBHOOK_SUCCESS");
 
-    assertEquals(PaymentIntentStatus.SUCCESS, result.getStatus());
+    assertEquals(PaymentIntentStatus.REFUND_PENDING, result.getStatus());
     assertEquals(true, result.getCompensationRequired());
     verify(roomMemberService, never()).markMembershipAsPaid(any());
     verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
-    verify(paymentTransactionRepository, never()).save(any());
+    verify(paymentTransactionRepository, times(1)).save(any());
+    verify(refundService, times(1)).createAutomaticCompensationRefund(any(), any());
   }
 }

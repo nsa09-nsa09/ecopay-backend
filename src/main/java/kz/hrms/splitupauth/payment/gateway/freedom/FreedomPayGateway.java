@@ -2,6 +2,8 @@ package kz.hrms.splitupauth.payment.gateway.freedom;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -51,8 +53,12 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_user_phone", nonNull(request.getUserPhone(), ""));
     params.put("pg_user_contact_email", nonNull(request.getUserEmail(), ""));
     params.put("pg_result_url", urlResolver.resultUrl());
-    params.put("pg_success_url", urlResolver.successUrl(request.getSuccessUrl()));
-    params.put("pg_failure_url", urlResolver.failureUrl(request.getFailureUrl()));
+    params.put(
+        "pg_success_url",
+        appendPaymentContext(urlResolver.successUrl(request.getSuccessUrl()), request));
+    params.put(
+        "pg_failure_url",
+        appendPaymentContext(urlResolver.failureUrl(request.getFailureUrl()), request));
     params.put("pg_request_method", "POST");
     if (request.isSaveCardRequested()) {
       params.put("pg_recurring_start", "1");
@@ -453,5 +459,37 @@ public class FreedomPayGateway implements PaymentGateway {
       if (v != null && !v.isBlank()) return v;
     }
     return null;
+  }
+
+  private static String appendPaymentContext(String url, GatewayChargeRequest request) {
+    if (url == null || url.isBlank() || request == null) {
+      return url;
+    }
+    Map<String, String> context = new LinkedHashMap<>();
+    putIfPresent(context, "intentId", request.getIntentId());
+    putIfPresent(context, "roomMemberId", request.getRoomMemberId());
+    putIfPresent(context, "roomId", request.getRoomId());
+    if (context.isEmpty()) {
+      return url;
+    }
+    StringBuilder out = new StringBuilder(url);
+    out.append(url.contains("?") ? "&" : "?");
+    boolean first = true;
+    for (Map.Entry<String, String> entry : context.entrySet()) {
+      if (!first) {
+        out.append("&");
+      }
+      first = false;
+      out.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8));
+      out.append("=");
+      out.append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
+    }
+    return out.toString();
+  }
+
+  private static void putIfPresent(Map<String, String> target, String key, Long value) {
+    if (value != null) {
+      target.put(key, String.valueOf(value));
+    }
   }
 }

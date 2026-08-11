@@ -8,6 +8,8 @@ import lombok.Data;
 @Builder
 public class GatewayChargeRequest {
   private Long intentId;
+  private Long roomMemberId;
+  private Long roomId;
   private String idempotencyKey;
   private BigDecimal amount;
   private String currency;

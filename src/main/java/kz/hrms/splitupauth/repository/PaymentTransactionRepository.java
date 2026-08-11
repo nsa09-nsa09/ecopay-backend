@@ -20,6 +20,9 @@ public interface PaymentTransactionRepository
   Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeAndStatus(
       PaymentIntent paymentIntent, PaymentTransactionType type, PaymentTransactionStatus status);
 
+  Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeOrderByCreatedAtDesc(
+      PaymentIntent paymentIntent, PaymentTransactionType type);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select t from PaymentTransaction t where t.id = :id")
   Optional<PaymentTransaction> findWithLockById(@Param("id") Long id);

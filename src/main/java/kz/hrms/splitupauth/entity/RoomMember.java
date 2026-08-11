@@ -72,6 +72,22 @@ public class RoomMember {
   @Column(name = "latest_payment_tx_id")
   private Long latestPaymentTxId;
 
+  @Column(name = "billing_anchor_at")
+  private LocalDateTime billingAnchorAt;
+
+  @Column(name = "billing_period_start")
+  private LocalDateTime billingPeriodStart;
+
+  @Column(name = "next_billing_at")
+  private LocalDateTime nextBillingAt;
+
+  @Column(name = "recurring_retry_count", nullable = false)
+  @Builder.Default
+  private Integer recurringRetryCount = 0;
+
+  @Column(name = "recurring_next_retry_at")
+  private LocalDateTime recurringNextRetryAt;
+
   @Column(name = "consent_accepted_at")
   private LocalDateTime consentAcceptedAt;
 
@@ -103,6 +119,10 @@ public class RoomMember {
 
     if (version == null) {
       version = 0L;
+    }
+
+    if (recurringRetryCount == null) {
+      recurringRetryCount = 0;
     }
   }
 

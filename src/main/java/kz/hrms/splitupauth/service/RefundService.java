@@ -200,6 +200,54 @@ public class RefundService {
     return map(refund);
   }
 
+  @Transactional
+  public RefundTransaction createAutomaticCompensationRefund(
+      PaymentTransaction transaction, String reason) {
+    if (transaction == null || transaction.getId() == null) {
+      throw new InvalidRequestException("Payment transaction is required for compensation refund");
+    }
+    if (transaction.getType() != PaymentTransactionType.CHARGE
+        || transaction.getStatus() != PaymentTransactionStatus.SUCCESS) {
+      throw new InvalidRequestException("Only successful CHARGE can be refunded");
+    }
+
+    String idempotencyKey = "compensation-refund-tx-" + transaction.getId();
+    RefundTransaction existing =
+        refundTransactionRepository.findByIdempotencyKey(idempotencyKey).orElse(null);
+    if (existing != null) {
+      return existing;
+    }
+
+    RefundTransaction refund =
+        RefundTransaction.builder()
+            .paymentTransaction(transaction)
+            .status(RefundStatus.PENDING)
+            .amount(transaction.getAmount())
+            .currency(transaction.getCurrency())
+            .reason("Automatic compensation: " + reason)
+            .idempotencyKey(idempotencyKey)
+            .build();
+    refund = refundTransactionRepository.save(refund);
+
+    eventLogger.log(
+        "REFUND",
+        refund.getId(),
+        "AUTO_COMPENSATION_CREATED",
+        null,
+        refund.getStatus().name(),
+        null,
+        null,
+        refund.getIdempotencyKey(),
+        java.util.Map.of(
+            "paymentTransactionId",
+            String.valueOf(transaction.getId()),
+            "reason",
+            String.valueOf(reason)));
+
+    dispatchRefund(refund);
+    return refund;
+  }
+
   private void applyRefundToParentTransaction(RefundTransaction refund) {
     PaymentTransaction tx = refund.getPaymentTransaction();
     BigDecimal totalRefunded = refundTransactionRepository.sumActiveRefundAmounts(tx);
@@ -220,6 +268,14 @@ public class RefundService {
         null,
         tx.getRoom() == null ? null : tx.getRoom().getOwner(),
         "refund-" + refund.getId());
+    PaymentIntent intent = tx.getPaymentIntent();
+    if (fullRefund
+        && intent != null
+        && Boolean.TRUE.equals(intent.getCompensationRequired())) {
+      intent.setStatus(PaymentIntentStatus.REFUNDED);
+      intent.setReviewRequired(false);
+      intent.setReviewReason(null);
+    }
     if (fullRefund && tx.getRoomMember() != null) {
       RoomMember member = tx.getRoomMember();
       if (member.getStatus() == MemberStatus.PENDING || member.getStatus() == MemberStatus.ACTIVE) {
