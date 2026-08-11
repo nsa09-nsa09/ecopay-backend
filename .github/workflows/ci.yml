@@ -21,6 +21,13 @@ jobs:
           java-version: '21'
           cache: maven
 
+      - name: Ensure Docker is available for Testcontainers
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            sudo systemctl start docker || sudo service docker start
+          fi
+          docker info
+
       - name: Build and test
         run: ./mvnw -B verify
 
