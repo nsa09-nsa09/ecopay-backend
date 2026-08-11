@@ -14,7 +14,6 @@ public class FreedomWebhookRetryScheduler {
   private final FreedomWebhookInboxCoordinator coordinator;
 
   @Scheduled(fixedDelayString = "${app.webhooks.freedom.retry-delay-ms:60000}")
-  @Transactional
   public void retryDueWebhooks() {
     try {
       coordinator.retryDueWebhooks();
