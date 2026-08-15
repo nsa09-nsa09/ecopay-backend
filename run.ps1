@@ -17,11 +17,11 @@ Get-Content .env | ForEach-Object {
 }
 
 if (-not $env:FLYWAY_ENABLED) {
-    [System.Environment]::SetEnvironmentVariable("FLYWAY_ENABLED", "false", "Process")
+    [System.Environment]::SetEnvironmentVariable("FLYWAY_ENABLED", "true", "Process")
 }
 
 if (-not $env:JPA_DDL_AUTO) {
-    [System.Environment]::SetEnvironmentVariable("JPA_DDL_AUTO", "update", "Process")
+    [System.Environment]::SetEnvironmentVariable("JPA_DDL_AUTO", "none", "Process")
 }
 
 $port = if ($env:SERVER_PORT) { [int]$env:SERVER_PORT } else { 8080 }
