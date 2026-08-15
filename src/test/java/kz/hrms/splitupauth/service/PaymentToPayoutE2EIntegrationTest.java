@@ -353,6 +353,31 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
             Long.class,
             "same-key-" + member.getId());
     assertEquals(1L, intentRows);
+    Long reservationRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM payment_reservations WHERE payment_intent_id = ?",
+            Long.class,
+            first.getId());
+    Long memberReservationRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM payment_reservations WHERE room_member_id = ?",
+            Long.class,
+            member.getId());
+    Long chargeRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM payment_transactions "
+                + "WHERE payment_intent_id = ? AND type = 'CHARGE' AND status = 'SUCCESS'",
+            Long.class,
+            first.getId());
+    Long ledgerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM money_ledger_entries WHERE payment_intent_id = ?",
+            Long.class,
+            first.getId());
+    assertEquals(1L, reservationRows);
+    assertEquals(1L, memberReservationRows);
+    assertEquals(1L, chargeRows);
+    assertEquals(2L, ledgerRows);
   }
 
   @Test

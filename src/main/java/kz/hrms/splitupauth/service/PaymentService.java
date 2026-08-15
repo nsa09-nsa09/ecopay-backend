@@ -90,33 +90,37 @@ public class PaymentService {
               .execute(
                   status -> createIntentAndReservation(roomMemberId, currentUser, request));
     } catch (DataIntegrityViolationException ex) {
-      PaymentIntent existing =
+      PaymentIntentResponse existingResponse =
           tx()
               .execute(
                   status ->
                       paymentIntentRepository
                           .findByIdempotencyKey(request.getIdempotencyKey())
+                          .map(
+                              existing ->
+                                  mapToResponse(
+                                      requireSameIdempotentRequest(
+                                          existing, roomMemberId, currentUser, request)))
                           .orElse(null));
-      if (existing != null) {
-        PaymentIntent sameRequest =
-            tx()
-                .execute(
-                    status ->
-                        requireSameIdempotentRequest(
-                            existing, roomMemberId, currentUser, request));
-        return mapToResponse(sameRequest);
+      if (existingResponse != null) {
+        return existingResponse;
       }
-      PaymentIntent openIntent =
-          tx().execute(status -> findOpenIntentForMember(roomMemberId, currentUser));
-      if (openIntent != null) {
-        return mapToResponse(openIntent);
+      PaymentIntentResponse openResponse =
+          tx()
+              .execute(
+                  status -> {
+                    PaymentIntent openIntent = findOpenIntentForMember(roomMemberId, currentUser);
+                    return openIntent == null ? null : mapToResponse(openIntent);
+                  });
+      if (openResponse != null) {
+        return openResponse;
       }
       throw ex;
     }
 
     PaymentIntent intent = prepared.intent();
     if (intent.getStatus() != PaymentIntentStatus.PENDING || prepared.chargeRequest() == null) {
-      return mapToResponse(intent);
+      return prepared.response() != null ? prepared.response() : mapToResponse(intent);
     }
 
     GatewayChargeResponse chargeResp;
@@ -129,19 +133,22 @@ public class PaymentService {
     } catch (Exception ex) {
       log.error(
           "Gateway charge initiation failed for intent {}: {}", intent.getId(), ex.getMessage());
-      PaymentIntent failed =
+      PaymentIntentResponse failed =
           tx()
               .execute(
                   status ->
-                      markIntentUnknownAfterGatewayException(
-                          intent.getId(),
-                          currentUser.getId(),
-                          ex.getMessage()));
-      return mapToResponse(failed);
+                      mapToResponse(
+                          markIntentUnknownAfterGatewayException(
+                              intent.getId(), currentUser.getId(), ex.getMessage())));
+      return failed;
     }
 
-    PaymentIntent updated =
-        tx().execute(status -> applyGatewayInitResponse(intent.getId(), chargeResp, currentUser.getId()));
+    PaymentIntentResponse updated =
+        tx()
+            .execute(
+                status ->
+                    mapToResponse(
+                        applyGatewayInitResponse(intent.getId(), chargeResp, currentUser.getId())));
 
     if (chargeResp.isSuccess() && !chargeResp.isRequiresRedirect()) {
       Long updatedIntentId = updated.getId();
@@ -149,18 +156,19 @@ public class PaymentService {
           tx()
               .execute(
                   status ->
-                      finalizeSuccessfulPayment(
-                          updatedIntentId,
-                          chargeResp.getExternalPaymentId(),
-                          chargeResp.getProviderStatusCode(),
-                          null,
-                          null,
-                          null,
-                          currentUser.getId(),
-                          "GATEWAY_SYNC_SUCCESS"));
+                      mapToResponse(
+                          finalizeSuccessfulPayment(
+                              updatedIntentId,
+                              chargeResp.getExternalPaymentId(),
+                              chargeResp.getProviderStatusCode(),
+                              null,
+                              null,
+                              null,
+                              currentUser.getId(),
+                              "GATEWAY_SYNC_SUCCESS")));
     }
 
-    return mapToResponse(updated);
+    return updated;
   }
 
   private PreparedPayment createIntentAndReservation(
@@ -186,12 +194,12 @@ public class PaymentService {
         paymentIntentRepository.findByIdempotencyKey(request.getIdempotencyKey()).orElse(null);
     if (existing != null) {
       existing = requireSameIdempotentRequest(existing, roomMemberId, currentUser, request);
-      return PreparedPayment.existing(existing);
+      return PreparedPayment.existing(existing, mapToResponse(existing));
     }
 
     existing = findOpenIntentForMember(roomMemberId, currentUser);
     if (existing != null) {
-      return PreparedPayment.existing(existing);
+      return PreparedPayment.existing(existing, mapToResponse(existing));
     }
 
     if (roomMember.getStatus() != MemberStatus.APPLIED) {
@@ -220,7 +228,7 @@ public class PaymentService {
 
     existing = findOpenIntentForMember(roomMemberId, currentUser);
     if (existing != null) {
-      return PreparedPayment.existing(existing);
+      return PreparedPayment.existing(existing, mapToResponse(existing));
     }
 
     PaymentGateway gateway = gatewayRegistry.defaultGateway();
@@ -295,7 +303,7 @@ public class PaymentService {
             .userId(currentUser.getId() == null ? null : String.valueOf(currentUser.getId()))
             .saveCardRequested(intent.getSaveCardRequested())
             .build();
-    return new PreparedPayment(intent, savedCardToken, chargeReq);
+    return new PreparedPayment(intent, savedCardToken, chargeReq, null);
   }
 
   private PaymentIntent applyGatewayInitResponse(
@@ -1004,9 +1012,12 @@ public class PaymentService {
   }
 
   private record PreparedPayment(
-      PaymentIntent intent, String savedCardToken, GatewayChargeRequest chargeRequest) {
-    static PreparedPayment existing(PaymentIntent intent) {
-      return new PreparedPayment(intent, null, null);
+      PaymentIntent intent,
+      String savedCardToken,
+      GatewayChargeRequest chargeRequest,
+      PaymentIntentResponse response) {
+    static PreparedPayment existing(PaymentIntent intent, PaymentIntentResponse response) {
+      return new PreparedPayment(intent, null, null, response);
     }
   }
 
