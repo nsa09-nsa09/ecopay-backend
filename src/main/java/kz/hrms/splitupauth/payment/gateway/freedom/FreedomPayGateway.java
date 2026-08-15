@@ -244,9 +244,8 @@ public class FreedomPayGateway implements PaymentGateway {
       log.warn("cardstorage/list failed for user {}: {}", userId, ex.getMessage());
       return null;
     }
-    log.info("FreedomPay cardstorage/list[user={}] raw response: {}", userId, xml);
-
     java.util.List<Map<String, String>> cards = FreedomPayXmlParser.parseCardList(xml);
+    log.info("FreedomPay cardstorage/list[user={}] parsed {} card entries", userId, cards.size());
     Map<String, String> best = null;
     String bestCreatedAt = "";
     for (Map<String, String> c : cards) {

@@ -5,12 +5,15 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.Dispute;
+import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentTransaction;
 import kz.hrms.splitupauth.entity.RefundTransaction;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface RefundTransactionRepository
     extends JpaRepository<RefundTransaction, Long>, JpaSpecificationExecutor<RefundTransaction> {
@@ -30,8 +33,22 @@ public interface RefundTransactionRepository
   List<RefundTransaction> findByPaymentTransaction_PaymentIntent_UserOrderByCreatedAtDesc(
       User user);
 
+  long countByPaymentTransaction_PaymentIntent_UserAndStatusIn(
+      User user, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
   List<RefundTransaction> findByPaymentTransactionAndStatusIn(
       PaymentTransaction tx, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
+  @Query(
+      """
+      select count(r) > 0
+      from RefundTransaction r
+      where r.paymentTransaction.paymentIntent = :intent
+        and r.status in :statuses
+      """)
+  boolean existsByPaymentIntentAndStatusIn(
+      @Param("intent") PaymentIntent intent,
+      @Param("statuses") List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
 
   default BigDecimal sumActiveRefundAmounts(PaymentTransaction tx) {
     return findByPaymentTransactionAndStatusIn(

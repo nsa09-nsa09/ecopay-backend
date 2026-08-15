@@ -17,11 +17,17 @@ public class PaymentIntentResponse {
 
   /** The member's tariff share (the portion the owner receives). */
   private BigDecimal shareAmount;
+  private BigDecimal shareKzt;
 
   /** The EcoPay commission added on top of the share. */
   private BigDecimal commissionAmount;
+  private BigDecimal commissionKzt;
+  private BigDecimal payableTotalKzt;
 
   private String currency;
+  private String settlementCurrency;
+  private BigDecimal originalPrice;
+  private String originalCurrency;
   private PaymentIntentStatus status;
   private String providerName;
   private String externalPaymentId;

@@ -7,6 +7,7 @@ import java.util.Optional;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.RoomMember;
+import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -31,6 +32,8 @@ public interface PaymentIntentRepository extends JpaRepository<PaymentIntent, Lo
 
   List<PaymentIntent> findByStatusAndExpiresAtBefore(
       PaymentIntentStatus status, LocalDateTime cutoff);
+
+  long countByUserAndStatusIn(User user, List<PaymentIntentStatus> statuses);
 
   @Modifying
   @Query(

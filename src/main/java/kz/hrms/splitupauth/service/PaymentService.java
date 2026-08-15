@@ -48,13 +48,20 @@ public class PaymentService {
           PaymentIntentStatus.PENDING,
           PaymentIntentStatus.UNKNOWN,
           PaymentIntentStatus.RECONCILING);
+  private static final List<PaymentIntentStatus> BLOCKING_INTENT_STATUSES =
+      List.of(
+          PaymentIntentStatus.PENDING,
+          PaymentIntentStatus.UNKNOWN,
+          PaymentIntentStatus.RECONCILING,
+          PaymentIntentStatus.CAPTURE_ANOMALY);
   private static final List<PaymentIntentStatus> PROVIDER_CAPTURED_STATUSES =
       List.of(
           PaymentIntentStatus.SUCCESS,
           PaymentIntentStatus.REFUND_REQUIRED,
           PaymentIntentStatus.REFUND_PENDING,
           PaymentIntentStatus.REFUNDED,
-          PaymentIntentStatus.REQUIRES_REVIEW);
+          PaymentIntentStatus.REQUIRES_REVIEW,
+          PaymentIntentStatus.CAPTURE_ANOMALY);
 
   private final PaymentIntentRepository paymentIntentRepository;
   private final PaymentReservationRepository paymentReservationRepository;
@@ -192,13 +199,6 @@ public class PaymentService {
           "Payment intent can only be created for APPLIED membership");
     }
 
-    PaymentGateway gateway = gatewayRegistry.defaultGateway();
-    // The member pays their tariff share plus the EcoPay commission (owner pays none).
-    // The owner is later paid the share; EcoPay keeps the commission (see PayoutService).
-    BigDecimal share = resolveShareAmount(roomMember.getRoom());
-    BigDecimal commission = commissionCalculator.commissionFor(share);
-    BigDecimal amount = share.add(commission);
-
     SavedCard savedCard = null;
     String savedCardToken = null;
     if (request.getSavedCardId() != null) {
@@ -215,11 +215,18 @@ public class PaymentService {
         roomRepository
             .findByIdForUpdate(roomMember.getRoom().getId())
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    roomMember.setRoom(lockedRoom);
+    ensurePaymentAllowedUnderRoomLock(lockedRoom, roomMember, currentUser);
 
     existing = findOpenIntentForMember(roomMemberId, currentUser);
     if (existing != null) {
       return PreparedPayment.existing(existing);
     }
+
+    PaymentGateway gateway = gatewayRegistry.defaultGateway();
+    BigDecimal share = resolveShareAmount(lockedRoom);
+    BigDecimal commission = commissionCalculator.commissionFor(share);
+    BigDecimal amount = share.add(commission);
 
     long paidSeats =
         roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
@@ -594,25 +601,29 @@ public class PaymentService {
       // amount, but a mismatch means tampering or a provider bug → treat as FAILED.
       if (event.getAmount() != null && intent.getAmount().compareTo(event.getAmount()) != 0) {
         log.error(
-            "Webhook amount mismatch for intent {}: expected {} got {} — rejecting",
+            "Webhook amount mismatch for intent {}: expected {} got {}; marking capture anomaly",
             intent.getId(),
             intent.getAmount(),
             event.getAmount());
-        intent.setStatus(PaymentIntentStatus.FAILED);
+        intent.setStatus(PaymentIntentStatus.CAPTURE_ANOMALY);
+        intent.setExternalPaymentId(event.getExternalPaymentId());
+        intent.setProviderStatusCode(event.getProviderStatusCode());
         intent.setFailureCode("AMOUNT_MISMATCH");
         intent.setFailureMessage(
             "Callback amount "
                 + event.getAmount()
                 + " does not match intent amount "
                 + intent.getAmount());
+        intent.setReviewRequired(true);
+        intent.setReviewReason("AMOUNT_MISMATCH");
+        intent.setCompensationRequired(true);
         paymentIntentRepository.save(intent);
-        releaseReservation(intent, "AMOUNT_MISMATCH");
         eventLogger.log(
             "INTENT",
             intent.getId(),
             "WEBHOOK_AMOUNT_MISMATCH",
             "PENDING",
-            "FAILED",
+            PaymentIntentStatus.CAPTURE_ANOMALY.name(),
             null,
             event.getProviderRequestId(),
             intent.getIdempotencyKey(),
@@ -627,13 +638,17 @@ public class PaymentService {
           && !event.getCurrency().isBlank()
           && !"KZT".equalsIgnoreCase(event.getCurrency())) {
         log.error(
-            "Webhook currency mismatch for intent {}: got {} — rejecting",
+            "Webhook currency mismatch for intent {}: got {}; marking capture anomaly",
             intent.getId(),
             event.getCurrency());
-        intent.setStatus(PaymentIntentStatus.FAILED);
+        intent.setStatus(PaymentIntentStatus.CAPTURE_ANOMALY);
+        intent.setExternalPaymentId(event.getExternalPaymentId());
+        intent.setProviderStatusCode(event.getProviderStatusCode());
         intent.setFailureCode("CURRENCY_MISMATCH");
         intent.setFailureMessage("Callback currency " + event.getCurrency() + " is not KZT");
-        releaseReservation(intent, "CURRENCY_MISMATCH");
+        intent.setReviewRequired(true);
+        intent.setReviewReason("CURRENCY_MISMATCH");
+        intent.setCompensationRequired(true);
         paymentIntentRepository.save(intent);
         return;
       }
@@ -807,7 +822,7 @@ public class PaymentService {
             + (room == null ? "" : " for room \"" + room.getTitle() + "\"")
             + " in amount "
             + intent.getAmount()
-            + (room == null ? "" : " " + room.getCurrency())
+            + " KZT"
             + " succeeded.",
         room == null ? null : "/rooms/member/" + room.getId(),
         Map.of("intentId", intent.getId(), "roomId", room == null ? 0L : room.getId()));
@@ -834,6 +849,13 @@ public class PaymentService {
         roomRepository
             .findByIdForUpdate(member.getRoom().getId())
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    if (!isRoomPayable(room)) {
+      return SeatConsumptionResult.rejected("ROOM_NOT_PAYABLE_" + room.getStatus());
+    }
+    if (!isActiveUser(member.getUser())) {
+      return SeatConsumptionResult.rejected("MEMBER_USER_NOT_ACTIVE");
+    }
 
     PaymentReservation reservation =
         paymentReservationRepository.findWithLockByPaymentIntentId(intent.getId()).orElse(null);
@@ -934,7 +956,7 @@ public class PaymentService {
     PaymentIntent intent =
         paymentIntentRepository
             .findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
-                roomMemberId, OPEN_INTENT_STATUSES)
+                roomMemberId, BLOCKING_INTENT_STATUSES)
             .orElse(null);
     if (intent == null) {
       return null;
@@ -1062,13 +1084,20 @@ public class PaymentService {
     BigDecimal commission =
         intent.getCommissionAmount() == null ? BigDecimal.ZERO : intent.getCommissionAmount();
     BigDecimal share = intent.getAmount() == null ? null : intent.getAmount().subtract(commission);
+    Room room = intent.getRoomMember() == null ? null : intent.getRoomMember().getRoom();
     return PaymentIntentResponse.builder()
         .id(intent.getId())
         .idempotencyKey(intent.getIdempotencyKey())
         .amount(intent.getAmount())
         .shareAmount(share)
+        .shareKzt(share)
         .commissionAmount(commission)
+        .commissionKzt(commission)
+        .payableTotalKzt(intent.getAmount())
         .currency("KZT")
+        .settlementCurrency("KZT")
+        .originalPrice(room == null ? null : room.getPriceTotal())
+        .originalCurrency(room == null ? null : room.getCurrency())
         .status(intent.getStatus())
         .providerName(intent.getProviderName())
         .externalPaymentId(intent.getExternalPaymentId())
@@ -1093,26 +1122,57 @@ public class PaymentService {
           "Room configuration is required to calculate payment amount");
     }
 
-    if (isPositiveAmount(room.getPricePerMember())) {
-      return normalizeMoneyAmount(room.getPricePerMember(), "Room pricePerMember");
+    if (isPositiveAmount(room.getPricePerMemberKzt())) {
+      return normalizeMoneyAmount(room.getPricePerMemberKzt(), "Room pricePerMemberKzt");
     }
 
-    if (!isPositiveAmount(room.getPriceTotal())) {
+    if (!isPositiveAmount(room.getPriceTotalKzt())) {
       throw new InvalidRequestException(
-          "Cannot determine payment amount: room must have positive pricePerMember or positive priceTotal");
+          "Cannot determine payment amount: room must have frozen positive KZT price snapshot");
     }
 
     int participantCount = resolveParticipantCount(room);
 
     try {
       BigDecimal share =
-          room.getPriceTotal()
+          room.getPriceTotalKzt()
               .divide(BigDecimal.valueOf(participantCount), MONEY_SCALE, RoundingMode.UNNECESSARY);
-      return normalizeMoneyAmount(share, "Calculated payment amount");
+      return normalizeMoneyAmount(share, "Calculated KZT payment amount");
     } catch (ArithmeticException ex) {
       throw new InvalidRequestException(
-          "Cannot determine payment amount: priceTotal cannot be split across member slots without rounding");
+          "Cannot determine payment amount: frozen KZT total cannot be split across member slots without rounding");
     }
+  }
+
+  private void ensurePaymentAllowedUnderRoomLock(
+      Room lockedRoom, RoomMember roomMember, User currentUser) {
+    if (!isRoomPayable(lockedRoom)) {
+      throw new InvalidRequestException("Room is not payable in status " + lockedRoom.getStatus());
+    }
+    if (lockedRoom.getStartDate() != null && !LocalDateTime.now().isBefore(lockedRoom.getStartDate())) {
+      throw new InvalidRequestException("Payment window is closed for this room");
+    }
+    if (!isActiveUser(currentUser) || !isActiveUser(roomMember.getUser())) {
+      throw new InvalidRequestException("Inactive users cannot create payments");
+    }
+    if (roomMember.getDeletedAt() != null || roomMember.getStatus() != MemberStatus.APPLIED) {
+      throw new InvalidRequestException(
+          "Payment intent can only be created for active APPLIED membership");
+    }
+  }
+
+  private boolean isRoomPayable(Room room) {
+    return room != null
+        && room.getDeletedAt() == null
+        && (room.getStatus() == RoomStatus.OPEN
+            || room.getStatus() == RoomStatus.IN_VERIFICATION
+            || room.getStatus() == RoomStatus.ACTIVE);
+  }
+
+  private boolean isActiveUser(User user) {
+    return user != null
+        && user.getDeletedAt() == null
+        && (user.getStatus() == null || user.getStatus() == UserStatus.ACTIVE);
   }
 
   private int resolveParticipantCount(Room room) {

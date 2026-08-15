@@ -17,6 +17,8 @@ import org.springframework.stereotype.Repository;
 public interface PayoutRepository extends JpaRepository<Payout, Long> {
   List<Payout> findByUserOrderByCreatedAtDesc(User user);
 
+  long countByUserAndStatusIn(User user, List<String> statuses);
+
   List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
 
   /**

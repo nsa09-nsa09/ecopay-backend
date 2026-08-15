@@ -10,6 +10,7 @@ public enum PaymentIntentStatus {
   REFUND_PENDING,
   REFUNDED,
   REQUIRES_REVIEW,
+  CAPTURE_ANOMALY,
   FAILED,
   CANCELLED
 }

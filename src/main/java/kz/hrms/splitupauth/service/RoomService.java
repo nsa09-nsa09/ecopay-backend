@@ -27,6 +27,8 @@ import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PeriodType;
+import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
+import kz.hrms.splitupauth.entity.PaymentTransactionType;
 import kz.hrms.splitupauth.entity.ProviderType;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
@@ -44,6 +46,7 @@ import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
+import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomOccupancyProjection;
@@ -80,6 +83,8 @@ public class RoomService {
   private final ExchangeRateService exchangeRateService;
   private final ReputationService reputationService;
   private final PayoutMethodRepository payoutMethodRepository;
+  private final PaymentTransactionRepository paymentTransactionRepository;
+  private final RefundService refundService;
 
   /** Member statuses that occupy a seat (see CLAUDE.md). */
   private static final List<MemberStatus> OCCUPYING_STATUSES =
@@ -331,8 +336,7 @@ public class RoomService {
   public RoomResponse getRoom(Long roomId) {
     Room room =
         roomRepository
-            .findById(roomId)
-            .filter(r -> r.getDeletedAt() == null)
+            .findByIdForUpdate(roomId)
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
     RoomResponse response = roomMapper.toResponse(room);
@@ -838,12 +842,14 @@ public class RoomService {
       throw new ForbiddenOperationException("Only room owner can cancel the room");
     }
 
-    if (!room.getStartDate().isAfter(LocalDateTime.now())) {
-      throw new InvalidRequestException("Room cannot be cancelled after start date");
+    if (room.getStatus() == RoomStatus.CANCELLED) {
+      return roomMapper.toResponse(room);
     }
 
-    if (!(room.getStatus() == RoomStatus.OPEN || room.getStatus() == RoomStatus.IN_VERIFICATION)) {
-      throw new InvalidRequestException("Only OPEN or IN_VERIFICATION rooms can be cancelled");
+    if (!(room.getStatus() == RoomStatus.OPEN
+        || room.getStatus() == RoomStatus.IN_VERIFICATION
+        || room.getStatus() == RoomStatus.ACTIVE)) {
+      throw new InvalidRequestException("Only OPEN, IN_VERIFICATION or ACTIVE rooms can be cancelled");
     }
 
     ensureStatusTransition(room.getStatus(), RoomStatus.CANCELLED);
@@ -851,8 +857,25 @@ public class RoomService {
     room.setStatus(RoomStatus.CANCELLED);
 
     room = roomRepository.save(room);
+    cancelMembershipsAfterRoomCancellation(room);
+    paymentTransactionRepository
+        .findByRoom_IdAndStatusAndTypeOrderByCreatedAtAsc(
+            room.getId(), PaymentTransactionStatus.SUCCESS, PaymentTransactionType.CHARGE)
+        .forEach(tx -> refundService.createAutomaticCompensationRefund(tx, "ROOM_CANCELLED"));
 
     return roomMapper.toResponse(room);
+  }
+
+  private void cancelMembershipsAfterRoomCancellation(Room room) {
+    for (RoomMember member : roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
+      if (member.getStatus() == MemberStatus.APPLIED
+          || member.getStatus() == MemberStatus.PENDING
+          || member.getStatus() == MemberStatus.ACTIVE) {
+        member.setStatus(MemberStatus.CANCELLED_BEFORE_PAYMENT);
+        member.setEndedAt(LocalDateTime.now());
+        roomMemberRepository.save(member);
+      }
+    }
   }
 
   @Transactional

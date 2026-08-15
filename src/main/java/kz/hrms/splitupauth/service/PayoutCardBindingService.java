@@ -39,12 +39,14 @@ public class PayoutCardBindingService {
 
   private final PayoutCardBindingRepository bindingRepository;
   private final PaymentGatewayRegistry gatewayRegistry;
-  private final SavedCardService savedCardService;
   private final PayoutService payoutService;
 
   /** Verification charge amount (KZT). Auto-refunded once the card is tokenized. */
   @Value("${app.payout.card-binding-amount:100}")
   private BigDecimal cardBindingAmount;
+
+  @Value("${app.frontend-url}")
+  private String frontendUrl;
 
   /**
    * Starts a binding: creates a verification charge on the hosted page and returns the URL the
@@ -66,8 +68,11 @@ public class PayoutCardBindingService {
                 .idempotencyKey("cardbind-" + user.getId() + "-" + UUID.randomUUID())
                 .build());
 
-    String successUrl = appendQuery(returnUrl, "binding=" + binding.getId() + "&status=success");
-    String failureUrl = appendQuery(returnUrl, "binding=" + binding.getId() + "&status=failure");
+    String trustedReturnUrl = trustedReturnUrl();
+    String successUrl =
+        appendQuery(trustedReturnUrl, "binding=" + binding.getId() + "&status=success");
+    String failureUrl =
+        appendQuery(trustedReturnUrl, "binding=" + binding.getId() + "&status=failure");
 
     GatewayChargeResponse resp;
     try {
@@ -231,9 +236,7 @@ public class PayoutCardBindingService {
   /** Save the token, register the payout method, refund the verification charge, mark SUCCESS. */
   private PayoutMethod completeBinding(
       PayoutCardBinding binding, User user, String token, String panMask) {
-    String provider = gatewayRegistry.defaultGateway().providerName();
-    savedCardService.upsertSavedCard(user, provider, token, panMask);
-    PayoutMethod method = payoutService.registerMethod(user, token, panMask);
+    PayoutMethod method = payoutService.registerVerifiedPayoutMethod(user, token, panMask);
 
     // Return the verification charge. Best-effort: a failed refund must not block the binding
     // (the amount is small and visible for manual reconciliation).
@@ -268,5 +271,16 @@ public class PayoutCardBindingService {
       return url;
     }
     return url + (url.contains("?") ? "&" : "?") + extra;
+  }
+
+  private String trustedReturnUrl() {
+    String origin = frontendUrl == null ? "" : frontendUrl.trim();
+    while (origin.endsWith("/")) {
+      origin = origin.substring(0, origin.length() - 1);
+    }
+    if (origin.isBlank()) {
+      throw new IllegalStateException("app.frontend-url must be configured for payout card binding");
+    }
+    return origin + "/payment/card-connected";
   }
 }

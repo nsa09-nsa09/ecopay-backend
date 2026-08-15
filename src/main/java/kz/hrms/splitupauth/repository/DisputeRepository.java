@@ -24,6 +24,16 @@ public interface DisputeRepository extends JpaRepository<Dispute, Long> {
 
   boolean existsByRoomMemberAndStatusIn(RoomMember roomMember, List<DisputeStatus> statuses);
 
+  @Query(
+      """
+            select count(d) > 0
+            from Dispute d
+            where d.room = :room
+              and d.status in :statuses
+            """)
+  boolean existsByRoomAndStatusIn(
+      @Param("room") Room room, @Param("statuses") List<DisputeStatus> statuses);
+
   Optional<Dispute> findByTicket(SupportTicket ticket);
 
   Optional<Dispute> findByIdAndRoomMemberAndStatusIn(
@@ -32,6 +42,16 @@ public interface DisputeRepository extends JpaRepository<Dispute, Long> {
   Page<Dispute> findByStatusInOrderByCreatedAtAsc(List<DisputeStatus> statuses, Pageable pageable);
 
   long countByOpenedByUser(User user);
+
+  @Query(
+      """
+            select count(d)
+            from Dispute d
+            where (d.openedByUser = :user or d.room.owner = :user)
+              and d.status in :statuses
+            """)
+  long countOpenFinancialDisputesForUser(
+      @Param("user") User user, @Param("statuses") List<DisputeStatus> statuses);
 
   /** Confirmed violations against a user as the room owner (resolved owner-fault disputes). */
   @Query(

@@ -48,6 +48,7 @@ public class PayoutService {
   private final SavedCardRepository savedCardRepository;
   private final NotificationService notificationService;
   private final MoneyLedgerService moneyLedgerService;
+  private final PayoutEligibilityService payoutEligibilityService;
   private final Clock clock;
   private final PlatformTransactionManager transactionManager;
 
@@ -194,6 +195,23 @@ public class PayoutService {
     if (!staleProcessing
         && payout.getNextRetryAt() != null
         && payout.getNextRetryAt().isAfter(now)) {
+      return null;
+    }
+    PayoutEligibilityService.Decision eligibility = payoutEligibilityService.evaluate(payout);
+    if (!eligibility.eligible()) {
+      payout.setFailureReason("Eligibility blocked: " + eligibility.reason());
+      payout.setNextRetryAt(now.plusMinutes(eligibility.temporary() ? 60 : 360));
+      payoutRepository.save(payout);
+      eventLogger.log(
+          "PAYOUT",
+          payout.getId(),
+          "ELIGIBILITY_BLOCKED",
+          payout.getStatus(),
+          payout.getStatus(),
+          null,
+          null,
+          payout.getIdempotencyKey(),
+          java.util.Map.of("reason", eligibility.reason()));
       return null;
     }
 
@@ -487,6 +505,32 @@ public class PayoutService {
       return already;
     }
 
+    boolean firstMethod =
+        payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(user, "ACTIVE").isEmpty();
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .user(user)
+            .providerName(FreedomPayGateway.PROVIDER_NAME)
+            .providerCardToken(providerCardToken)
+            .panMask(panMask)
+            .isDefault(firstMethod)
+            .status("ACTIVE")
+            .build();
+    return payoutMethodRepository.save(method);
+  }
+
+  @Transactional
+  public PayoutMethod registerVerifiedPayoutMethod(User user, String providerCardToken, String panMask) {
+    if (providerCardToken == null || providerCardToken.isBlank()) {
+      throw new InvalidRequestException("providerCardToken is required");
+    }
+    PayoutMethod already =
+        payoutMethodRepository
+            .findByUserAndProviderCardTokenAndStatus(user, providerCardToken, "ACTIVE")
+            .orElse(null);
+    if (already != null) {
+      return already;
+    }
     boolean firstMethod =
         payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(user, "ACTIVE").isEmpty();
     PayoutMethod method =

@@ -47,6 +47,7 @@ class PayoutServiceTest {
   @Mock private SavedCardRepository savedCardRepository;
   @Mock private NotificationService notificationService;
   @Mock private MoneyLedgerService moneyLedgerService;
+  @Mock private PayoutEligibilityService payoutEligibilityService;
   @Mock private PlatformTransactionManager transactionManager;
 
   private final Clock clock =
@@ -66,8 +67,12 @@ class PayoutServiceTest {
             savedCardRepository,
             notificationService,
             moneyLedgerService,
+            payoutEligibilityService,
             clock,
             transactionManager);
+    lenient()
+        .when(payoutEligibilityService.evaluate(any()))
+        .thenReturn(new PayoutEligibilityService.Decision(true, false, null));
   }
 
   @Test

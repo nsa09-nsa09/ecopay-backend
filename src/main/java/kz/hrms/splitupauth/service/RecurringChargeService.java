@@ -17,6 +17,7 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,9 +37,16 @@ public class RecurringChargeService {
   private final PaymentEventLogger eventLogger;
   private final PaymentService paymentService;
 
+  @Value("${app.recurring.enabled:false}")
+  private boolean recurringEnabled;
+
   /** Runs every day at 03:30 server time. */
   @Scheduled(cron = "0 30 3 * * *")
   public void runDailyAutoCharges() {
+    if (!recurringEnabled) {
+      log.info("RecurringChargeService: disabled, skipping daily run");
+      return;
+    }
     log.info("RecurringChargeService: starting daily run");
     List<RoomMember> activeMembers =
         roomMemberRepository.findByStatusAndDeletedAtIsNull(MemberStatus.ACTIVE);
@@ -54,8 +62,16 @@ public class RecurringChargeService {
 
   @Transactional
   public void tryAutoCharge(Long memberId) {
+    if (!recurringEnabled) {
+      return;
+    }
     RoomMember member = roomMemberRepository.findWithLockById(memberId).orElse(null);
     if (member == null || member.getStatus() != MemberStatus.ACTIVE) {
+      return;
+    }
+    if (member.getUser() == null
+        || member.getUser().getDeletedAt() != null
+        || member.getUser().getStatus() != kz.hrms.splitupauth.entity.UserStatus.ACTIVE) {
       return;
     }
     if (member.getRoom() == null || member.getRoom().getPeriodType() != PeriodType.MONTHLY) {

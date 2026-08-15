@@ -52,6 +52,25 @@ public class RefundTransaction {
   @Column(name = "provider_refund_id", length = 150)
   private String providerRefundId;
 
+  @Column(name = "retry_count", nullable = false)
+  @Builder.Default
+  private Integer retryCount = 0;
+
+  @Column(name = "next_retry_at")
+  private LocalDateTime nextRetryAt;
+
+  @Column(name = "claimed_at")
+  private LocalDateTime claimedAt;
+
+  @Column(name = "lease_until")
+  private LocalDateTime leaseUntil;
+
+  @Column(name = "last_error_code", length = 80)
+  private String lastErrorCode;
+
+  @Column(name = "last_error_message", columnDefinition = "TEXT")
+  private String lastErrorMessage;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 
@@ -68,6 +87,9 @@ public class RefundTransaction {
     }
     if (createdAt == null) {
       createdAt = LocalDateTime.now();
+    }
+    if (retryCount == null) {
+      retryCount = 0;
     }
   }
 

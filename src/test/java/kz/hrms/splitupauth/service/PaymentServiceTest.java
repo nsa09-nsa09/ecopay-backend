@@ -17,6 +17,7 @@ import kz.hrms.splitupauth.entity.RefundStatus;
 import kz.hrms.splitupauth.entity.RefundTransaction;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
+import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
@@ -82,7 +83,7 @@ class PaymentServiceTest {
 
   private PaymentIntent pendingIntent(BigDecimal amount) {
     User user = User.builder().id(1L).email("m@test.kz").build();
-    Room room = Room.builder().id(2L).maxMembers(2).build();
+    Room room = Room.builder().id(2L).maxMembers(2).status(RoomStatus.OPEN).build();
     RoomMember member = RoomMember.builder().id(3L).user(user).room(room).status(MemberStatus.APPLIED).build();
     return PaymentIntent.builder()
         .id(100L)
@@ -137,7 +138,7 @@ class PaymentServiceTest {
   }
 
   @Test
-  void webhookSuccessWithMismatchedAmount_isRejectedAsFailed_andDoesNotPay() {
+  void webhookSuccessWithMismatchedAmount_isCaptureAnomaly_andDoesNotPay() {
     PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
     when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
     when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -154,7 +155,7 @@ class PaymentServiceTest {
 
     paymentService.applyWebhookEvent(event);
 
-    assertEquals(PaymentIntentStatus.FAILED, intent.getStatus());
+    assertEquals(PaymentIntentStatus.CAPTURE_ANOMALY, intent.getStatus());
     assertEquals("AMOUNT_MISMATCH", intent.getFailureCode());
     // Critically: no membership advancement and no payout on a mismatched amount.
     verify(roomMemberService, never()).markMembershipAsPaid(any());

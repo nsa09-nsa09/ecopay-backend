@@ -18,7 +18,13 @@ import kz.hrms.splitupauth.entity.ServiceReview;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PayoutRepository;
+import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +44,12 @@ class UserServiceTest {
   @Mock private AvatarStorageService avatarStorageService;
   @Mock private ReputationService reputationService;
   @Mock private SlugService slugService;
+  @Mock private RoomRepository roomRepository;
+  @Mock private RoomMemberRepository roomMemberRepository;
+  @Mock private PaymentIntentRepository paymentIntentRepository;
+  @Mock private RefundTransactionRepository refundTransactionRepository;
+  @Mock private PayoutRepository payoutRepository;
+  @Mock private DisputeRepository disputeRepository;
 
   private UserService service;
 
@@ -52,7 +64,13 @@ class UserServiceTest {
             tokenRevocationService,
             avatarStorageService,
             reputationService,
-            slugService);
+            slugService,
+            roomRepository,
+            roomMemberRepository,
+            paymentIntentRepository,
+            refundTransactionRepository,
+            payoutRepository,
+            disputeRepository);
     // Real impl never returns null; the mock would, so give it a sane default.
     lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.EXCELLENT);
     lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);

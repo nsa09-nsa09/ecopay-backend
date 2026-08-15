@@ -7,10 +7,22 @@ import kz.hrms.splitupauth.dto.SlugAvailabilityDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
 import kz.hrms.splitupauth.entity.Review;
+import kz.hrms.splitupauth.entity.DisputeStatus;
+import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.PaymentIntentStatus;
+import kz.hrms.splitupauth.entity.RefundStatus;
+import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
+import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PayoutRepository;
+import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.util.SlugGenerator;
@@ -31,6 +43,12 @@ public class UserService {
   private final AvatarStorageService avatarStorageService;
   private final ReputationService reputationService;
   private final SlugService slugService;
+  private final RoomRepository roomRepository;
+  private final RoomMemberRepository roomMemberRepository;
+  private final PaymentIntentRepository paymentIntentRepository;
+  private final RefundTransactionRepository refundTransactionRepository;
+  private final PayoutRepository payoutRepository;
+  private final DisputeRepository disputeRepository;
 
   @Transactional(readOnly = true)
   public UserDto getCurrentUser(User user) {
@@ -132,6 +150,8 @@ public class UserService {
    */
   @Transactional
   public void deleteAccount(User user) {
+    ensureNoDeletionBlockers(user);
+
     // Remove their service-review (testimonial) so the carousel doesn't
     // display anonymized data.
     serviceReviewRepository.findByAuthor(user).ifPresent(serviceReviewRepository::delete);
@@ -150,5 +170,51 @@ public class UserService {
     userRepository.save(user);
 
     tokenRevocationService.revokeAllUserTokens(user);
+  }
+
+  private void ensureNoDeletionBlockers(User user) {
+    if (roomRepository.countByOwnerAndDeletedAtIsNullAndStatusIn(
+            user, List.of(RoomStatus.OPEN, RoomStatus.IN_VERIFICATION, RoomStatus.ACTIVE))
+        > 0) {
+      throw deletionConflict("owned active/open room");
+    }
+    if (roomMemberRepository.countByUserAndDeletedAtIsNullAndStatusIn(
+            user, List.of(MemberStatus.APPLIED, MemberStatus.PENDING, MemberStatus.ACTIVE))
+        > 0) {
+      throw deletionConflict("active or pending membership");
+    }
+    if (paymentIntentRepository.countByUserAndStatusIn(
+            user,
+            List.of(
+                PaymentIntentStatus.PENDING,
+                PaymentIntentStatus.UNKNOWN,
+                PaymentIntentStatus.RECONCILING,
+                PaymentIntentStatus.REFUND_REQUIRED,
+                PaymentIntentStatus.REFUND_PENDING,
+                PaymentIntentStatus.REQUIRES_REVIEW,
+                PaymentIntentStatus.CAPTURE_ANOMALY))
+        > 0) {
+      throw deletionConflict("pending or review payment");
+    }
+    if (refundTransactionRepository.countByPaymentTransaction_PaymentIntent_UserAndStatusIn(
+            user, List.of(RefundStatus.PENDING, RefundStatus.FAILED, RefundStatus.REQUIRES_REVIEW))
+        > 0) {
+      throw deletionConflict("pending refund");
+    }
+    if (payoutRepository.countByUserAndStatusIn(
+            user, List.of("PENDING", "PENDING_METHOD", "PROCESSING", "ON_HOLD", "CLAWBACK_REQUIRED"))
+        > 0) {
+      throw deletionConflict("pending payout");
+    }
+    if (disputeRepository.countOpenFinancialDisputesForUser(
+            user, List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW))
+        > 0) {
+      throw deletionConflict("open dispute");
+    }
+  }
+
+  private ResourceConflictException deletionConflict(String reason) {
+    return new ResourceConflictException(
+        "ACCOUNT_DELETION_BLOCKED", "Account has unresolved obligations: " + reason);
   }
 }

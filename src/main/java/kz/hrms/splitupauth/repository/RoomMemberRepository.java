@@ -38,6 +38,8 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
 
   long countByUserAndDeletedAtIsNull(User user);
 
+  long countByUserAndDeletedAtIsNullAndStatusIn(User user, List<MemberStatus> statuses);
+
   Optional<RoomMember> findByRoomAndUserAndStatusIn(
       Room room, User user, List<MemberStatus> statuses);
 

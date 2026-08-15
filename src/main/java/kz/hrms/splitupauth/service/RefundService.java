@@ -39,7 +39,7 @@ public class RefundService {
   private final MoneyLedgerService moneyLedgerService;
 
   /**
-   * User-initiated refund request — owner of the original payment can request a (partial) refund.
+   * User-initiated refund request вЂ” owner of the original payment can request a (partial) refund.
    * Calls the gateway synchronously.
    */
   @Transactional
@@ -95,43 +95,13 @@ public class RefundService {
         refund.getIdempotencyKey(),
         java.util.Map.of("amount", refund.getAmount().toPlainString()));
 
-    try {
-      GatewayRefundResponse resp =
-          gatewayRegistry
-              .defaultGateway()
-              .refund(
-                  GatewayRefundRequest.builder()
-                      .refundId(refund.getId())
-                      .idempotencyKey(refund.getIdempotencyKey())
-                      .externalPaymentId(tx.getExternalTransactionId())
-                      .amount(refund.getAmount())
-                      .currency(refund.getCurrency())
-                      .reason(refund.getReason())
-                      .build());
-
-      if (resp.isSuccess()) {
-        refund.setStatus(RefundStatus.SUCCESS);
-        refund.setProviderRefundId(resp.getExternalRefundId());
-        applyRefundToParentTransaction(refund);
-      } else if (resp.isPending()) {
-        refund.setProviderRefundId(resp.getExternalRefundId());
-        // Stays PENDING; webhook or admin will finalize.
-      } else {
-        refund.setStatus(RefundStatus.FAILED);
-      }
-      refundTransactionRepository.save(refund);
-    } catch (Exception ex) {
-      log.error("Refund call failed for {}: {}", refund.getId(), ex.getMessage());
-      // Leave PENDING — admin can retry.
-    }
-
     return map(refund);
   }
 
   /**
    * Apply an async refund result callback from the provider. Finalizes a PENDING refund (that the
    * gateway accepted but hadn't settled) by its provider refund id. Idempotent: ignores unknown or
-   * already-terminal refunds. Prod-only — the dev mock settles refunds synchronously and never
+   * already-terminal refunds. Prod-only вЂ” the dev mock settles refunds synchronously and never
    * sends this callback.
    */
   @Transactional
@@ -149,7 +119,7 @@ public class RefundService {
           true);
     }
     if (refund.getStatus() != RefundStatus.PENDING) {
-      return; // terminal — idempotent no-op
+      return; // terminal вЂ” idempotent no-op
     }
     if (success) {
       refund.setStatus(RefundStatus.SUCCESS);
@@ -445,7 +415,7 @@ public class RefundService {
     refundTransactionRepository.save(refund);
 
     // Mark the parent transaction refunded (full/partial) and reverse the owner payout
-    // if it hasn't been paid out yet — centralized with the user/webhook refund paths.
+    // if it hasn't been paid out yet вЂ” centralized with the user/webhook refund paths.
     applyRefundToParentTransaction(refund);
 
     adminActionLogRepository.save(
@@ -470,8 +440,8 @@ public class RefundService {
       notificationService.notify(
           recipient,
           NotificationType.REFUND_ISSUED,
-          "Возврат средств",
-          "Возврат на сумму " + refund.getAmount() + " " + refund.getCurrency() + " был выполнен.",
+          "Р’РѕР·РІСЂР°С‚ СЃСЂРµРґСЃС‚РІ",
+          "Р’РѕР·РІСЂР°С‚ РЅР° СЃСѓРјРјСѓ " + refund.getAmount() + " " + refund.getCurrency() + " Р±С‹Р» РІС‹РїРѕР»РЅРµРЅ.",
           "/payment/refund",
           java.util.Map.of("refundId", refund.getId()));
     }
