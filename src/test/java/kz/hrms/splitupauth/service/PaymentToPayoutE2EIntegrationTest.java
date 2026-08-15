@@ -345,6 +345,8 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     PaymentIntentResponse second = pay(member, guest, "same-key-" + member.getId());
 
     assertEquals(first.getId(), second.getId());
+    assertEquals(first.getAmount(), second.getAmount());
+    assertEquals(first.getCurrency(), second.getCurrency());
     assertEquals(PaymentIntentStatus.SUCCESS, second.getStatus());
     assertEquals(1, mockGateway.chargeAttempts());
     Long intentRows =
@@ -369,15 +371,57 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
                 + "WHERE payment_intent_id = ? AND type = 'CHARGE' AND status = 'SUCCESS'",
             Long.class,
             first.getId());
-    Long ledgerRows =
+    Long providerChargeRows =
         jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM money_ledger_entries WHERE payment_intent_id = ?",
+            "SELECT COUNT(*) FROM payment_transactions "
+                + "WHERE external_transaction_id = ? AND type = 'CHARGE' AND status = 'SUCCESS'",
+            Long.class,
+            first.getExternalPaymentId());
+    Long captureLedgerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM money_ledger_entries "
+                + "WHERE payment_intent_id = ? AND entry_type = 'PAYMENT_CAPTURE' "
+                + "AND idempotency_key = ?",
+            Long.class,
+            first.getId(),
+            "capture-intent-" + first.getId());
+    Long platformFeeLedgerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM money_ledger_entries "
+                + "WHERE payment_intent_id = ? AND entry_type = 'PLATFORM_FEE' "
+                + "AND idempotency_key = ?",
+            Long.class,
+            first.getId(),
+            "platform-fee-intent-" + first.getId());
+    Long ownerHoldLedgerRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM money_ledger_entries "
+                + "WHERE payment_intent_id = ? AND entry_type = 'OWNER_HOLD' "
+                + "AND idempotency_key = ?",
+            Long.class,
+            first.getId(),
+            "owner-hold-intent-" + first.getId());
+    Long payoutRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM payouts WHERE triggering_payment_intent_id = ?",
+            Long.class,
+            first.getId());
+    Long refundRows =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM refund_transactions rt "
+                + "JOIN payment_transactions pt ON pt.id = rt.payment_transaction_id "
+                + "WHERE pt.payment_intent_id = ?",
             Long.class,
             first.getId());
     assertEquals(1L, reservationRows);
     assertEquals(1L, memberReservationRows);
     assertEquals(1L, chargeRows);
-    assertEquals(2L, ledgerRows);
+    assertEquals(1L, providerChargeRows);
+    assertEquals(1L, captureLedgerRows);
+    assertEquals(1L, platformFeeLedgerRows);
+    assertEquals(1L, ownerHoldLedgerRows);
+    assertEquals(1L, payoutRows);
+    assertEquals(0L, refundRows);
   }
 
   @Test
