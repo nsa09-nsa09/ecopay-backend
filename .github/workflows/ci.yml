@@ -84,16 +84,65 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /opt/ecopay
-            export ECOPAY_BACKEND_IMAGE=${{ env.IMAGE }}:${{ github.sha }}
-            docker compose pull ${{ steps.svc.outputs.name }}
-            docker compose up -d ${{ steps.svc.outputs.name }}
+
+            SERVICE="${{ steps.svc.outputs.name }}"
+            IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
+            OVERRIDE="$(mktemp)"
+            trap 'rm -f "$OVERRIDE"' EXIT
+
+            cat > "$OVERRIDE" <<EOF
+            services:
+              ${SERVICE}:
+                image: ${IMAGE}
+            EOF
+
+            echo "Resolved compose images:"
+            docker compose -f docker-compose.yml -f "$OVERRIDE" config --images
+
+            RESOLVED_IMAGE="$(
+              docker compose -f docker-compose.yml -f "$OVERRIDE" config |
+                awk -v service="$SERVICE" '
+                  $0 ~ "^  " service ":" { in_service = 1; next }
+                  in_service && $0 ~ "^  [A-Za-z0-9_.-]+:" { in_service = 0 }
+                  in_service && $1 == "image:" { print $2; exit }
+                '
+            )"
+            if [ "$RESOLVED_IMAGE" != "$IMAGE" ]; then
+              echo "Target service image mismatch: expected $IMAGE, got ${RESOLVED_IMAGE:-<empty>}" >&2
+              exit 1
+            fi
+
+            docker compose -f docker-compose.yml -f "$OVERRIDE" pull "$SERVICE"
+            docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --no-deps "$SERVICE"
+
+            CID="$(docker compose -f docker-compose.yml -f "$OVERRIDE" ps -q "$SERVICE")"
+            if [ -z "$CID" ]; then
+              echo "No running container id found for $SERVICE" >&2
+              docker compose -f docker-compose.yml -f "$OVERRIDE" ps "$SERVICE" || true
+              exit 1
+            fi
+
+            RUNNING_IMAGE="$(docker inspect -f '{{.Config.Image}}' "$CID")"
+            if [ "$RUNNING_IMAGE" != "$IMAGE" ]; then
+              echo "Running container image mismatch: expected $IMAGE, got $RUNNING_IMAGE" >&2
+              docker compose -f docker-compose.yml -f "$OVERRIDE" ps "$SERVICE" || true
+              docker inspect -f 'status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" || true
+              exit 1
+            fi
+
             for i in $(seq 1 30); do
-              if curl -fsS http://127.0.0.1:8080/actuator/health/readiness >/dev/null; then
+              HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || true)"
+              echo "Readiness attempt $i/30; docker health=$HEALTH"
+              if docker compose -f docker-compose.yml -f "$OVERRIDE" exec -T "$SERVICE" \
+                   curl -fsS http://127.0.0.1:8080/actuator/health/readiness >/dev/null; then
                 docker image prune -f
                 exit 0
               fi
               sleep 5
             done
-            docker compose logs --tail=200 ${{ steps.svc.outputs.name }} | sed -E 's/(Authorization: Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g; s/(pg_sig=)[^&[:space:]]+/\1[REDACTED]/g; s/(JWT_SECRET|FREEDOMPAY_SECRET_KEY|FREEDOMPAY_PAYOUT_SECRET_KEY)=[^[:space:]]+/\1=[REDACTED]/g'
+            docker compose -f docker-compose.yml -f "$OVERRIDE" ps "$SERVICE" || true
+            docker inspect -f 'status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" || true
+            docker compose -f docker-compose.yml -f "$OVERRIDE" logs --tail=200 "$SERVICE" | sed -E 's/(Authorization: Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g; s/(pg_sig=)[^&[:space:]]+/\1[REDACTED]/g; s/(JWT_SECRET|FREEDOMPAY_SECRET_KEY|FREEDOMPAY_PAYOUT_SECRET_KEY)=[^[:space:]]+/\1=[REDACTED]/g'
             exit 1
