@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,6 +16,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
@@ -73,7 +77,9 @@ class RoomServiceTest {
             paymentTransactionRepository,
             refundService);
 
-    when(roomRepository.saveAll(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(roomRepository.saveAll(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -123,6 +129,22 @@ class RoomServiceTest {
                   rooms.forEach(savedRooms::add);
                   return savedRooms.size() == 1 && savedRooms.contains(room);
                 }));
+  }
+
+  @Test
+  void getRoom_usesPlainReadLookupNotPessimisticWriteLock() {
+    Room room = room(1191541224531623937L, LocalDateTime.now().plusDays(1));
+    when(roomRepository.findByIdAndDeletedAtIsNull(room.getId())).thenReturn(Optional.of(room));
+    when(roomMapper.toResponse(room)).thenReturn(RoomResponse.builder().maxMembers(5).build());
+    when(reviewRepository.aggregateRatingByRecipientIds(List.of(room.getOwner().getId())))
+        .thenReturn(List.of());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(eq(room), any()))
+        .thenReturn(0L);
+
+    roomService.getRoom(room.getId());
+
+    verify(roomRepository).findByIdAndDeletedAtIsNull(room.getId());
+    verify(roomRepository, never()).findByIdForUpdate(room.getId());
   }
 
   private Room room(Long roomId, LocalDateTime startDate) {

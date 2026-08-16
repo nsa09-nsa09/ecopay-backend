@@ -41,6 +41,8 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
   Page<Room> findByDeletedAtIsNullAndStatusAndRoomTypeAndCategory_Id(
       RoomStatus status, RoomType roomType, Long categoryId, Pageable pageable);
 
+  Optional<Room> findByIdAndDeletedAtIsNull(Long id);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
       """

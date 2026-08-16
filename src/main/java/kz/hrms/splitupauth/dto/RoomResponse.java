@@ -59,6 +59,24 @@ public class RoomResponse {
   /** Total a joining member pays = pricePerMember + pricePerMemberCommission. */
   private BigDecimal pricePerMemberTotal;
 
+  /** KZT amount the owner receives for one joining member. */
+  private BigDecimal shareKzt;
+
+  /** EcoPay commission in the settlement currency. */
+  private BigDecimal commissionKzt;
+
+  /** Total charged to the member in the settlement currency. */
+  private BigDecimal payableTotalKzt;
+
+  /** Currency used by the payment gateway for this room's member checkout. */
+  private String settlementCurrency;
+
+  /** Source per-member tariff share before KZT settlement conversion. */
+  private BigDecimal originalTariffPrice;
+
+  private String originalTariffCurrency;
+  private BigDecimal fxRateSnapshot;
+
   private String currency;
 
   /** Snapshot of the price→KZT rate used at room creation (1 for KZT). */

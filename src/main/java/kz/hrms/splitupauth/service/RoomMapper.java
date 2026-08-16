@@ -52,17 +52,30 @@ public class RoomMapper {
   }
 
   private BigDecimal memberCommission(Room room) {
-    BigDecimal share = effectiveShare(room);
+    BigDecimal share = effectiveShareKzt(room);
     if (commissionCalculator == null || share == null) {
       return null;
     }
     return commissionCalculator.commissionFor(share);
   }
 
+  private BigDecimal effectiveShareKzt(Room room) {
+    if (room.getPricePerMemberKzt() != null && room.getPricePerMemberKzt().signum() > 0) {
+      return room.getPricePerMemberKzt();
+    }
+    BigDecimal share = effectiveShare(room);
+    BigDecimal fx = room.getFxRateToKzt();
+    if (share == null || fx == null || fx.signum() <= 0) {
+      return share;
+    }
+    return share.multiply(fx).setScale(2, RoundingMode.HALF_UP);
+  }
+
   public RoomResponse toResponse(Room room) {
     BigDecimal commission = memberCommission(room);
-    BigDecimal share = effectiveShare(room);
-    BigDecimal total = (commission != null && share != null) ? share.add(commission) : null;
+    BigDecimal sourceShare = effectiveShare(room);
+    BigDecimal shareKzt = effectiveShareKzt(room);
+    BigDecimal total = (commission != null && shareKzt != null) ? shareKzt.add(commission) : null;
     return RoomResponse.builder()
         .id(room.getId())
         .ownerUserId(room.getOwner().getId())
@@ -87,6 +100,13 @@ public class RoomMapper {
         .pricePerMember(room.getPricePerMember())
         .pricePerMemberCommission(commission)
         .pricePerMemberTotal(total)
+        .shareKzt(shareKzt)
+        .commissionKzt(commission)
+        .payableTotalKzt(total)
+        .settlementCurrency("KZT")
+        .originalTariffPrice(sourceShare)
+        .originalTariffCurrency(room.getCurrency())
+        .fxRateSnapshot(room.getFxRateToKzt())
         .currency(room.getCurrency())
         .fxRateToKzt(room.getFxRateToKzt())
         .priceTotalKzt(room.getPriceTotalKzt())

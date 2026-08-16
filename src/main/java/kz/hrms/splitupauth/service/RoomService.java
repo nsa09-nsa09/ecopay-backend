@@ -336,7 +336,7 @@ public class RoomService {
   public RoomResponse getRoom(Long roomId) {
     Room room =
         roomRepository
-            .findByIdForUpdate(roomId)
+            .findByIdAndDeletedAtIsNull(roomId)
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
     RoomResponse response = roomMapper.toResponse(room);
