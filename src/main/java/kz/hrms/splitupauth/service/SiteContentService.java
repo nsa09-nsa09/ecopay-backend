@@ -15,6 +15,7 @@ import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.SiteContentRepository;
 import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,13 +27,22 @@ public class SiteContentService {
   private final AdminActionLogRepository adminActionLogRepository;
   private final ObjectMapper objectMapper;
 
+  @Value("${app.brand.support-email:}")
+  private String supportEmail;
+
   @Transactional(readOnly = true)
   public SiteContentDto getAbout() {
     SiteContent content =
         repository
             .findById(SiteContent.SINGLETON_ID)
             .orElseThrow(() -> new ResourceNotFoundException("Site content not initialized"));
-    return SiteContentDto.from(content);
+    SiteContentDto dto = SiteContentDto.from(content);
+    if ((dto.getContactEmail() == null || dto.getContactEmail().isBlank())
+        && supportEmail != null
+        && !supportEmail.isBlank()) {
+      dto.setContactEmail(supportEmail);
+    }
+    return dto;
   }
 
   @Transactional

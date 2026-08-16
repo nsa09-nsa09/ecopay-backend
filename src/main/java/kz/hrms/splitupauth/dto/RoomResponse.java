@@ -88,6 +88,14 @@ public class RoomResponse {
   /** Snapshot of price_per_member expressed in KZT at creation. */
   private BigDecimal pricePerMemberKzt;
 
+  private BigDecimal shareKzt;
+  private BigDecimal commissionKzt;
+  private BigDecimal payableTotalKzt;
+  private String settlementCurrency;
+  private BigDecimal fxRateSnapshot;
+  private BigDecimal originalTariffPrice;
+  private String originalTariffCurrency;
+
   private PeriodType periodType;
   private LocalDateTime startDate;
   private String cancellationPolicy;

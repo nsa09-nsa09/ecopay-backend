@@ -132,19 +132,23 @@ class RoomServiceTest {
   }
 
   @Test
-  void getRoom_usesPlainReadLookupNotPessimisticWriteLock() {
-    Room room = room(1191541224531623937L, LocalDateTime.now().plusDays(1));
-    when(roomRepository.findByIdAndDeletedAtIsNull(room.getId())).thenReturn(Optional.of(room));
-    when(roomMapper.toResponse(room)).thenReturn(RoomResponse.builder().maxMembers(5).build());
+  void getRoomUsesPlainReadWithoutPessimisticLock() {
+    Room room = room(21L, LocalDateTime.now().plusDays(1));
+    RoomResponse response = RoomResponse.builder().maxMembers(3).build();
+
+    when(roomRepository.findById(21L)).thenReturn(Optional.of(room));
+    when(roomMapper.toResponse(room)).thenReturn(response);
     when(reviewRepository.aggregateRatingByRecipientIds(List.of(room.getOwner().getId())))
         .thenReturn(List.of());
     when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(eq(room), any()))
-        .thenReturn(0L);
+        .thenReturn(1L);
 
-    roomService.getRoom(room.getId());
+    RoomResponse result = roomService.getRoom(21L);
 
-    verify(roomRepository).findByIdAndDeletedAtIsNull(room.getId());
-    verify(roomRepository, never()).findByIdForUpdate(room.getId());
+    assertEquals(2, result.getFilledSeats());
+    assertEquals(1, result.getFreeSeats());
+    verify(roomRepository).findById(21L);
+    verify(roomRepository, never()).findByIdForUpdate(21L);
   }
 
   private Room room(Long roomId, LocalDateTime startDate) {

@@ -66,6 +66,10 @@ public class ProductionStartupGuard implements ApplicationRunner {
         violations,
         "refresh cookie secure flag is disabled");
     reject(
+        "true".equalsIgnoreCase(prop("app.auth.refresh-token-body-enabled")),
+        violations,
+        "refresh token body mode is enabled");
+    reject(
         "true".equalsIgnoreCase(prop("app.recurring.enabled")),
         violations,
         "automatic recurring charges are enabled");

@@ -79,6 +79,14 @@ class ProductionStartupGuardTest {
   }
 
   @Test
+  void refreshTokenBodyModeFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.auth.refresh-token-body-enabled", "true");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
   void missingObjectStorageFailsProductionStartup() {
     MockEnvironment environment = validEnvironment();
     environment.setProperty("app.s3.endpoint", "");

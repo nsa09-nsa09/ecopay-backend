@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
@@ -14,6 +15,7 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class AuthResponse {
   private String accessToken;
+  @JsonIgnore
   private String refreshToken;
   private UserDto user;
 
