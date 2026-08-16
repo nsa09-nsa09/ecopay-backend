@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,9 +24,12 @@ import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.ServiceReview;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
+import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
+import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +42,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ServiceReviewServiceTest {
 
   @Mock private ServiceReviewRepository repository;
+  @Mock private PaymentTransactionRepository paymentTransactionRepository;
+  @Mock private RoomMemberRepository roomMemberRepository;
   @Mock private AdminActionLogRepository adminActionLogRepository;
   @Mock private HttpServletRequest http;
 
@@ -45,29 +51,15 @@ class ServiceReviewServiceTest {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
-  private User author(long id) {
-    return User.builder()
-        .id(id)
-        .email("u" + id + "@e.kz")
-        .displayName("User " + id)
-        .publicId("publ" + id)
-        .role(Role.USER)
-        .status(UserStatus.ACTIVE)
-        .build();
-  }
-
-  private User admin() {
-    return User.builder()
-        .id(99L)
-        .email("a@e.kz")
-        .role(Role.ADMIN)
-        .status(UserStatus.ACTIVE)
-        .build();
-  }
-
   @BeforeEach
   void setUp() {
-    service = new ServiceReviewService(repository, adminActionLogRepository, objectMapper);
+    service =
+        new ServiceReviewService(
+            repository,
+            paymentTransactionRepository,
+            roomMemberRepository,
+            adminActionLogRepository,
+            objectMapper);
   }
 
   @Test
@@ -84,7 +76,7 @@ class ServiceReviewServiceTest {
 
     CreateServiceReviewRequest req = new CreateServiceReviewRequest();
     req.setRating(5);
-    req.setText("Отличный <script>alert('xss')</script> сервис!");
+    req.setText("Great <script>alert('xss')</script> service!");
 
     ServiceReviewDto dto = service.createMine(user, req);
 
@@ -111,10 +103,17 @@ class ServiceReviewServiceTest {
   }
 
   @Test
-  void updateMine_clearsFeatured() {
+  void updateMine_clearsFeaturedAndHomepagePosition() {
     User user = author(3L);
     ServiceReview existing =
-        ServiceReview.builder().id(20L).author(user).rating(4).text("ok").featured(true).build();
+        ServiceReview.builder()
+            .id(20L)
+            .author(user)
+            .rating(4)
+            .text("ok")
+            .featured(true)
+            .featuredPosition(1)
+            .build();
     when(repository.findByAuthor(user)).thenReturn(Optional.of(existing));
     when(repository.save(any(ServiceReview.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -126,57 +125,78 @@ class ServiceReviewServiceTest {
 
     assertEquals(3, dto.getRating());
     assertFalse(dto.getFeatured(), "editing must reset featured for re-moderation");
+    assertEquals(null, dto.getHomepagePosition());
   }
 
   @Test
-  void setFeatured_logsCorrectActionType_andTogglesFlag() {
+  void setFeatured_requiresVerifiedExperience_andHomepageSlot() {
     User adminUser = admin();
+    User reviewer = author(4L);
     ServiceReview existing =
         ServiceReview.builder()
             .id(33L)
-            .author(author(4L))
+            .author(reviewer)
             .rating(5)
             .text("nice")
             .featured(false)
             .build();
     when(repository.findById(33L)).thenReturn(Optional.of(existing));
+    when(paymentTransactionRepository.existsByPaymentIntent_User_IdAndTypeAndStatus(
+            eq(reviewer.getId()), any(), any()))
+        .thenReturn(true);
+    when(repository.findByFeaturedPosition(2)).thenReturn(Optional.empty());
     when(repository.save(any(ServiceReview.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    AdminServiceReviewDto dto = service.setFeatured(33L, true, adminUser, http);
+    AdminServiceReviewDto dto = service.setFeatured(33L, true, 2, adminUser, http);
 
     assertEquals(true, dto.getFeatured());
+    assertEquals(2, dto.getHomepagePosition());
     ArgumentCaptor<AdminActionLog> logCap = ArgumentCaptor.forClass(AdminActionLog.class);
     verify(adminActionLogRepository).save(logCap.capture());
     assertEquals(AdminActionType.TESTIMONIAL_FEATURED, logCap.getValue().getActionType());
 
-    // Toggle off
-    service.setFeatured(33L, false, adminUser, http);
+    service.setFeatured(33L, false, null, adminUser, http);
     verify(adminActionLogRepository, org.mockito.Mockito.times(2)).save(logCap.capture());
     assertEquals(AdminActionType.TESTIMONIAL_UNFEATURED, logCap.getValue().getActionType());
   }
 
   @Test
-  void adminUpdate_logs_TESTIMONIAL_EDITED() {
+  void setFeatured_replacesExistingHomepageSlotOccupant() {
     User adminUser = admin();
-    ServiceReview existing =
+    User reviewer = author(7L);
+    ServiceReview target =
+        ServiceReview.builder().id(70L).author(reviewer).rating(5).text("target").build();
+    ServiceReview occupant =
         ServiceReview.builder()
-            .id(50L)
-            .author(author(5L))
-            .rating(4)
-            .text("orig")
+            .id(71L)
+            .author(author(8L))
+            .rating(5)
+            .text("old")
             .featured(true)
+            .featuredPosition(3)
             .build();
-    when(repository.findById(50L)).thenReturn(Optional.of(existing));
+    when(repository.findById(70L)).thenReturn(Optional.of(target));
+    when(paymentTransactionRepository.existsByPaymentIntent_User_IdAndTypeAndStatus(
+            eq(reviewer.getId()), any(), any()))
+        .thenReturn(true);
+    when(repository.findByFeaturedPosition(3)).thenReturn(Optional.of(occupant));
     when(repository.save(any(ServiceReview.class))).thenAnswer(inv -> inv.getArgument(0));
 
+    service.setFeatured(70L, true, 3, adminUser, http);
+
+    assertFalse(occupant.getFeatured());
+    assertEquals(null, occupant.getFeaturedPosition());
+    verify(adminActionLogRepository, org.mockito.Mockito.times(2)).save(any(AdminActionLog.class));
+  }
+
+  @Test
+  void adminUpdate_rejectsChangingOriginalText() {
+    User adminUser = admin();
     AdminUpdateServiceReviewRequest req = new AdminUpdateServiceReviewRequest();
     req.setText("corrected typo");
 
-    service.adminUpdate(50L, req, adminUser, http);
-
-    ArgumentCaptor<AdminActionLog> logCap = ArgumentCaptor.forClass(AdminActionLog.class);
-    verify(adminActionLogRepository).save(logCap.capture());
-    assertEquals(AdminActionType.TESTIMONIAL_EDITED, logCap.getValue().getActionType());
+    assertThrows(InvalidRequestException.class, () -> service.adminUpdate(50L, req, adminUser, http));
+    verify(repository, never()).save(any());
   }
 
   @Test
@@ -204,6 +224,26 @@ class ServiceReviewServiceTest {
   void setFeatured_404WhenMissing() {
     when(repository.findById(404L)).thenReturn(Optional.empty());
     assertThrows(
-        ResourceNotFoundException.class, () -> service.setFeatured(404L, true, admin(), http));
+        ResourceNotFoundException.class, () -> service.setFeatured(404L, true, 1, admin(), http));
+  }
+
+  private User author(long id) {
+    return User.builder()
+        .id(id)
+        .email("u" + id + "@e.kz")
+        .displayName("User " + id)
+        .publicId("publ" + id)
+        .role(Role.USER)
+        .status(UserStatus.ACTIVE)
+        .build();
+  }
+
+  private User admin() {
+    return User.builder()
+        .id(99L)
+        .email("a@e.kz")
+        .role(Role.ADMIN)
+        .status(UserStatus.ACTIVE)
+        .build();
   }
 }

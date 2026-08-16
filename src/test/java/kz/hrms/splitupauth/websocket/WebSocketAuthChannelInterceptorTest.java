@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
@@ -12,12 +13,15 @@ import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
+import kz.hrms.splitupauth.entity.SupportTicket;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
+import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +40,8 @@ class WebSocketAuthChannelInterceptorTest {
   @Mock private SupportTicketRepository supportTicketRepository;
   @Mock private RoomRepository roomRepository;
   @Mock private RoomMemberRepository roomMemberRepository;
+  @Mock private JwtUtil jwtUtil;
+  @Mock private UserRepository userRepository;
 
   private WebSocketAuthChannelInterceptor interceptor;
 
@@ -43,16 +49,26 @@ class WebSocketAuthChannelInterceptorTest {
   void setUp() {
     interceptor =
         new WebSocketAuthChannelInterceptor(
-            supportTicketRepository, roomRepository, roomMemberRepository);
+            supportTicketRepository, roomRepository, roomMemberRepository, jwtUtil, userRepository);
   }
 
   private User user(long id, Role role) {
     return User.builder()
         .id(id)
         .email("u" + id + "@e.kz")
+        .publicId("pub-" + id)
         .role(role)
         .status(UserStatus.ACTIVE)
         .build();
+  }
+
+  private Message<byte[]> connect(String authorization) {
+    StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
+    if (authorization != null) {
+      accessor.addNativeHeader("Authorization", authorization);
+    }
+    accessor.setLeaveMutable(true);
+    return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
   }
 
   private Message<byte[]> subscribe(User principal, String destination) {
@@ -63,6 +79,37 @@ class WebSocketAuthChannelInterceptorTest {
             principal, null, List.of(new SimpleGrantedAuthority(principal.getRole().name()))));
     accessor.setLeaveMutable(true);
     return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+  }
+
+  @Test
+  void connect_withValidBearer_setsAuthenticatedPrincipal() {
+    User u = user(42L, Role.USER);
+    when(jwtUtil.extractUsername("jwt")).thenReturn("pub-42");
+    when(jwtUtil.validateToken("jwt", "pub-42")).thenReturn(true);
+    when(userRepository.findByPublicId("pub-42")).thenReturn(Optional.of(u));
+
+    Message<?> result = interceptor.preSend(connect("Bearer jwt"), null);
+
+    StompHeaderAccessor accessor =
+        org.springframework.messaging.support.MessageHeaderAccessor.getAccessor(
+            result, StompHeaderAccessor.class);
+    org.junit.jupiter.api.Assertions.assertNotNull(accessor.getUser());
+  }
+
+  @Test
+  void connect_withoutAuthorization_isRejected() {
+    assertThrows(
+        ForbiddenOperationException.class, () -> interceptor.preSend(connect(null), null));
+  }
+
+  @Test
+  void connect_withInvalidJwt_isRejected() {
+    when(jwtUtil.extractUsername("bad")).thenReturn("pub-42");
+    when(jwtUtil.validateToken("bad", "pub-42")).thenReturn(false);
+
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> interceptor.preSend(connect("Bearer bad"), null));
   }
 
   @Test
@@ -86,6 +133,14 @@ class WebSocketAuthChannelInterceptorTest {
     assertThrows(
         ForbiddenOperationException.class,
         () -> interceptor.preSend(subscribe(admin, "/topic/users/42/account"), null));
+  }
+
+  @Test
+  void subscription_toForeignNotificationsTopic_isRejected() {
+    User u = user(42L, Role.USER);
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> interceptor.preSend(subscribe(u, "/topic/users/43/notifications"), null));
   }
 
   @Test
@@ -150,5 +205,27 @@ class WebSocketAuthChannelInterceptorTest {
     assertThrows(
         ForbiddenOperationException.class,
         () -> interceptor.preSend(subscribe(applied, "/topic/rooms/100/chat"), null));
+  }
+
+  @Test
+  void subscription_supportTicket_byOwner_isAllowed() {
+    User owner = user(55L, Role.USER);
+    when(supportTicketRepository.findById(10L))
+        .thenReturn(Optional.of(SupportTicket.builder().id(10L).user(owner).build()));
+
+    assertDoesNotThrow(
+        () -> interceptor.preSend(subscribe(owner, "/topic/support-tickets/10"), null));
+  }
+
+  @Test
+  void subscription_supportTicket_byUnrelatedUser_isRejected() {
+    User owner = user(55L, Role.USER);
+    User other = user(56L, Role.USER);
+    when(supportTicketRepository.findById(10L))
+        .thenReturn(Optional.of(SupportTicket.builder().id(10L).user(owner).build()));
+
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> interceptor.preSend(subscribe(other, "/topic/support-tickets/10"), null));
   }
 }

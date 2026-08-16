@@ -18,6 +18,8 @@ public class ServiceReviewDto {
   private Integer rating;
   private String text;
   private Boolean featured;
+  private Integer homepagePosition;
+  private Boolean verifiedExperience;
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
 }

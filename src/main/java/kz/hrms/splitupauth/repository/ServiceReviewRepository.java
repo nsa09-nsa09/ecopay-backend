@@ -20,6 +20,12 @@ public interface ServiceReviewRepository extends JpaRepository<ServiceReview, Lo
 
   List<ServiceReview> findTop30ByFeaturedTrueOrderByCreatedAtDesc();
 
+  List<ServiceReview> findByFeaturedTrueAndFeaturedPositionIsNotNullOrderByFeaturedPositionAsc();
+
+  Optional<ServiceReview> findByFeaturedPosition(Integer featuredPosition);
+
+  long countByFeaturedTrueAndFeaturedPositionIsNotNull();
+
   Page<ServiceReview> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
   Page<ServiceReview> findByFeaturedOrderByCreatedAtDesc(boolean featured, Pageable pageable);

@@ -58,10 +58,17 @@ public class ProductionStartupGuard implements ApplicationRunner {
     validateFreedomPayUrls(violations);
     validateCors(violations);
     validateSms(violations);
+    validateSmtp(violations);
+    validateObjectStorage(violations);
+    validateBrandAndLegalReadiness(violations);
     reject(
         !"true".equalsIgnoreCase(prop("app.auth.refresh-cookie-secure")),
         violations,
         "refresh cookie secure flag is disabled");
+    reject(
+        "true".equalsIgnoreCase(prop("app.recurring.enabled")),
+        violations,
+        "automatic recurring charges are enabled");
     reject(
         !"false".equalsIgnoreCase(prop("springdoc.api-docs.enabled"))
             || !"false".equalsIgnoreCase(prop("springdoc.swagger-ui.enabled")),
@@ -144,6 +151,49 @@ public class ProductionStartupGuard implements ApplicationRunner {
     reject(!prop("app.phone.dev-bypass-code").isBlank(), violations, "dev phone bypass is enabled");
   }
 
+  private void validateSmtp(List<String> violations) {
+    rejectBlank("spring.mail.host", violations);
+    reject(
+        isPrivateOrLocalHost(hostOf("//" + prop("spring.mail.host"))),
+        violations,
+        "SMTP host is local/private");
+    rejectBlank("spring.mail.username", violations);
+    rejectBlank("spring.mail.password", violations);
+    rejectBlank("spring.mail.properties.mail.smtp.from", violations);
+  }
+
+  private void validateObjectStorage(List<String> violations) {
+    rejectBlank("app.s3.region", violations);
+    rejectBlank("app.s3.bucket", violations);
+    rejectBlank("app.s3.endpoint", violations);
+    reject(
+        !isHttpsPublicUrl(prop("app.s3.endpoint")),
+        violations,
+        "object storage endpoint is not HTTPS public URL");
+    rejectBlank("app.s3.access-key", violations);
+    rejectBlank("app.s3.secret-key", violations);
+  }
+
+  private void validateBrandAndLegalReadiness(List<String> violations) {
+    reject(
+        !isPlausibleEmail(prop("app.brand.support-email")),
+        violations,
+        "support email is missing or invalid");
+    reject(
+        hasPlaceholderValue(prop("app.production.legal-entity-name")),
+        violations,
+        "legal entity name is missing or placeholder");
+    reject(hasPlaceholderValue(prop("app.production.legal-bin")), violations, "legal BIN is missing");
+    reject(
+        hasPlaceholderValue(prop("app.production.legal-address")),
+        violations,
+        "legal address is missing or placeholder");
+    reject(
+        !"true".equalsIgnoreCase(prop("app.production.legal-reviewed")),
+        violations,
+        "terms/privacy legal review is not confirmed");
+  }
+
   private void rejectUnsafeCallback(String url, List<String> violations, String label) {
     reject(!isHttpsPublicUrl(url), violations, label + " is not HTTPS public URL");
     reject(isPrivateOrLocalHost(hostOf(url)), violations, label + " contains local/private host");
@@ -182,6 +232,29 @@ public class ProductionStartupGuard implements ApplicationRunner {
         || normalized.contains("change-me")
         || normalized.contains("changeme")
         || normalized.equals("secret");
+  }
+
+  private static boolean hasPlaceholderValue(String value) {
+    if (isBlankOrExample(value)) {
+      return true;
+    }
+    String normalized = value.trim().toLowerCase(Locale.ROOT);
+    return normalized.contains("[")
+        || normalized.contains("]")
+        || normalized.contains("___")
+        || normalized.contains("todo")
+        || normalized.contains("draft")
+        || normalized.contains("template")
+        || normalized.contains("placeholder")
+        || normalized.contains("черновик")
+        || normalized.contains("укажите");
+  }
+
+  private static boolean isPlausibleEmail(String value) {
+    if (hasPlaceholderValue(value)) {
+      return false;
+    }
+    return value.trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
   }
 
   private static boolean isHttpsPublicUrl(String value) {

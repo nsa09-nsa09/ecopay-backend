@@ -8,10 +8,13 @@ import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.SupportTicket;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
+import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -40,6 +43,8 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
   private final SupportTicketRepository supportTicketRepository;
   private final RoomRepository roomRepository;
   private final RoomMemberRepository roomMemberRepository;
+  private final JwtUtil jwtUtil;
+  private final UserRepository userRepository;
 
   @Override
   public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -50,18 +55,14 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     }
 
     if (StompCommand.CONNECT.equals(accessor.getCommand())) {
-      User user =
-          (User)
-              accessor
-                  .getSessionAttributes()
-                  .get(WebSocketAuthHandshakeInterceptor.SESSION_USER_KEY);
-      if (user == null) {
-        throw new ForbiddenOperationException("WebSocket authentication required");
-      }
+      User user = authenticateConnect(accessor);
 
       accessor.setUser(
           new UsernamePasswordAuthenticationToken(
               user, null, List.of(new SimpleGrantedAuthority(user.getRole().name()))));
+      if (accessor.getSessionAttributes() != null) {
+        accessor.getSessionAttributes().put(WebSocketAuthHandshakeInterceptor.SESSION_USER_KEY, user);
+      }
       return message;
     }
 
@@ -87,6 +88,31 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     }
 
     throw new ForbiddenOperationException("WebSocket authentication required");
+  }
+
+  private User authenticateConnect(StompHeaderAccessor accessor) {
+    String authHeader = accessor.getFirstNativeHeader("Authorization");
+    if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+      throw new ForbiddenOperationException("WebSocket authentication required");
+    }
+    String token = authHeader.substring(7);
+    try {
+      String subject = jwtUtil.extractUsername(token);
+      if (subject == null || !jwtUtil.validateToken(token, subject)) {
+        throw new ForbiddenOperationException("WebSocket authentication required");
+      }
+      User user =
+          (subject.contains("@") ? userRepository.findByEmail(subject) : userRepository.findByPublicId(subject))
+              .orElseThrow(() -> new ForbiddenOperationException("WebSocket authentication required"));
+      if (user.getStatus() != UserStatus.ACTIVE) {
+        throw new ForbiddenOperationException("WebSocket authentication required");
+      }
+      return user;
+    } catch (ForbiddenOperationException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new ForbiddenOperationException("WebSocket authentication required");
+    }
   }
 
   private void validateSubscription(User user, String destination) {

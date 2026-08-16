@@ -60,6 +60,17 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}:${{ github.sha }}
 
+      - name: Save SHA image for deterministic deploy
+        run: |
+          docker pull "${IMAGE}:${GITHUB_SHA}"
+          docker save "${IMAGE}:${GITHUB_SHA}" | gzip > ecopay-backend-image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ecopay-backend-image-${{ github.sha }}
+          path: ecopay-backend-image.tar.gz
+          retention-days: 1
+
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
@@ -78,6 +89,20 @@ jobs:
             echo "name=backend-dev" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ecopay-backend-image-${{ github.sha }}
+
+      - name: Copy image archive to EC2
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: ecopay-backend-image.tar.gz
+          target: /tmp/ecopay-backend-${{ github.sha }}
+          overwrite: true
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1
         with:
@@ -91,8 +116,9 @@ jobs:
 
             SERVICE="${{ steps.svc.outputs.name }}"
             IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
+            ARCHIVE="/tmp/ecopay-backend-${{ github.sha }}/ecopay-backend-image.tar.gz"
             OVERRIDE="$(mktemp)"
-            trap 'rm -f "$OVERRIDE"' EXIT
+            trap 'rm -f "$OVERRIDE"; rm -rf "/tmp/ecopay-backend-${{ github.sha }}"' EXIT
 
             cat > "$OVERRIDE" <<EOF
             services:
@@ -116,17 +142,29 @@ jobs:
               exit 1
             fi
 
-            echo "Disk status before pull:"
+            echo "Disk status before image load:"
             df -h
-            echo "Memory status before pull:"
+            echo "Memory status before image load:"
             free -m
-            echo "Docker disk usage before pull:"
+            echo "Docker disk usage before image load:"
             docker system df
 
-            echo "Pulling exact image: $IMAGE"
-            docker pull "$IMAGE"
+            if [ ! -s "$ARCHIVE" ]; then
+              echo "Image archive missing or empty: $ARCHIVE" >&2
+              exit 1
+            fi
+
+            echo "Loading exact image archive: $IMAGE"
+            gzip -dc "$ARCHIVE" | docker load
             docker image inspect "$IMAGE" >/dev/null
-            echo "Exact image downloaded successfully"
+            echo "Exact image loaded successfully"
+
+            PREVIOUS_CID="$(docker compose -f docker-compose.yml -f "$OVERRIDE" ps -q "$SERVICE" || true)"
+            PREVIOUS_IMAGE=""
+            if [ -n "$PREVIOUS_CID" ]; then
+              PREVIOUS_IMAGE="$(docker inspect -f '{{.Config.Image}}' "$PREVIOUS_CID" || true)"
+              echo "Previous running image: ${PREVIOUS_IMAGE:-<unknown>}"
+            fi
 
             docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --no-deps --pull never "$SERVICE"
 
@@ -163,5 +201,14 @@ jobs:
               docker logs --tail=200 "$CID" | sed -E 's/(Authorization: Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g; s/(pg_sig=)[^&[:space:]]+/\1[REDACTED]/g; s/(JWT_SECRET|FREEDOMPAY_SECRET_KEY|FREEDOMPAY_PAYOUT_SECRET_KEY)=[^[:space:]]+/\1=[REDACTED]/g'
             else
               docker compose -f docker-compose.yml -f "$OVERRIDE" ps -a "$SERVICE" || true
+            fi
+            if [ -n "${PREVIOUS_IMAGE:-}" ] && [ "$PREVIOUS_IMAGE" != "$IMAGE" ]; then
+              echo "Restoring previous image: $PREVIOUS_IMAGE"
+              cat > "$OVERRIDE" <<EOF
+            services:
+              ${SERVICE}:
+                image: ${PREVIOUS_IMAGE}
+            EOF
+              docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --no-deps --pull never "$SERVICE" || true
             fi
             exit 1

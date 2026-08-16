@@ -184,9 +184,11 @@ class NewFeaturesIntegrationTest extends AbstractIntegrationTest {
     assertThrows(ResourceConflictException.class, () -> serviceReviewService.createMine(u, first));
 
     // Admin features it
+    markVerifiedExperience(u);
     User adminUser = admin();
-    var featuredDto = serviceReviewService.setFeatured(dto.getId(), true, adminUser, http);
+    var featuredDto = serviceReviewService.setFeatured(dto.getId(), true, 1, adminUser, http);
     assertTrue(featuredDto.getFeatured());
+    assertEquals(1, featuredDto.getHomepagePosition());
 
     // Public carousel includes it
     List<PublicServiceReviewDto> carousel = serviceReviewService.getFeatured();
@@ -198,6 +200,42 @@ class NewFeaturesIntegrationTest extends AbstractIntegrationTest {
     upd.setText("Передумал, нормально");
     var edited = serviceReviewService.updateMine(u, upd);
     assertFalse(edited.getFeatured(), "editing my review must reset featured");
+  }
+
+  private void markVerifiedExperience(User user) {
+    int n = SEQ.incrementAndGet();
+    User owner = register("Owner " + n);
+    Long categoryId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO categories (name, slug) VALUES (?, ?) RETURNING id",
+            Long.class,
+            "Verified " + n,
+            "verified-" + n);
+    Long serviceId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO services (category_id, name, slug, provider_type) VALUES (?, ?, ?, 'DIGITAL') RETURNING id",
+            Long.class,
+            categoryId,
+            "Verified Service " + n,
+            "verified-service-" + n);
+    Long roomId =
+        jdbcTemplate.queryForObject(
+            """
+            INSERT INTO rooms (
+              owner_user_id, category_id, service_id, room_type, status, title,
+              max_members, price_per_member, currency, period_type, start_date
+            ) VALUES (?, ?, ?, 'DIGITAL', 'ACTIVE', ?, 2, 1000.00, 'KZT', 'MONTHLY', CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            Long.class,
+            owner.getId(),
+            categoryId,
+            serviceId,
+            "Verified Room " + n);
+    jdbcTemplate.update(
+        "INSERT INTO room_members (room_id, user_id, status, requires_admin_review) VALUES (?, ?, 'ACTIVE', false)",
+        roomId,
+        user.getId());
   }
 
   @Test

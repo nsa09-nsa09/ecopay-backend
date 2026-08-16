@@ -34,7 +34,8 @@ public class AdminServiceReviewController {
       @AuthenticationPrincipal User admin,
       @Valid @RequestBody SetFeaturedRequest req,
       HttpServletRequest http) {
-    return ResponseEntity.ok(service.setFeatured(id, req.getFeatured(), admin, http));
+    return ResponseEntity.ok(
+        service.setFeatured(id, req.getFeatured(), req.getHomepagePosition(), admin, http));
   }
 
   @PutMapping("/{id}")

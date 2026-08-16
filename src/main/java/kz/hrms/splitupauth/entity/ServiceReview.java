@@ -19,7 +19,10 @@ import lombok.NoArgsConstructor;
     indexes = {
       @Index(
           name = "idx_service_reviews_featured_created",
-          columnList = "featured, created_at DESC")
+          columnList = "featured, created_at DESC"),
+      @Index(
+          name = "idx_service_reviews_homepage_position",
+          columnList = "featured_position")
     })
 @Data
 @Builder
@@ -44,6 +47,9 @@ public class ServiceReview {
   @Column(name = "featured", nullable = false)
   @Builder.Default
   private Boolean featured = false;
+
+  @Column(name = "featured_position")
+  private Integer featuredPosition;
 
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;

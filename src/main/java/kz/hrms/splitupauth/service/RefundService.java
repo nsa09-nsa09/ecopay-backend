@@ -2,6 +2,8 @@ package kz.hrms.splitupauth.service;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
@@ -20,13 +22,22 @@ import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class RefundService {
+
+  private static final int MAX_REFUND_ATTEMPTS = 3;
+  private static final int REFUND_LEASE_MINUTES = 5;
 
   private final RefundTransactionRepository refundTransactionRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
@@ -37,10 +48,12 @@ public class RefundService {
   private final PayoutService payoutService;
   private final NotificationService notificationService;
   private final MoneyLedgerService moneyLedgerService;
+  private final Clock clock;
+  private final PlatformTransactionManager transactionManager;
 
   /**
-   * User-initiated refund request вЂ” owner of the original payment can request a (partial) refund.
-   * Calls the gateway synchronously.
+   * User-initiated refund request: owner of the original payment can request a (partial) refund.
+   * Persists a durable PENDING refund; the retry worker owns provider dispatch.
    */
   @Transactional
   public RefundTransactionResponse requestRefund(User currentUser, CreateRefundRequest request) {
@@ -101,7 +114,7 @@ public class RefundService {
   /**
    * Apply an async refund result callback from the provider. Finalizes a PENDING refund (that the
    * gateway accepted but hadn't settled) by its provider refund id. Idempotent: ignores unknown or
-   * already-terminal refunds. Prod-only вЂ” the dev mock settles refunds synchronously and never
+   * already-terminal refunds. Prod-only: the dev mock settles refunds synchronously and never
    * sends this callback.
    */
   @Transactional
@@ -118,15 +131,19 @@ public class RefundService {
           "Webhook references unknown provider refund " + providerRefundId,
           true);
     }
-    if (refund.getStatus() != RefundStatus.PENDING) {
-      return; // terminal вЂ” idempotent no-op
+    if (refund.getStatus() == RefundStatus.SUCCESS) {
+      return; // terminal idempotent no-op
     }
     if (success) {
       refund.setStatus(RefundStatus.SUCCESS);
+      refund.setLeaseUntil(null);
+      refund.setNextRetryAt(null);
+      refund.setLastErrorCode(null);
+      refund.setLastErrorMessage(null);
       applyRefundToParentTransaction(refund);
       notifyRefundIssued(refund);
     } else {
-      refund.setStatus(RefundStatus.FAILED);
+      scheduleRetryOrReview(refund, "WEBHOOK_FAILED", "Provider reported refund failure");
     }
     refundTransactionRepository.save(refund);
     eventLogger.log(
@@ -214,7 +231,7 @@ public class RefundService {
             "reason",
             String.valueOf(reason)));
 
-    dispatchRefund(refund);
+    scheduleRefundDispatchAfterCommit();
     return refund;
   }
 
@@ -319,45 +336,155 @@ public class RefundService {
             .userAgent(httpRequest.getHeader("User-Agent"))
             .build());
 
-    // A confirmed owner violation must actually reach the payment provider. In production a
-    // provider may acknowledge the request as PENDING and settle it via webhook; in dev the mock
-    // settles synchronously and this immediately updates the membership and owner payout.
-    dispatchRefund(refund);
+    // A confirmed owner violation must actually reach the payment provider. The request is
+    // persisted before dispatch so a process crash or transient gateway failure is retryable.
+    scheduleRefundDispatchAfterCommit();
 
     return map(refund);
   }
 
-  private void dispatchRefund(RefundTransaction refund) {
+  @Scheduled(fixedDelayString = "${app.refunds.retry-delay-ms:60000}")
+  public void processPendingRefunds() {
+    processPendingRefundsOnce(10);
+  }
+
+  public int processPendingRefundsOnce(int limit) {
+    int processed = 0;
+    while (processed < limit) {
+      RefundDispatch dispatch = claimNextRefund();
+      if (dispatch == null) {
+        return processed;
+      }
+      dispatchRefund(dispatch);
+      processed++;
+    }
+    return processed;
+  }
+
+  private RefundDispatch claimNextRefund() {
+    return tx()
+        .execute(
+            status -> {
+              LocalDateTime now = LocalDateTime.now(clock);
+              List<Long> dueIds =
+                  refundTransactionRepository.findDispatchableIds(
+                      now, MAX_REFUND_ATTEMPTS, PageRequest.of(0, 10));
+              for (Long id : dueIds) {
+                RefundTransaction refund =
+                    refundTransactionRepository.findWithLockById(id).orElse(null);
+                if (refund == null
+                    || refund.getStatus() != RefundStatus.PENDING
+                    || (refund.getLeaseUntil() != null && refund.getLeaseUntil().isAfter(now))) {
+                  continue;
+                }
+                PaymentTransaction transaction = refund.getPaymentTransaction();
+                refund.setClaimedAt(now);
+                refund.setLeaseUntil(now.plusMinutes(REFUND_LEASE_MINUTES));
+                refundTransactionRepository.save(refund);
+                return new RefundDispatch(
+                    refund.getId(),
+                    refund.getIdempotencyKey(),
+                    transaction.getExternalTransactionId(),
+                    refund.getAmount(),
+                    refund.getCurrency(),
+                    refund.getReason());
+              }
+              return null;
+            });
+  }
+
+  private void dispatchRefund(RefundDispatch refund) {
     try {
-      PaymentTransaction transaction = refund.getPaymentTransaction();
       GatewayRefundResponse response =
           gatewayRegistry
               .defaultGateway()
               .refund(
                   GatewayRefundRequest.builder()
-                      .refundId(refund.getId())
-                      .idempotencyKey(refund.getIdempotencyKey())
-                      .externalPaymentId(transaction.getExternalTransactionId())
-                      .amount(refund.getAmount())
-                      .currency(refund.getCurrency())
-                      .reason(refund.getReason())
+                      .refundId(refund.id())
+                      .idempotencyKey(refund.idempotencyKey())
+                      .externalPaymentId(refund.externalPaymentId())
+                      .amount(refund.amount())
+                      .currency(refund.currency())
+                      .reason(refund.reason())
                       .build());
 
-      if (response.isSuccess()) {
-        refund.setStatus(RefundStatus.SUCCESS);
-        refund.setProviderRefundId(response.getExternalRefundId());
-        applyRefundToParentTransaction(refund);
-        notifyRefundIssued(refund);
-      } else if (response.isPending()) {
-        refund.setProviderRefundId(response.getExternalRefundId());
-      } else {
-        refund.setStatus(RefundStatus.FAILED);
-      }
-      refundTransactionRepository.save(refund);
+      finalizeRefundDispatch(refund.id(), response);
     } catch (Exception ex) {
-      log.error("Refund dispatch failed for {}: {}", refund.getId(), ex.getMessage());
-      // Keep the persisted request PENDING for provider-webhook reconciliation or manual retry.
+      log.error("Refund dispatch failed for {}: {}", refund.id(), ex.getMessage());
+      recordRefundDispatchFailure(refund.id(), ex);
     }
+  }
+
+  private void finalizeRefundDispatch(Long refundId, GatewayRefundResponse response) {
+    tx()
+        .executeWithoutResult(
+            status -> {
+              RefundTransaction refund =
+                  refundTransactionRepository.findWithLockById(refundId).orElse(null);
+              if (refund == null || refund.getStatus() != RefundStatus.PENDING) {
+                return;
+              }
+              if (response.isSuccess()) {
+                refund.setStatus(RefundStatus.SUCCESS);
+                refund.setProviderRefundId(response.getExternalRefundId());
+                refund.setLeaseUntil(null);
+                refund.setNextRetryAt(null);
+                refund.setLastErrorCode(null);
+                refund.setLastErrorMessage(null);
+                applyRefundToParentTransaction(refund);
+                notifyRefundIssued(refund);
+              } else if (response.isPending()) {
+                refund.setProviderRefundId(response.getExternalRefundId());
+                refund.setLeaseUntil(null);
+                refund.setNextRetryAt(LocalDateTime.now(clock).plusMinutes(15));
+              } else {
+                scheduleRetryOrReview(refund, "PROVIDER_FAILED", "Provider rejected refund");
+              }
+              refundTransactionRepository.save(refund);
+            });
+  }
+
+  private void recordRefundDispatchFailure(Long refundId, Exception ex) {
+    tx()
+        .executeWithoutResult(
+            status -> {
+              RefundTransaction refund =
+                  refundTransactionRepository.findWithLockById(refundId).orElse(null);
+              if (refund == null || refund.getStatus() != RefundStatus.PENDING) {
+                return;
+              }
+              scheduleRetryOrReview(refund, ex.getClass().getSimpleName(), ex.getMessage());
+              refundTransactionRepository.save(refund);
+            });
+  }
+
+  private void scheduleRetryOrReview(RefundTransaction refund, String code, String message) {
+    int attempts = refund.getRetryCount() == null ? 0 : refund.getRetryCount();
+    attempts++;
+    refund.setRetryCount(attempts);
+    refund.setLeaseUntil(null);
+    refund.setLastErrorCode(code);
+    refund.setLastErrorMessage(message);
+    if (attempts >= MAX_REFUND_ATTEMPTS) {
+      refund.setStatus(RefundStatus.REQUIRES_REVIEW);
+      refund.setNextRetryAt(null);
+      return;
+    }
+    refund.setStatus(RefundStatus.PENDING);
+    refund.setNextRetryAt(LocalDateTime.now(clock).plusMinutes((long) attempts * attempts));
+  }
+
+  private void scheduleRefundDispatchAfterCommit() {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            processPendingRefundsOnce(1);
+          }
+        });
   }
 
   private void notifyRefundIssued(RefundTransaction refund) {
@@ -415,7 +542,7 @@ public class RefundService {
     refundTransactionRepository.save(refund);
 
     // Mark the parent transaction refunded (full/partial) and reverse the owner payout
-    // if it hasn't been paid out yet вЂ” centralized with the user/webhook refund paths.
+    // if it hasn't been paid out yet; centralized with the user/webhook refund paths.
     applyRefundToParentTransaction(refund);
 
     adminActionLogRepository.save(
@@ -440,8 +567,8 @@ public class RefundService {
       notificationService.notify(
           recipient,
           NotificationType.REFUND_ISSUED,
-          "Р’РѕР·РІСЂР°С‚ СЃСЂРµРґСЃС‚РІ",
-          "Р’РѕР·РІСЂР°С‚ РЅР° СЃСѓРјРјСѓ " + refund.getAmount() + " " + refund.getCurrency() + " Р±С‹Р» РІС‹РїРѕР»РЅРµРЅ.",
+          "Refund issued",
+          "A refund of " + refund.getAmount() + " " + refund.getCurrency() + " has been issued.",
           "/payment/refund",
           java.util.Map.of("refundId", refund.getId()));
     }
@@ -515,4 +642,16 @@ public class RefundService {
         .updatedAt(refund.getUpdatedAt())
         .build();
   }
+
+  private TransactionTemplate tx() {
+    return new TransactionTemplate(transactionManager);
+  }
+
+  private record RefundDispatch(
+      Long id,
+      String idempotencyKey,
+      String externalPaymentId,
+      BigDecimal amount,
+      String currency,
+      String reason) {}
 }

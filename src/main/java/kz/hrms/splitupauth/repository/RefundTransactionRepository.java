@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.repository;
 
 import jakarta.persistence.LockModeType;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.Dispute;
@@ -14,6 +15,7 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
 
 public interface RefundTransactionRepository
     extends JpaRepository<RefundTransaction, Long>, JpaSpecificationExecutor<RefundTransaction> {
@@ -38,6 +40,19 @@ public interface RefundTransactionRepository
 
   List<RefundTransaction> findByPaymentTransactionAndStatusIn(
       PaymentTransaction tx, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
+  @Query(
+      """
+      select r.id
+      from RefundTransaction r
+      where r.status = kz.hrms.splitupauth.entity.RefundStatus.PENDING
+        and (r.nextRetryAt is null or r.nextRetryAt <= :now)
+        and (r.leaseUntil is null or r.leaseUntil <= :now)
+        and coalesce(r.retryCount, 0) < :maxAttempts
+      order by coalesce(r.nextRetryAt, r.createdAt), r.id
+      """)
+  List<Long> findDispatchableIds(
+      @Param("now") LocalDateTime now, @Param("maxAttempts") int maxAttempts, Pageable pageable);
 
   @Query(
       """

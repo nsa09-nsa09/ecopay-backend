@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.AdminServiceReviewDto;
@@ -15,11 +16,17 @@ import kz.hrms.splitupauth.dto.ServiceReviewDto;
 import kz.hrms.splitupauth.dto.UpdateServiceReviewRequest;
 import kz.hrms.splitupauth.entity.AdminActionLog;
 import kz.hrms.splitupauth.entity.AdminActionType;
+import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
+import kz.hrms.splitupauth.entity.PaymentTransactionType;
 import kz.hrms.splitupauth.entity.ServiceReview;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
+import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
@@ -33,20 +40,23 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ServiceReviewService {
 
+  private static final int MAX_HOMEPAGE_TESTIMONIALS = 6;
+
   private final ServiceReviewRepository repository;
+  private final PaymentTransactionRepository paymentTransactionRepository;
+  private final RoomMemberRepository roomMemberRepository;
   private final AdminActionLogRepository adminActionLogRepository;
   private final ObjectMapper objectMapper;
 
-  // ===================== Public =====================
-
   @Transactional(readOnly = true)
   public List<PublicServiceReviewDto> getFeatured() {
-    return repository.findTop30ByFeaturedTrueOrderByCreatedAtDesc().stream()
+    return repository.findByFeaturedTrueAndFeaturedPositionIsNotNullOrderByFeaturedPositionAsc()
+        .stream()
+        .filter(review -> hasVerifiedExperience(review.getAuthor().getId()))
+        .limit(MAX_HOMEPAGE_TESTIMONIALS)
         .map(this::toPublicDto)
         .toList();
   }
-
-  // ===================== Author (me) =====================
 
   @Transactional(readOnly = true)
   public Optional<ServiceReviewDto> getMine(User author) {
@@ -56,7 +66,7 @@ public class ServiceReviewService {
   @Transactional
   public ServiceReviewDto createMine(User author, CreateServiceReviewRequest req) {
     if (repository.existsByAuthor(author)) {
-      throw new ResourceConflictException("Вы уже оставляли отзыв");
+      throw new ResourceConflictException("You have already submitted a service review");
     }
 
     ServiceReview review =
@@ -65,6 +75,7 @@ public class ServiceReviewService {
             .rating(req.getRating())
             .text(TextSanitizer.sanitize(req.getText()))
             .featured(false)
+            .featuredPosition(null)
             .build();
     review = repository.save(review);
     return toDto(review);
@@ -75,23 +86,27 @@ public class ServiceReviewService {
     ServiceReview review =
         repository
             .findByAuthor(author)
-            .orElseThrow(() -> new ResourceNotFoundException("Отзыв не найден"));
+            .orElseThrow(() -> new ResourceNotFoundException("Service review not found"));
 
     review.setRating(req.getRating());
     review.setText(TextSanitizer.sanitize(req.getText()));
-    // Edits force re-moderation per contract: a featured review whose text
-    // changed must be re-approved by an admin before showing on the homepage.
     review.setFeatured(false);
+    review.setFeaturedPosition(null);
     review = repository.save(review);
     return toDto(review);
   }
 
   @Transactional
   public void deleteMine(User author) {
-    repository.findByAuthor(author).ifPresent(repository::delete);
+    repository
+        .findByAuthor(author)
+        .ifPresent(
+            review -> {
+              review.setFeatured(false);
+              review.setFeaturedPosition(null);
+              repository.delete(review);
+            });
   }
-
-  // ===================== Admin =====================
 
   @Transactional(readOnly = true)
   public PagedResponse<AdminServiceReviewDto> listForAdmin(int page, int size, Boolean featured) {
@@ -119,25 +134,40 @@ public class ServiceReviewService {
 
   @Transactional
   public AdminServiceReviewDto setFeatured(
-      Long id, boolean featured, User admin, HttpServletRequest http) {
+      Long id, boolean featured, Integer homepagePosition, User admin, HttpServletRequest http) {
     ServiceReview review =
-        repository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Отзыв не найден"));
+        repository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Service review not found"));
 
-    boolean prev = Boolean.TRUE.equals(review.getFeatured());
+    boolean previousFeatured = Boolean.TRUE.equals(review.getFeatured());
+    Integer previousPosition = review.getFeaturedPosition();
+    if (featured) {
+      validateHomepagePosition(homepagePosition);
+      if (!hasVerifiedExperience(review.getAuthor().getId())) {
+        throw new InvalidRequestException("Only verified EcoPay users can be featured");
+      }
+      replaceOccupant(homepagePosition, review.getId(), admin, http);
+    }
+
     review.setFeatured(featured);
+    review.setFeaturedPosition(featured ? homepagePosition : null);
     review = repository.save(review);
 
     ObjectNode oldState = objectMapper.createObjectNode();
-    oldState.put("featured", prev);
+    oldState.put("featured", previousFeatured);
+    putNullableInt(oldState, "homepagePosition", previousPosition);
     ObjectNode newState = objectMapper.createObjectNode();
     newState.put("featured", featured);
-    writeLog(
-        admin,
-        featured ? AdminActionType.TESTIMONIAL_FEATURED : AdminActionType.TESTIMONIAL_UNFEATURED,
-        review.getId(),
-        oldState,
-        newState,
-        http);
+    putNullableInt(newState, "homepagePosition", review.getFeaturedPosition());
+
+    AdminActionType actionType =
+        !featured
+            ? AdminActionType.TESTIMONIAL_UNFEATURED
+            : previousFeatured && !Objects.equals(previousPosition, review.getFeaturedPosition())
+                ? AdminActionType.TESTIMONIAL_REORDERED
+                : AdminActionType.TESTIMONIAL_FEATURED;
+    writeLog(admin, actionType, review.getId(), oldState, newState, http);
 
     return toAdminDto(review);
   }
@@ -145,45 +175,73 @@ public class ServiceReviewService {
   @Transactional
   public AdminServiceReviewDto adminUpdate(
       Long id, AdminUpdateServiceReviewRequest req, User admin, HttpServletRequest http) {
-    ServiceReview review =
-        repository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Отзыв не найден"));
-
-    ObjectNode oldState = objectMapper.createObjectNode();
-    oldState.put("rating", review.getRating());
-    oldState.put("text", review.getText());
-
     if (req.getRating() != null) {
-      review.setRating(req.getRating());
+      throw new InvalidRequestException("Admin cannot edit testimonial rating");
     }
     if (req.getText() != null && !req.getText().isBlank()) {
-      review.setText(TextSanitizer.sanitize(req.getText()));
+      throw new InvalidRequestException("Admin cannot edit testimonial text");
     }
-    review = repository.save(review);
-
-    ObjectNode newState = objectMapper.createObjectNode();
-    newState.put("rating", review.getRating());
-    newState.put("text", review.getText());
-    writeLog(admin, AdminActionType.TESTIMONIAL_EDITED, review.getId(), oldState, newState, http);
-
-    return toAdminDto(review);
+    return repository
+        .findById(id)
+        .map(this::toAdminDto)
+        .orElseThrow(() -> new ResourceNotFoundException("Service review not found"));
   }
 
   @Transactional
   public void adminDelete(Long id, User admin, HttpServletRequest http) {
     ServiceReview review =
-        repository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Отзыв не найден"));
+        repository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Service review not found"));
 
     ObjectNode oldState = objectMapper.createObjectNode();
     oldState.put("rating", review.getRating());
     oldState.put("featured", review.getFeatured());
+    putNullableInt(oldState, "homepagePosition", review.getFeaturedPosition());
 
     Long reviewId = review.getId();
+    review.setFeatured(false);
+    review.setFeaturedPosition(null);
     repository.delete(review);
 
     writeLog(admin, AdminActionType.TESTIMONIAL_DELETED, reviewId, oldState, null, http);
   }
 
-  // ===================== Mapping =====================
+  private void replaceOccupant(
+      Integer homepagePosition, Long targetReviewId, User admin, HttpServletRequest http) {
+    repository
+        .findByFeaturedPosition(homepagePosition)
+        .filter(other -> !other.getId().equals(targetReviewId))
+        .ifPresent(
+            other -> {
+              ObjectNode oldState = objectMapper.createObjectNode();
+              oldState.put("featured", other.getFeatured());
+              putNullableInt(oldState, "homepagePosition", other.getFeaturedPosition());
+
+              other.setFeatured(false);
+              other.setFeaturedPosition(null);
+              repository.save(other);
+
+              ObjectNode newState = objectMapper.createObjectNode();
+              newState.put("featured", false);
+              newState.putNull("homepagePosition");
+              writeLog(
+                  admin,
+                  AdminActionType.TESTIMONIAL_UNFEATURED,
+                  other.getId(),
+                  oldState,
+                  newState,
+                  http);
+            });
+  }
+
+  private void validateHomepagePosition(Integer homepagePosition) {
+    if (homepagePosition == null
+        || homepagePosition < 1
+        || homepagePosition > MAX_HOMEPAGE_TESTIMONIALS) {
+      throw new InvalidRequestException("Homepage position must be between 1 and 6");
+    }
+  }
 
   private ServiceReviewDto toDto(ServiceReview review) {
     User author = review.getAuthor();
@@ -195,6 +253,8 @@ public class ServiceReviewService {
         .rating(review.getRating())
         .text(review.getText())
         .featured(review.getFeatured())
+        .homepagePosition(review.getFeaturedPosition())
+        .verifiedExperience(hasVerifiedExperience(author.getId()))
         .createdAt(review.getCreatedAt())
         .updatedAt(review.getUpdatedAt())
         .build();
@@ -208,6 +268,8 @@ public class ServiceReviewService {
         .text(review.getText())
         .authorDisplayName(author.getDisplayName())
         .authorPublicId(author.getPublicId())
+        .homepagePosition(review.getFeaturedPosition())
+        .verifiedExperience(true)
         .createdAt(review.getCreatedAt())
         .build();
   }
@@ -223,9 +285,18 @@ public class ServiceReviewService {
         .rating(review.getRating())
         .text(review.getText())
         .featured(review.getFeatured())
+        .homepagePosition(review.getFeaturedPosition())
+        .verifiedExperience(hasVerifiedExperience(author.getId()))
         .createdAt(review.getCreatedAt())
         .updatedAt(review.getUpdatedAt())
         .build();
+  }
+
+  private boolean hasVerifiedExperience(Long userId) {
+    return paymentTransactionRepository.existsByPaymentIntent_User_IdAndTypeAndStatus(
+            userId, PaymentTransactionType.CHARGE, PaymentTransactionStatus.SUCCESS)
+        || roomMemberRepository.existsByUser_IdAndDeletedAtIsNullAndStatusIn(
+            userId, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
   }
 
   private void writeLog(
@@ -247,5 +318,13 @@ public class ServiceReviewService {
             .ipAddress(http != null ? http.getRemoteAddr() : null)
             .userAgent(http != null ? http.getHeader("User-Agent") : null)
             .build());
+  }
+
+  private void putNullableInt(ObjectNode node, String fieldName, Integer value) {
+    if (value == null) {
+      node.putNull(fieldName);
+    } else {
+      node.put(fieldName, value);
+    }
   }
 }

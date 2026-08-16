@@ -16,5 +16,7 @@ public class PublicServiceReviewDto {
   private String text;
   private String authorDisplayName;
   private String authorPublicId;
+  private Integer homepagePosition;
+  private Boolean verifiedExperience;
   private LocalDateTime createdAt;
 }

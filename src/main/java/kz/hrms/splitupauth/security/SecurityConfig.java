@@ -103,6 +103,8 @@ public class SecurityConfig {
                     // Live FX rates for the public landing-page converter.
                     .requestMatchers(HttpMethod.GET, "/api/v1/fx/rates")
                     .permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/public/home-stats")
+                    .permitAll()
                     // FIFO room match needs the caller identity to exclude
                     // their own rooms — must beat the catalog permitAll below.
                     .requestMatchers(HttpMethod.GET, "/api/v1/catalog/services/*/match")

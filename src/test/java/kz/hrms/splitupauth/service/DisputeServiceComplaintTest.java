@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.dto.ApplyDisputeSanctionsRequest;
@@ -49,6 +50,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 /** Covers the member complaint -> admin case -> confirmed owner breach refund path without Docker. */
 @ExtendWith(MockitoExtension.class)
@@ -247,7 +250,10 @@ class DisputeServiceComplaintTest {
   }
 
   @Test
-  void adminRefund_isDispatchedToGatewayAndFinalizesSuccessfulCharge() {
+  void adminRefund_workerDispatchesToGatewayAndFinalizesSuccessfulCharge() {
+    PlatformTransactionManager transactionManager =
+        org.mockito.Mockito.mock(PlatformTransactionManager.class);
+    when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     RefundService refundService =
         new RefundService(
             refundTransactionRepository,
@@ -258,7 +264,9 @@ class DisputeServiceComplaintTest {
             org.mockito.Mockito.mock(PaymentEventLogger.class),
             org.mockito.Mockito.mock(PayoutService.class),
             notificationService,
-            org.mockito.Mockito.mock(MoneyLedgerService.class));
+            org.mockito.Mockito.mock(MoneyLedgerService.class),
+            Clock.systemUTC(),
+            transactionManager);
     User admin = user(1L, Role.ADMIN);
     PaymentTransaction charge =
         PaymentTransaction.builder()
@@ -281,6 +289,8 @@ class DisputeServiceComplaintTest {
     when(paymentTransactionRepository.findWithLockById(charge.getId())).thenReturn(Optional.of(charge));
     when(refundTransactionRepository.sumActiveRefundAmounts(charge))
         .thenReturn(BigDecimal.ZERO, new BigDecimal("1500.00"));
+    java.util.concurrent.atomic.AtomicReference<kz.hrms.splitupauth.entity.RefundTransaction>
+        savedRefund = new java.util.concurrent.atomic.AtomicReference<>();
     when(refundTransactionRepository.save(any()))
         .thenAnswer(
             invocation -> {
@@ -288,6 +298,7 @@ class DisputeServiceComplaintTest {
               if (refund.getId() == null) {
                 refund.setId(80L);
               }
+              savedRefund.set(refund);
               return refund;
             });
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
@@ -295,6 +306,13 @@ class DisputeServiceComplaintTest {
         .thenReturn(GatewayRefundResponse.builder().success(true).externalRefundId("provider-refund-80").build());
 
     refundService.createRefund(admin, request, httpRequest);
+    verify(paymentGateway, never()).refund(any());
+
+    when(refundTransactionRepository.findDispatchableIds(any(), eq(3), any()))
+        .thenReturn(List.of(80L));
+    when(refundTransactionRepository.findWithLockById(80L))
+        .thenAnswer(invocation -> Optional.of(savedRefund.get()));
+    refundService.processPendingRefundsOnce(1);
 
     ArgumentCaptor<GatewayRefundRequest> gatewayRequest =
         ArgumentCaptor.forClass(GatewayRefundRequest.class);

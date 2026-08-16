@@ -70,6 +70,30 @@ class ProductionStartupGuardTest {
     assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
   }
 
+  @Test
+  void recurringEnabledFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.recurring.enabled", "true");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void missingObjectStorageFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.s3.endpoint", "");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void unreviewedLegalDocumentsFailProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.production.legal-reviewed", "false");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
   private ProductionStartupGuard guard(MockEnvironment environment) {
     return new ProductionStartupGuard(environment, validCors(), liveFreedomPay());
   }
@@ -91,6 +115,21 @@ class ProductionStartupGuardTest {
         .withProperty("ecopay.sms.mobizon.api-key", "live-mobizon-key")
         .withProperty("ecopay.sms.mobizon.from", "EcoPay")
         .withProperty("app.phone.dev-bypass-code", "")
+        .withProperty("spring.mail.host", "smtp.ecopay.kz")
+        .withProperty("spring.mail.username", "mailer@ecopay.kz")
+        .withProperty("spring.mail.password", "live-mail-password")
+        .withProperty("spring.mail.properties.mail.smtp.from", "mailer@ecopay.kz")
+        .withProperty("app.s3.region", "auto")
+        .withProperty("app.s3.bucket", "ecopay-prod")
+        .withProperty("app.s3.endpoint", "https://example.r2.cloudflarestorage.com")
+        .withProperty("app.s3.access-key", "live-s3-access")
+        .withProperty("app.s3.secret-key", "live-s3-secret")
+        .withProperty("app.brand.support-email", "support@ecopay.kz")
+        .withProperty("app.production.legal-entity-name", "EcoPay LLP")
+        .withProperty("app.production.legal-bin", "123456789012")
+        .withProperty("app.production.legal-address", "Astana, Kazakhstan")
+        .withProperty("app.production.legal-reviewed", "true")
+        .withProperty("app.recurring.enabled", "false")
         .withProperty("app.auth.refresh-cookie-secure", "true")
         .withProperty("springdoc.api-docs.enabled", "false")
         .withProperty("springdoc.swagger-ui.enabled", "false")

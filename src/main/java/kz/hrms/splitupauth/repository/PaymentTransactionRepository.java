@@ -29,6 +29,9 @@ public interface PaymentTransactionRepository
 
   boolean existsByRoomMember_IdAndStatus(Long roomMemberId, PaymentTransactionStatus status);
 
+  boolean existsByPaymentIntent_User_IdAndTypeAndStatus(
+      Long userId, PaymentTransactionType type, PaymentTransactionStatus status);
+
   List<PaymentTransaction> findByRoomMember_IdAndStatusAndTypeOrderByCreatedAtDesc(
       Long roomMemberId, PaymentTransactionStatus status, PaymentTransactionType type);
 
