@@ -93,7 +93,8 @@ public class SecurityConfig {
                         "/api/v1/auth/resend-phone-code",
                         "/api/v1/auth/resend-verification",
                         "/api/v1/webhooks/**",
-                        "/actuator/health")
+                        "/actuator/health",
+                        "/actuator/health/**")
                     .permitAll()
                     .requestMatchers("/ws", "/ws/**")
                     .permitAll()
