@@ -80,32 +80,6 @@ public class AuthController {
     return ResponseEntity.ok(auth);
   }
 
-  /**
-   * Final step of phone registration: caller submits their phone plus the 6-digit code that was
-   * sent by SMS. On success the account is verified and logged in (tokens + cookie issued). Mirrors
-   * /verify-email-code.
-   */
-  @PostMapping("/verify-phone-code")
-  public ResponseEntity<AuthResponse> verifyPhoneCode(
-      @Valid @RequestBody VerifyPhoneCodeRequest request, HttpServletResponse response) {
-    AuthResponse auth = authService.verifyPhoneCode(request);
-    if (auth.getRefreshToken() != null) {
-      addRefreshCookie(response, auth.getRefreshToken());
-    }
-    return ResponseEntity.ok(auth);
-  }
-
-  /**
-   * Re-issue the SMS code for an unfinished phone registration. Always 200 (silent for unknown or
-   * verified phones) to avoid phone-number enumeration. Mirrors /resend-verification.
-   */
-  @PostMapping("/resend-phone-code")
-  public ResponseEntity<Void> resendPhoneCode(
-      @Valid @RequestBody RequestPhoneCodeRequest request, HttpServletRequest httpRequest) {
-    authService.resendPhoneCode(request.getPhone(), httpRequest);
-    return ResponseEntity.ok().build();
-  }
-
   @PostMapping("/login")
   public ResponseEntity<AuthResponse> login(
       @Valid @RequestBody LoginRequest request, HttpServletResponse response) {

@@ -89,8 +89,6 @@ public class SecurityConfig {
                         "/api/v1/auth/reset-password/confirm",
                         "/api/v1/auth/verify-email",
                         "/api/v1/auth/verify-email-code",
-                        "/api/v1/auth/verify-phone-code",
-                        "/api/v1/auth/resend-phone-code",
                         "/api/v1/auth/resend-verification",
                         "/api/v1/webhooks/**",
                         "/actuator/health",

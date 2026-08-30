@@ -62,7 +62,6 @@ class AuthServiceTest {
   @Mock private StaffTwoFactorService staffTwoFactorService;
   @Mock private LegalDocumentService legalDocumentService;
   @Mock private SlugService slugService;
-  @Mock private PhoneVerificationService phoneVerificationService;
   @Mock private EmailChangeService emailChangeService;
 
   /**
@@ -90,7 +89,6 @@ class AuthServiceTest {
             staffTwoFactorService,
             legalDocumentService,
             slugService,
-            phoneVerificationService,
             emailChangeService,
             emailValidationService);
   }
@@ -200,7 +198,7 @@ class AuthServiceTest {
   }
 
   private void stubTokens(User user) {
-    // JWT subject is the immutable publicId (email is optional since phone registration).
+    // JWT subject is the immutable publicId, so email changes do not invalidate token resolution.
     when(jwtUtil.generateAccessToken(user.getPublicId())).thenReturn("access");
     // createRefreshToken returns the token string (String-based refresh-token model).
     when(refreshTokenService.createRefreshToken(eq(user))).thenReturn("refresh");

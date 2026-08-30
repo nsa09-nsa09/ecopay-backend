@@ -9,10 +9,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-/**
- * Registration accepts exactly one identifier — email OR phone — now that email is optional and
- * phone sign-up exists. Login follows the same contract.
- */
+/** Registration and login accept only email + password for the regular account flow. */
 class RegisterRequestValidationTest {
 
   private static jakarta.validation.ValidatorFactory factory;
@@ -29,10 +26,9 @@ class RegisterRequestValidationTest {
     factory.close();
   }
 
-  private static RegisterRequest register(String email, String phone) {
+  private static RegisterRequest register(String email) {
     RegisterRequest req = new RegisterRequest();
     req.setEmail(email);
-    req.setPhone(phone);
     req.setPassword("Test1234");
     req.setDisplayName("User");
     req.setTermsAccepted(true);
@@ -41,48 +37,38 @@ class RegisterRequestValidationTest {
 
   @Test
   void emailOnly_isValid() {
-    assertTrue(validator.validate(register("user@test.kz", null)).isEmpty());
+    assertTrue(validator.validate(register("user@test.kz")).isEmpty());
   }
 
   @Test
-  void phoneOnly_isValid() {
-    assertTrue(validator.validate(register(null, "+77001234567")).isEmpty());
+  void withoutEmail_isRejected() {
+    assertFalse(validator.validate(register(null)).isEmpty());
   }
 
   @Test
-  void neitherIdentifier_isRejected() {
-    assertFalse(validator.validate(register(null, null)).isEmpty());
-  }
+  void phoneOnlyRegistration_isRejectedBecauseEmailIsRequired() {
+    RegisterRequest req = new RegisterRequest();
+    req.setPassword("Test1234");
+    req.setDisplayName("User");
+    req.setTermsAccepted(true);
 
-  @Test
-  void bothIdentifiers_areRejected() {
-    assertFalse(validator.validate(register("user@test.kz", "+77001234567")).isEmpty());
-  }
-
-  @Test
-  void malformedPhone_isRejected() {
-    assertFalse(validator.validate(register(null, "87001234567")).isEmpty());
+    assertFalse(validator.validate(req).isEmpty());
   }
 
   @Test
   void malformedEmail_isRejected() {
-    assertFalse(validator.validate(register("not-an-email", null)).isEmpty());
+    assertFalse(validator.validate(register("not-an-email")).isEmpty());
   }
 
   @Test
-  void loginRequest_followsTheSameOneOfContract() {
+  void loginRequest_requiresEmail() {
     LoginRequest emailLogin = new LoginRequest();
     emailLogin.setEmail("user@test.kz");
     emailLogin.setPassword("secret");
     assertTrue(validator.validate(emailLogin).isEmpty());
 
-    LoginRequest phoneLogin = new LoginRequest();
-    phoneLogin.setPhone("+77001234567");
-    phoneLogin.setPassword("secret");
-    assertTrue(validator.validate(phoneLogin).isEmpty());
-
-    LoginRequest empty = new LoginRequest();
-    empty.setPassword("secret");
-    assertFalse(validator.validate(empty).isEmpty());
+    LoginRequest phoneOnly = new LoginRequest();
+    phoneOnly.setPassword("secret");
+    assertFalse(validator.validate(phoneOnly).isEmpty());
   }
 }

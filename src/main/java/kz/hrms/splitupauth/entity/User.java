@@ -27,10 +27,7 @@ public class User {
   @EqualsAndHashCode.Include
   private Long id;
 
-  /**
-   * Nullable: phone-registered accounts have no email until the user adds one in the profile
-   * (confirmed via emailed code). Unique among non-null values.
-   */
+  /** Nullable for legacy phone-only rows; new API registrations require email. */
   @Column(unique = true)
   private String email;
 

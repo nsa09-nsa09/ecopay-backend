@@ -12,12 +12,14 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import kz.hrms.splitupauth.dto.JoinRoomRequest;
 import kz.hrms.splitupauth.dto.MyRoomMembershipDto;
 import kz.hrms.splitupauth.dto.RevealIdentifierRequest;
@@ -60,6 +62,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 @ExtendWith(MockitoExtension.class)
 class RoomMemberServiceTest {
@@ -313,16 +317,33 @@ class RoomMemberServiceTest {
     assertEquals(Boolean.TRUE, saved.getIsValidFormat());
   }
 
+  @ParameterizedTest
+  @EnumSource(value = IdentifierType.class, names = {"SIM", "ESIM", "ACCOUNT"})
+  void joinRoom_phoneServiceRejectsLegacyIdentifierTypes(IdentifierType identifierType) {
+    User member = user(217L, Role.USER);
+    Room room = room(117L);
+    room.setService(service(ServiceAccessType.PHONE));
+
+    JoinRoomRequest request = joinRequest(identifierType, "+77051234567");
+
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+
+    InvalidRequestException exception =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> roomMemberService.joinRoom(ROOM_ID, member, request));
+
+    assertEquals("This service grants access by phone — a phone number is required", exception.getMessage());
+    verify(roomMemberRepository, never()).save(any(RoomMember.class));
+  }
+
   @Test
-  void joinRoom_bothServiceAcceptsEitherContact() {
+  void joinRoom_bothServiceAcceptsEmailContact() {
     User member = user(208L, Role.USER);
     Room room = room(108L);
     room.setService(service(ServiceAccessType.BOTH));
 
-    JoinRoomRequest request = new JoinRoomRequest();
-    request.setConsentAccepted(true);
-    request.setIdentifierType(IdentifierType.EMAIL);
-    request.setIdentifierValue("member@yandex.kz");
+    JoinRoomRequest request = joinRequest(IdentifierType.EMAIL, "member@yandex.kz");
 
     stubMemberPersistence();
     when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
@@ -336,6 +357,90 @@ class RoomMemberServiceTest {
         ArgumentCaptor.forClass(RoomMemberIdentifier.class);
     verify(roomMemberIdentifierRepository).save(captor.capture());
     assertEquals(IdentifierType.EMAIL, captor.getValue().getIdentifierType());
+  }
+
+  @Test
+  void joinRoom_bothServiceAcceptsPhoneContact() {
+    User member = user(218L, Role.USER);
+    Room room = room(118L);
+    room.setService(service(ServiceAccessType.BOTH));
+
+    JoinRoomRequest request = joinRequest(IdentifierType.PHONE, "77051234567");
+
+    stubMemberPersistence();
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.empty());
+    when(fieldEncryptionService.encrypt("+77051234567")).thenReturn("enc");
+
+    roomMemberService.joinRoom(ROOM_ID, member, request);
+
+    ArgumentCaptor<RoomMemberIdentifier> captor =
+        ArgumentCaptor.forClass(RoomMemberIdentifier.class);
+    verify(roomMemberIdentifierRepository).save(captor.capture());
+    assertEquals(IdentifierType.PHONE, captor.getValue().getIdentifierType());
+  }
+
+  @Test
+  void joinRoom_sameUserCanUseDifferentPhonesInDifferentRooms_withoutChangingProfilePhone() {
+    User member = user(219L, Role.USER);
+    member.setPhone("+77003333333");
+    Room firstRoom = room(119L);
+    firstRoom.setService(service(ServiceAccessType.PHONE));
+    Room secondRoom = room(120L);
+    secondRoom.setService(service(ServiceAccessType.PHONE));
+
+    JoinRoomRequest first = joinRequest(IdentifierType.PHONE, "+7 700 111 11 11");
+    JoinRoomRequest second = joinRequest(IdentifierType.PHONE, "8 700 222 22 22");
+
+    stubMemberPersistenceWithSequentialIds(710L);
+    when(roomRepository.findByIdForUpdate(firstRoom.getId())).thenReturn(Optional.of(firstRoom));
+    when(roomRepository.findByIdForUpdate(secondRoom.getId())).thenReturn(Optional.of(secondRoom));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(firstRoom, member))
+        .thenReturn(Optional.empty());
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(secondRoom, member))
+        .thenReturn(Optional.empty());
+    when(fieldEncryptionService.encrypt("+77001111111")).thenReturn("enc:first");
+    when(fieldEncryptionService.encrypt("+77002222222")).thenReturn("enc:second");
+
+    roomMemberService.joinRoom(firstRoom.getId(), member, first);
+    roomMemberService.joinRoom(secondRoom.getId(), member, second);
+
+    ArgumentCaptor<RoomMemberIdentifier> captor =
+        ArgumentCaptor.forClass(RoomMemberIdentifier.class);
+    verify(roomMemberIdentifierRepository, times(2)).save(captor.capture());
+
+    RoomMemberIdentifier firstSaved = captor.getAllValues().get(0);
+    RoomMemberIdentifier secondSaved = captor.getAllValues().get(1);
+    assertEquals(firstRoom, firstSaved.getRoomMember().getRoom());
+    assertEquals(IdentifierType.PHONE, firstSaved.getIdentifierType());
+    assertEquals("enc:first", firstSaved.getIdentifierEncrypted());
+    assertEquals("+770*****11", firstSaved.getIdentifierMasked());
+    assertEquals(secondRoom, secondSaved.getRoomMember().getRoom());
+    assertEquals(IdentifierType.PHONE, secondSaved.getIdentifierType());
+    assertEquals("enc:second", secondSaved.getIdentifierEncrypted());
+    assertEquals("+770*****22", secondSaved.getIdentifierMasked());
+    assertEquals("+77003333333", member.getPhone());
+  }
+
+  @Test
+  void joinRoom_sameUserCannotJoinSameRoomTwice() {
+    User member = user(220L, Role.USER);
+    Room room = room(121L);
+    room.setService(service(ServiceAccessType.PHONE));
+    RoomMember existing = membership(721L, room, member);
+
+    when(roomRepository.findByIdForUpdate(ROOM_ID)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.of(existing));
+
+    InvalidRequestException exception =
+        assertThrows(
+            InvalidRequestException.class,
+            () -> roomMemberService.joinRoom(ROOM_ID, member, joinRequest(IdentifierType.PHONE, "+77051234567")));
+
+    assertEquals("User has already joined this room", exception.getMessage());
+    verify(roomMemberRepository, never()).save(any(RoomMember.class));
   }
 
   @Test
@@ -642,6 +747,25 @@ class RoomMemberServiceTest {
               saved.setId(700L);
               return saved;
             });
+  }
+
+  private void stubMemberPersistenceWithSequentialIds(long firstId) {
+    AtomicLong nextId = new AtomicLong(firstId);
+    when(roomMemberRepository.save(any(RoomMember.class)))
+        .thenAnswer(
+            invocation -> {
+              RoomMember saved = invocation.getArgument(0);
+              saved.setId(nextId.getAndIncrement());
+              return saved;
+            });
+  }
+
+  private JoinRoomRequest joinRequest(IdentifierType type, String value) {
+    JoinRoomRequest request = new JoinRoomRequest();
+    request.setConsentAccepted(true);
+    request.setIdentifierType(type);
+    request.setIdentifierValue(value);
+    return request;
   }
 
   private ServiceEntity service(ServiceAccessType accessType) {

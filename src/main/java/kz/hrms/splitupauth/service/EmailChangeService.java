@@ -19,9 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Adds or changes the account email from the profile. Email is optional since phone registration
- * exists, so this flow is the only way a phone-registered account acquires one (needed for password
- * recovery and email notifications).
+ * Adds or changes the account email from the profile. The column stays nullable for legacy
+ * phone-only rows, so this flow is how those accounts acquire an email for password recovery and
+ * notifications.
  *
  * <p>The new address is parked on {@link EmailVerificationToken#getPendingEmail()} and copied to
  * {@code users.email} only after the emailed one-time code (TTL {@value #CODE_TTL_MINUTES} min) or

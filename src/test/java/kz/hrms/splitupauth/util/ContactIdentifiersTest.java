@@ -24,23 +24,24 @@ class ContactIdentifiersTest {
   }
 
   @Test
-  void allowedFor_phoneServicesKeepTheTelecomFlavours() {
-    // A SIM/eSIM/personal-account reference is still "the operator finds you by
-    // this", so the create-room options stay valid for phone-keyed services.
-    var allowed = ContactIdentifiers.allowedFor(ServiceAccessType.PHONE);
-    assertTrue(allowed.contains(IdentifierType.PHONE));
-    assertTrue(allowed.contains(IdentifierType.SIM));
-    assertTrue(allowed.contains(IdentifierType.ESIM));
-    assertTrue(allowed.contains(IdentifierType.ACCOUNT));
-    assertFalse(allowed.contains(IdentifierType.EMAIL));
+  void allowedFor_phoneServicesTakeOnlyPhoneNumbers() {
+    assertEquals(
+        java.util.Set.of(IdentifierType.PHONE),
+        ContactIdentifiers.allowedFor(ServiceAccessType.PHONE));
   }
 
   @Test
-  void allowedFor_bothTakesAnything() {
+  void allowedFor_bothTakesOnlyEmailOrPhone() {
     assertTrue(
         ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.EMAIL));
     assertTrue(
         ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.PHONE));
+    assertFalse(
+        ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.SIM));
+    assertFalse(
+        ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.ESIM));
+    assertFalse(
+        ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.ACCOUNT));
   }
 
   @Test

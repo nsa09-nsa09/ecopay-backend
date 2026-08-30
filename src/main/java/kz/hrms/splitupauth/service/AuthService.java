@@ -66,7 +66,6 @@ public class AuthService {
   private final StaffTwoFactorService staffTwoFactorService;
   private final LegalDocumentService legalDocumentService;
   private final SlugService slugService;
-  private final PhoneVerificationService phoneVerificationService;
   private final EmailChangeService emailChangeService;
   private final EmailValidationService emailValidationService;
 
@@ -75,21 +74,19 @@ public class AuthService {
   private boolean devAutoVerifyEmail;
 
   @Transactional
-  public AuthResponse register(
-      RegisterRequest request, MailLocale locale, HttpServletRequest http) {
-    boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
+  public AuthResponse register(RegisterRequest request, MailLocale locale) {
+    return register(request, locale, null);
+  }
 
-    // Email registration attaches a brand-new address, so it gets the full
+  @Transactional
+  public AuthResponse register(
+      RegisterRequest request, MailLocale locale, HttpServletRequest ignoredHttpRequest) {
+    // Registration attaches a brand-new address, so it gets the full
     // pipeline: canonicalise, then reject malformed addresses and domains that
     // publish no MX. Skipping this is how gmial.com rows end up in the table.
-    String email =
-        byPhone ? null : emailValidationService.normalizeAndValidateDeliverable(request.getEmail());
+    String email = emailValidationService.normalizeAndValidateDeliverable(request.getEmail());
 
-    if (byPhone) {
-      if (userRepository.existsByPhone(request.getPhone())) {
-        throw new UserAlreadyExistsException("User with this phone already exists");
-      }
-    } else if (userRepository.existsByEmail(email)) {
+    if (userRepository.existsByEmail(email)) {
       throw new UserAlreadyExistsException("User with this email already exists");
     }
 
@@ -106,13 +103,9 @@ public class AuthService {
             ? request.getAcceptedPrivacyVersion()
             : legalDocumentService.currentVersion(LegalDocument.DocType.PRIVACY);
 
-    // Email is optional: phone-registered accounts have none until the user
-    // adds one in the profile (email is only ever attached after the emailed
-    // code is confirmed).
     User user =
         User.builder()
             .email(email)
-            .phone(byPhone ? request.getPhone() : null)
             .locale(locale.tag())
             .password(passwordEncoder.encode(request.getPassword()))
             .displayName(request.getDisplayName())
@@ -130,17 +123,6 @@ public class AuthService {
     slugService.assignInitialSlug(user);
     user = userRepository.save(user);
 
-    if (byPhone) {
-      // SMS the 6-digit confirmation code. Cooldowns, hourly caps and code TTL
-      // are enforced by PhoneVerificationService — the same protections as the
-      // profile phone-verification flow.
-      phoneVerificationService.requestCode(user, request.getPhone(), http);
-
-      // No tokens: the account must confirm the SMS code first (see
-      // verifyPhoneCode), mirroring the email registration contract.
-      return AuthResponse.builder().user(userMapper.toDto(user)).build();
-    }
-
     if (devAutoVerifyEmail) {
       // Dev/test: skip the email round-trip so the account can log in without SMTP.
       // Tokens are issued straight away so the frontend can drop the user in.
@@ -156,68 +138,23 @@ public class AuthService {
     return AuthResponse.builder().user(userMapper.toDto(user)).build();
   }
 
-  /**
-   * Final step of phone registration: confirm the SMS code. On success the phone is marked verified
-   * and the user is logged in straight away (tokens issued), mirroring verifyEmailCode.
-   */
-  @Transactional
-  public AuthResponse verifyPhoneCode(VerifyPhoneCodeRequest request) {
-    User user =
-        userRepository
-            .findByPhone(request.getPhone())
-            .orElseThrow(
-                () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
-
-    // Already verified — the previous attempt went through. Be idempotent and
-    // just hand back a fresh session rather than erroring the user out.
-    if (user.getPhoneVerifiedAt() != null) {
-      return issueTokens(user);
-    }
-
-    phoneVerificationService.verifyCode(user, request.getPhone(), request.getCode());
-
-    return issueTokens(user);
-  }
-
-  /**
-   * Re-issue the SMS code for an unfinished phone registration. Stays silent for unknown or
-   * already-verified phones to avoid phone-number enumeration; cooldown and hourly caps are
-   * enforced by PhoneVerificationService.
-   */
-  @Transactional
-  public void resendPhoneCode(String phone, HttpServletRequest http) {
-    User user = userRepository.findByPhone(phone).orElse(null);
-    if (user == null || user.getPhoneVerifiedAt() != null) {
-      // Charge the IP quota even though nothing is sent: this endpoint answers 200
-      // for unknown numbers on purpose, so a free silent path here would just move
-      // the enumeration oracle rather than close it.
-      phoneVerificationService.enforceIpQuota(http);
-      return;
-    }
-    phoneVerificationService.requestCode(user, phone, http);
-  }
-
   @Transactional
   public AuthResponse login(LoginRequest request) {
-    boolean byPhone = request.getPhone() != null && !request.getPhone().isBlank();
-
     // Format check only (level 1). The address already exists in the database
     // here, so an MX lookup would add latency without adding safety — and would
     // lock out an existing user whose provider's DNS is having a bad day.
     // Normalizing is not optional: without it "User@Gmail.com" misses the row
     // stored as "user@gmail.com" and reads as wrong credentials.
-    String email =
-        byPhone ? null : emailValidationService.normalizeAndValidateFormat(request.getEmail());
+    String email = emailValidationService.normalizeAndValidateFormat(request.getEmail());
 
     // Rate-limit on the canonical identifier so case variants share one bucket
     // rather than giving an attacker a fresh allowance per spelling.
-    String identifier = byPhone ? request.getPhone() : email;
+    String identifier = email;
     rateLimitService.checkLoginAttempts(identifier);
 
     User user =
-        (byPhone
-                ? userRepository.findByPhone(request.getPhone())
-                : userRepository.findByEmail(email))
+        userRepository
+            .findByEmail(email)
             .orElseThrow(
                 () -> {
                   rateLimitService.recordLoginAttempt(identifier, false);
@@ -234,17 +171,7 @@ public class AuthService {
       throw new InvalidCredentialsException("Invalid credentials");
     }
 
-    // The account counts as confirmed when either channel it registered with
-    // is verified: a confirmed email, or a confirmed phone (phone-registered
-    // accounts have no email at all until one is added in the profile).
-    boolean emailConfirmed =
-        user.getEmail() != null && Boolean.TRUE.equals(user.getEmailVerified());
-    boolean phoneConfirmed = user.getPhoneVerifiedAt() != null;
-    if (!emailConfirmed && !phoneConfirmed) {
-      if (user.getEmail() == null) {
-        throw new PhoneNotVerifiedException(
-            "Phone not verified. Please enter the code we sent you by SMS.");
-      }
+    if (!Boolean.TRUE.equals(user.getEmailVerified())) {
       throw new EmailNotVerifiedException(
           "Email not verified. Please check your inbox for the verification link.");
     }
@@ -292,9 +219,9 @@ public class AuthService {
   }
 
   private AuthResponse issueTokens(User user) {
-    // Subject is the immutable publicId, not the email: email is optional now
-    // and may change. JwtAuthenticationFilter still resolves legacy
-    // email-subject tokens for sessions issued before this switch.
+    // Subject is the immutable publicId, not the email: email may change.
+    // JwtAuthenticationFilter still resolves legacy email-subject tokens for
+    // sessions issued before this switch.
     String accessToken = jwtUtil.generateAccessToken(user.getPublicId());
     String refreshToken = refreshTokenService.createRefreshToken(user);
 

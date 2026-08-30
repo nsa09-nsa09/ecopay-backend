@@ -69,8 +69,8 @@ class EmailDtoNormalizationTest {
 
   @Test
   void blankInput_becomesNull_soAbsentAndEmptyCollapse() {
-    // The optional-identifier check on RegisterRequest treats null and "" the
-    // same; normalizing "" to null keeps that assumption true.
+    // Blank input should become null so @NotBlank reports the same missing-email
+    // validation error for absent and whitespace-only values.
     RegisterRequest request = new RegisterRequest();
     request.setEmail("   ");
 

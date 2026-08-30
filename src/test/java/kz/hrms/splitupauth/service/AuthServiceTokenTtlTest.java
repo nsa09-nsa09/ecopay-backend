@@ -57,7 +57,6 @@ class AuthServiceTokenTtlTest {
   @Mock StaffTwoFactorService staffTwoFactorService;
   @Mock LegalDocumentService legalDocumentService;
   @Mock SlugService slugService;
-  @Mock PhoneVerificationService phoneVerificationService;
   @Mock EmailChangeService emailChangeService;
 
   private final EmailValidationService emailValidationService =
@@ -81,7 +80,6 @@ class AuthServiceTokenTtlTest {
             staffTwoFactorService,
             legalDocumentService,
             slugService,
-            phoneVerificationService,
             emailChangeService,
             emailValidationService);
   }

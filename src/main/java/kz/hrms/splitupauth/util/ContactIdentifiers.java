@@ -17,7 +17,7 @@ public final class ContactIdentifiers {
 
   private ContactIdentifiers() {}
 
-  /** Everything that carries a phone number or an operator-side account reference. */
+  /** Legacy telecom-shaped values. New joins only accept PHONE for phone-based services. */
   private static final Set<IdentifierType> PHONE_FAMILY =
       EnumSet.of(IdentifierType.PHONE, IdentifierType.SIM, IdentifierType.ESIM);
 
@@ -30,8 +30,8 @@ public final class ContactIdentifiers {
   /**
    * Identifier types a service with the given access type accepts.
    *
-   * <p>PHONE keeps the telecom flavours (SIM/eSIM/personal account) alongside a plain number — they
-   * are all "the operator finds you by this", and the create-room flow already offers them.
+   * <p>New join applications collect only the member's email or phone number. SIM, eSIM and account
+   * enum values are still readable from old rows, but they are not accepted as new input.
    */
   public static Set<IdentifierType> allowedFor(ServiceAccessType accessType) {
     if (accessType == null) {
@@ -39,13 +39,8 @@ public final class ContactIdentifiers {
     }
     return switch (accessType) {
       case EMAIL -> EnumSet.of(IdentifierType.EMAIL);
-      case PHONE ->
-          EnumSet.of(
-              IdentifierType.PHONE,
-              IdentifierType.SIM,
-              IdentifierType.ESIM,
-              IdentifierType.ACCOUNT);
-      case BOTH -> EnumSet.allOf(IdentifierType.class);
+      case PHONE -> EnumSet.of(IdentifierType.PHONE);
+      case BOTH -> EnumSet.of(IdentifierType.EMAIL, IdentifierType.PHONE);
     };
   }
 

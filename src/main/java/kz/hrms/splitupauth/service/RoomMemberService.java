@@ -520,7 +520,7 @@ public class RoomMemberService {
   /**
    * The service's {@code accessType} decides what the member has to hand over: an email for the
    * providers that invite by address, a phone for the ones keyed on the number, either when the
-   * provider accepts both. TELECOM rooms additionally accept SIM/eSIM/account references.
+   * provider accepts both.
    */
   private void validateContact(Room room, JoinRoomRequest request) {
     ServiceAccessType accessType = serviceAccessType(room);

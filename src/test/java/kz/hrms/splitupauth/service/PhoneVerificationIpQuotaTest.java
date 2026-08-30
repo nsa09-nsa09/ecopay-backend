@@ -131,8 +131,7 @@ class PhoneVerificationIpQuotaTest {
 
   @Test
   void theSilentResendPathIsChargedToo() {
-    // AuthService.resendPhoneCode answers 200 for unknown numbers on purpose;
-    // enforceIpQuota is what stops that silence from being a free oracle.
+    // Silent callers can enforce the same quota before deciding whether to send.
     for (int i = 0; i < 3; i++) {
       service.enforceIpQuota(request(IP));
     }
