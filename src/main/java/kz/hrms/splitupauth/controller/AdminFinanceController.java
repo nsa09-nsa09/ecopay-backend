@@ -1,8 +1,10 @@
 package kz.hrms.splitupauth.controller;
 
 import java.time.LocalDateTime;
+import kz.hrms.splitupauth.dto.FinancePayoutDto;
 import kz.hrms.splitupauth.dto.FinanceRefundDto;
 import kz.hrms.splitupauth.dto.FinanceTransactionDto;
+import kz.hrms.splitupauth.dto.FinanceWebhookDto;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.service.AdminFinanceService;
 import lombok.RequiredArgsConstructor;
@@ -55,5 +57,33 @@ public class AdminFinanceController {
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
     return ResponseEntity.ok(financeService.listRefunds(status, dateFrom, dateTo, page, size));
+  }
+
+  @GetMapping("/payouts")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<PagedResponse<FinancePayoutDto>> payouts(
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          LocalDateTime dateFrom,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          LocalDateTime dateTo,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(financeService.listPayouts(status, dateFrom, dateTo, page, size));
+  }
+
+  @GetMapping("/webhooks")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<PagedResponse<FinanceWebhookDto>> webhooks(
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) String script,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          LocalDateTime dateFrom,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          LocalDateTime dateTo,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(
+        financeService.listWebhooks(status, script, dateFrom, dateTo, page, size));
   }
 }
