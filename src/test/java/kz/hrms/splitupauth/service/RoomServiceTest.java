@@ -136,7 +136,7 @@ class RoomServiceTest {
     Room room = room(21L, LocalDateTime.now().plusDays(1));
     RoomResponse response = RoomResponse.builder().maxMembers(3).build();
 
-    when(roomRepository.findById(21L)).thenReturn(Optional.of(room));
+    when(roomRepository.findByIdAndDeletedAtIsNull(21L)).thenReturn(Optional.of(room));
     when(roomMapper.toResponse(room)).thenReturn(response);
     when(reviewRepository.aggregateRatingByRecipientIds(List.of(room.getOwner().getId())))
         .thenReturn(List.of());
@@ -147,7 +147,7 @@ class RoomServiceTest {
 
     assertEquals(2, result.getFilledSeats());
     assertEquals(1, result.getFreeSeats());
-    verify(roomRepository).findById(21L);
+    verify(roomRepository).findByIdAndDeletedAtIsNull(21L);
     verify(roomRepository, never()).findByIdForUpdate(21L);
   }
 

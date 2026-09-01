@@ -39,8 +39,6 @@ class RoomMapperSettlementTest {
   @Test
   void usdRoomSettlementFieldsUseFrozenKztShare() {
     BigDecimal shareKzt = new BigDecimal("12300.00");
-    when(commissionCalculator.commissionFor(new BigDecimal("25.00")))
-        .thenReturn(new BigDecimal("500.00"));
     when(commissionCalculator.commissionFor(shareKzt)).thenReturn(new BigDecimal("1000.00"));
 
     RoomResponse response =
@@ -59,8 +57,6 @@ class RoomMapperSettlementTest {
   @Test
   void eurRoomSettlementFieldsUseFrozenKztShare() {
     BigDecimal shareKzt = new BigDecimal("8200.00");
-    when(commissionCalculator.commissionFor(new BigDecimal("15.00")))
-        .thenReturn(new BigDecimal("500.00"));
     when(commissionCalculator.commissionFor(shareKzt)).thenReturn(new BigDecimal("1000.00"));
 
     RoomResponse response =
