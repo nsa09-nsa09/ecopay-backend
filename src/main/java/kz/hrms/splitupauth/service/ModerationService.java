@@ -32,6 +32,7 @@ public class ModerationService {
   private final UserRepository userRepository;
   private final SupportTicketRepository supportTicketRepository;
   private final DisputeRepository disputeRepository;
+  private final NotificationService notificationService;
 
   @Transactional(readOnly = true)
   public List<ModerationQueueItemDto> getOpenQueue(User currentUser) {
@@ -121,6 +122,8 @@ public class ModerationService {
     }
 
     roomMemberRepository.save(roomMember);
+
+    notifyMembershipActive(roomMember);
 
     item.setAssignedAdmin(currentUser);
     item.setStatus(ModerationQueueStatus.RESOLVED);
@@ -399,6 +402,8 @@ public class ModerationService {
 
       roomMemberRepository.save(roomMember);
 
+      notifyMembershipActive(roomMember);
+
       item.setAssignedAdmin(currentUser);
       item.setStatus(ModerationQueueStatus.RESOLVED);
       moderationQueueRepository.save(item);
@@ -430,6 +435,25 @@ public class ModerationService {
     }
 
     return items.stream().map(this::mapQueueItem).toList();
+  }
+
+  private void notifyMembershipActive(RoomMember roomMember) {
+    Room room = roomMember.getRoom();
+    String tariffName = room.getTariffNameSnapshot();
+    if (tariffName == null || tariffName.isBlank()) {
+      tariffName = room.getTariffPlan() == null ? room.getTitle() : room.getTariffPlan().getName();
+    }
+    notificationService.notify(
+        roomMember.getUser(),
+        NotificationType.MEMBERSHIP_ACTIVATED,
+        "Участие активно",
+        "Ваше участие в тарифе «" + tariffName + "» сервиса «"
+            + (room.getService() == null || room.getService().getName() == null
+                ? "сервиса"
+                : room.getService().getName())
+            + "» активно.",
+        "/rooms/member/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
   }
 
   private ObjectNode statusState(String status) {

@@ -18,6 +18,7 @@ package kz.hrms.splitupauth.entity;
 public enum NotificationType {
 
   // ---- membership lifecycle ----
+  APPLICATION_SENT(NotificationCategory.MEMBERSHIP, true),
   MEMBER_JOINED(NotificationCategory.MEMBERSHIP, false),
   PAYMENT_SUCCESS(NotificationCategory.PAYMENTS, true),
   PAYMENT_FAILED(NotificationCategory.PAYMENTS, true),
@@ -25,6 +26,7 @@ public enum NotificationType {
   // In-app only — one per member payment would be too noisy over email.
   ROOM_MEMBER_PAID(NotificationCategory.MEMBERSHIP, false),
   OWNER_ACCESS_GRANTED(NotificationCategory.MEMBERSHIP, true),
+  MEMBER_ACCESS_CONFIRMED(NotificationCategory.MEMBERSHIP, true),
   MEMBER_CONFIRMED(NotificationCategory.MEMBERSHIP, false),
   MEMBERSHIP_ACTIVATED(NotificationCategory.MEMBERSHIP, true),
   MEMBERSHIP_REJECTED(NotificationCategory.MEMBERSHIP, true),

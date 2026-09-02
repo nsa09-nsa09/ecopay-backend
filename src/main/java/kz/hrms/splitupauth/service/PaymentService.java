@@ -373,7 +373,7 @@ public class PaymentService {
     notificationService.notify(
         intent.getUser(),
         NotificationType.PAYMENT_SUCCESS,
-        "Платёж принят",
+        "Оплата подтверждена",
         "Оплата"
             + (room == null ? "" : " за участие в комнате «" + room.getTitle() + "»")
             + " на сумму "
@@ -825,7 +825,7 @@ public class PaymentService {
     notificationService.notify(
         intent.getUser(),
         NotificationType.PAYMENT_SUCCESS,
-        "Payment accepted",
+        "Оплата подтверждена",
         "Payment"
             + (room == null ? "" : " for room \"" + room.getTitle() + "\"")
             + " in amount "

@@ -121,6 +121,15 @@ public class RoomMemberService {
         "/rooms/owner/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
+    notificationService.notify(
+        currentUser,
+        NotificationType.APPLICATION_SENT,
+        "Заявка отправлена",
+        "Ваша заявка на участие в тарифе «" + tariffName(room) + "» сервиса «"
+            + serviceName(room) + "» отправлена.",
+        "/rooms/member/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
     return roomMemberMapper.toDto(roomMember);
   }
 
@@ -254,10 +263,10 @@ public class RoomMemberService {
     notificationService.notify(
         roomMember.getUser(),
         NotificationType.OWNER_ACCESS_GRANTED,
-        "Доступ предоставлен",
-        "Владелец комнаты «"
-            + room.getTitle()
-            + "» предоставил доступ. Подтвердите получение доступа.",
+        "Владелец выдал доступ",
+        "Вас приглашают в семейный тариф «" + tariffName(room) + "» сервиса «"
+            + serviceName(room)
+            + "». Зайдите в приложение или сервис и подтвердите получение доступа в EcoPay.",
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -306,6 +315,14 @@ public class RoomMemberService {
             + room.getTitle()
             + "».",
         "/rooms/owner/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+
+    notificationService.notify(
+        currentUser,
+        NotificationType.MEMBER_ACCESS_CONFIRMED,
+        "Вы подтвердили доступ",
+        "Вы подтвердили получение доступа к тарифу «" + tariffName(room) + "».",
+        "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
     tryActivateMembership(roomMember);
@@ -465,8 +482,9 @@ public class RoomMemberService {
     notificationService.notify(
         roomMember.getUser(),
         NotificationType.MEMBERSHIP_ACTIVATED,
-        "Участие активировано",
-        "Ваше участие в комнате «" + room.getTitle() + "» активно. Доступ подтверждён.",
+        "Участие активно",
+        "Ваше участие в тарифе «" + tariffName(room) + "» сервиса «"
+            + serviceName(room) + "» активно.",
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -479,6 +497,22 @@ public class RoomMemberService {
           "/rooms/owner/" + room.getId(),
           java.util.Map.of("roomId", room.getId()));
     }
+  }
+
+  private String tariffName(Room room) {
+    if (room.getTariffNameSnapshot() != null && !room.getTariffNameSnapshot().isBlank()) {
+      return room.getTariffNameSnapshot();
+    }
+    if (room.getTariffPlan() != null && room.getTariffPlan().getName() != null) {
+      return room.getTariffPlan().getName();
+    }
+    return room.getTitle();
+  }
+
+  private String serviceName(Room room) {
+    return room.getService() == null || room.getService().getName() == null
+        ? "сервиса"
+        : room.getService().getName();
   }
 
   private void validateJoin(Room room, User currentUser, JoinRoomRequest request) {
