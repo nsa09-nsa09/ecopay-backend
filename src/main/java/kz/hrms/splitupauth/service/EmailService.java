@@ -2,6 +2,8 @@ package kz.hrms.splitupauth.service;
 
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import java.net.URI;
+import java.util.Locale;
 import kz.hrms.splitupauth.exception.MailDeliveryException;
 import kz.hrms.splitupauth.util.EmailNormalizer;
 import lombok.RequiredArgsConstructor;
@@ -57,7 +59,7 @@ public class EmailService {
   // ---------------------------------------------------------------------
 
   public void sendPasswordResetEmail(String to, String token, MailLocale locale) {
-    String resetLink = sanitizeFrontendBase(frontendUrl) + "/reset-password/confirm?token=" + token;
+    String resetLink = frontendPublicBase() + "/reset-password/confirm?token=" + token;
     send(
         to,
         locale.pick("Сброс пароля", "Құпия сөзді қалпына келтіру", "Password reset"),
@@ -282,7 +284,7 @@ public class EmailService {
     StringBuilder html = new StringBuilder();
     html.append("<p>").append(escape(body)).append("</p>");
     if (link != null && !link.isBlank()) {
-      String absolute = link.startsWith("http") ? link : sanitizeFrontendBase(frontendUrl) + link;
+      String absolute = link.startsWith("http") ? link : frontendPublicBase() + link;
       html.append("<p><a href=\"")
           .append(absolute)
           .append("\">")
@@ -344,8 +346,49 @@ public class EmailService {
     return url.replaceAll("/+$", "").replaceFirst(":5173(?=/|$)", "");
   }
 
+  private String frontendPublicBase() {
+    String configured = sanitizeFrontendBase(frontendUrl);
+    if (!configured.isBlank() && !isLoopbackUrl(configured)) {
+      return configured;
+    }
+    String brand = sanitizeFrontendBase(brandPublicUrl);
+    return isPublicHttpUrl(brand) ? brand : configured;
+  }
+
+  private static boolean isPublicHttpUrl(String url) {
+    try {
+      URI uri = URI.create(url == null ? "" : url.trim());
+      String scheme = uri.getScheme();
+      return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+          && uri.getHost() != null
+          && !isLoopbackHost(uri.getHost());
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  private static boolean isLoopbackUrl(String url) {
+    try {
+      return isLoopbackHost(URI.create(url == null ? "" : url.trim()).getHost());
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  private static boolean isLoopbackHost(String host) {
+    if (host == null || host.isBlank()) {
+      return false;
+    }
+    String lower = host.toLowerCase(Locale.ROOT);
+    return lower.equals("localhost")
+        || lower.equals("127.0.0.1")
+        || lower.equals("::1")
+        || lower.endsWith(".localhost");
+  }
+
   private String backendPublicBase() {
-    String configured = brandPublicUrl != null && !brandPublicUrl.isBlank() ? brandPublicUrl : baseUrl;
+    String configured =
+        brandPublicUrl != null && !brandPublicUrl.isBlank() ? brandPublicUrl : baseUrl;
     return configured == null ? "" : configured.replaceAll("/+$", "");
   }
 
