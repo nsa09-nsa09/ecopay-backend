@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.service;
 
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.Locale;
 import kz.hrms.splitupauth.exception.MailDeliveryException;
@@ -13,6 +14,8 @@ import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * All outgoing transactional mail. Every message is rendered in the recipient's {@link MailLocale}
@@ -113,7 +116,12 @@ public class EmailService {
    */
   public void sendNotificationEmail(
       String to, String subject, String body, String link, MailLocale locale) {
-    send(to, subject, buildNotificationEmail(subject, body, link, locale), "notification");
+    sendNotificationEmail(to, subject, body, link, locale, null);
+  }
+
+  public void sendNotificationEmail(
+      String to, String subject, String body, String link, MailLocale locale, String frontendBase) {
+    send(to, subject, buildNotificationEmail(subject, body, link, locale, frontendBase), "notification");
   }
 
   // ---------------------------------------------------------------------
@@ -281,10 +289,18 @@ public class EmailService {
   }
 
   private String buildNotificationEmail(String title, String body, String link, MailLocale locale) {
+    return buildNotificationEmail(title, body, link, locale, null);
+  }
+
+  private String buildNotificationEmail(
+      String title, String body, String link, MailLocale locale, String frontendBase) {
     StringBuilder html = new StringBuilder();
     html.append("<p>").append(escape(body)).append("</p>");
     if (link != null && !link.isBlank()) {
-      String absolute = link.startsWith("http") ? link : frontendPublicBase() + link;
+      String base = (frontendBase != null && !frontendBase.isBlank())
+          ? sanitizeFrontendBase(frontendBase)
+          : frontendPublicBase();
+      String absolute = link.startsWith("http") ? link : base + link;
       html.append("<p><a href=\"")
           .append(absolute)
           .append("\">")
@@ -338,15 +354,52 @@ public class EmailService {
   }
 
   /**
-   * Strips the Vite dev port (:5173) from the configured frontend base so it never leaks into any
-   * user-facing link (password-reset, notification links, etc.). Also trims trailing slashes.
+   * Resolves the frontend origin from the active HTTP request, if present.
+   * Checks the Origin header, then the Referer header.
+   */
+  public static String currentFrontendOrigin() {
+    ServletRequestAttributes attrs =
+        (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+    if (attrs == null) {
+      return null;
+    }
+    try {
+      HttpServletRequest req = attrs.getRequest();
+      String origin = req.getHeader("Origin");
+      if (origin != null && !origin.isBlank() && (origin.startsWith("http://") || origin.startsWith("https://"))) {
+        return origin.trim().replaceAll("/+$", "");
+      }
+      String referer = req.getHeader("Referer");
+      if (referer != null && !referer.isBlank()) {
+        URI u = URI.create(referer.trim());
+        if (u.getScheme() != null && u.getHost() != null) {
+          String base = u.getScheme() + "://" + u.getHost();
+          if (u.getPort() > 0
+              && !(("http".equalsIgnoreCase(u.getScheme()) && u.getPort() == 80)
+                  || ("https".equalsIgnoreCase(u.getScheme()) && u.getPort() == 443))) {
+            base += ":" + u.getPort();
+          }
+          return base;
+        }
+      }
+    } catch (Exception ignored) {
+    }
+    return null;
+  }
+
+  /**
+   * Sanitizes the frontend base URL by trimming whitespace and trailing slashes.
    */
   private static String sanitizeFrontendBase(String url) {
     if (url == null) return "";
-    return url.replaceAll("/+$", "").replaceFirst(":5173(?=/|$)", "");
+    return url.trim().replaceAll("/+$", "");
   }
 
   private String frontendPublicBase() {
+    String fromRequest = currentFrontendOrigin();
+    if (fromRequest != null && !fromRequest.isBlank()) {
+      return sanitizeFrontendBase(fromRequest);
+    }
     String configured = sanitizeFrontendBase(frontendUrl);
     if (!configured.isBlank() && !isLoopbackUrl(configured)) {
       return configured;

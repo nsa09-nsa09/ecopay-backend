@@ -21,4 +21,18 @@ public record NotificationDeliveryEvent(
     String emailSubject,
     String emailBody,
     String link,
-    MailLocale locale) {}
+    MailLocale locale,
+    String frontendBaseUrl) {
+
+  public NotificationDeliveryEvent(
+      Long userId,
+      String email,
+      NotificationDto dto,
+      boolean sendEmail,
+      String emailSubject,
+      String emailBody,
+      String link,
+      MailLocale locale) {
+    this(userId, email, dto, sendEmail, emailSubject, emailBody, link, locale, null);
+  }
+}

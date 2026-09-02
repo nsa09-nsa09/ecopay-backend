@@ -826,12 +826,12 @@ public class PaymentService {
         intent.getUser(),
         NotificationType.PAYMENT_SUCCESS,
         "Оплата подтверждена",
-        "Payment"
-            + (room == null ? "" : " for room \"" + room.getTitle() + "\"")
-            + " in amount "
+        "Оплата"
+            + (room == null ? "" : " за участие в комнате «" + room.getTitle() + "»")
+            + " на сумму "
             + intent.getAmount()
-            + " KZT"
-            + " succeeded.",
+            + (room == null || room.getCurrency() == null ? " KZT" : " " + room.getCurrency())
+            + " прошла успешно.",
         room == null ? null : "/rooms/member/" + room.getId(),
         Map.of("intentId", intent.getId(), "roomId", room == null ? 0L : room.getId()));
 

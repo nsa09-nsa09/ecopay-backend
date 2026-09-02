@@ -97,6 +97,7 @@ public class NotificationService {
         dto = NotificationDto.from(notification);
       }
 
+      String currentFrontend = EmailService.currentFrontendOrigin();
       eventPublisher.publishEvent(
           new NotificationDeliveryEvent(
               recipient.getId(),
@@ -106,7 +107,8 @@ public class NotificationService {
               title,
               body,
               link,
-              MailLocale.from(recipient.getLocale())));
+              MailLocale.from(recipient.getLocale()),
+              currentFrontend));
     } catch (Exception e) {
       // Best-effort: log and move on so the triggering operation succeeds.
       log.warn(

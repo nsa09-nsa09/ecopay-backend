@@ -63,6 +63,55 @@ class EmailServiceTest {
     assertFalse(html.contains("localhost"));
   }
 
+  @Test
+  void notificationEmailPreservesLocalhostPortWhenNoBrandUrl() throws Exception {
+    ReflectionTestUtils.setField(emailService, "frontendUrl", "http://localhost:5173");
+    ReflectionTestUtils.setField(emailService, "brandPublicUrl", "");
+    MimeMessage message = newMessage();
+    when(mailSender.createMimeMessage()).thenReturn(message);
+
+    emailService.sendNotificationEmail(
+        "user@example.com", "Заявка отправлена", "Ваша заявка отправлена", "/rooms/member/123", MailLocale.RU);
+
+    String html = sentHtml();
+    assertTrue(html.contains("http://localhost:5173/rooms/member/123"));
+    assertFalse(html.contains("http://localhost/rooms/"));
+  }
+
+  @Test
+  void notificationEmailUsesExplicitFrontendBaseFromRequest() throws Exception {
+    ReflectionTestUtils.setField(emailService, "frontendUrl", "http://localhost:5173");
+    ReflectionTestUtils.setField(emailService, "brandPublicUrl", "");
+    MimeMessage message = newMessage();
+    when(mailSender.createMimeMessage()).thenReturn(message);
+
+    emailService.sendNotificationEmail(
+        "user@example.com",
+        "Участие активно",
+        "Активно",
+        "/rooms/member/456",
+        MailLocale.RU,
+        "https://stage.ecopay.kz/");
+
+    String html = sentHtml();
+    assertTrue(html.contains("https://stage.ecopay.kz/rooms/member/456"));
+    assertFalse(html.contains("localhost"));
+  }
+
+  @Test
+  void notificationEmailUsesPublicFrontendUrl() throws Exception {
+    ReflectionTestUtils.setField(emailService, "frontendUrl", "https://app.ecopay.kz");
+    ReflectionTestUtils.setField(emailService, "brandPublicUrl", "");
+    MimeMessage message = newMessage();
+    when(mailSender.createMimeMessage()).thenReturn(message);
+
+    emailService.sendNotificationEmail(
+        "user@example.com", "Оплата подтверждена", "Оплата прошла", "/rooms/member/789", MailLocale.RU);
+
+    String html = sentHtml();
+    assertTrue(html.contains("https://app.ecopay.kz/rooms/member/789"));
+  }
+
   private MimeMessage newMessage() {
     return new MimeMessage(Session.getInstance(new Properties()));
   }
