@@ -76,6 +76,10 @@ public class PaymentIntent {
   @Column(name = "last_webhook_at")
   private LocalDateTime lastWebhookAt;
 
+  /** Server-observed time at which a verified provider result confirmed the capture. */
+  @Column(name = "captured_at")
+  private LocalDateTime capturedAt;
+
   @Column(name = "provider_status_code", length = 50)
   private String providerStatusCode;
 

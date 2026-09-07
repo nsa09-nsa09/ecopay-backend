@@ -10,6 +10,8 @@ public interface PaymentGateway {
 
   String providerName();
 
+  GatewayCardBindingResponse initCardBinding(GatewayCardBindingRequest request);
+
   GatewayChargeResponse initCharge(GatewayChargeRequest request);
 
   GatewayChargeResponse chargeWithToken(GatewayChargeRequest request, String savedCardToken);
@@ -19,6 +21,12 @@ public interface PaymentGateway {
   GatewayPayoutResponse payout(GatewayPayoutRequest request);
 
   GatewayStatusResponse getStatus(String externalPaymentId);
+
+  /**
+   * Reconcile an owner payout that was accepted by the provider but has not reached a final state.
+   * The merchant order id is required by Freedom Pay together with its payment id.
+   */
+  GatewayStatusResponse getPayoutStatus(String externalPayoutId, String merchantOrderId);
 
   /**
    * Verify that a webhook payload is authentic.

@@ -28,6 +28,10 @@ public class RefundTransaction {
   @JoinColumn(name = "dispute_id")
   private Dispute dispute;
 
+  @OneToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "refund_request_id", unique = true)
+  private RefundRequest refundRequest;
+
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "admin_user_id")
   private User adminUser;

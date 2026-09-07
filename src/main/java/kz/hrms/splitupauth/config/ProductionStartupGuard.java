@@ -29,22 +29,7 @@ public class ProductionStartupGuard implements ApplicationRunner {
     List<String> violations = new ArrayList<>();
 
     validateProfiles(violations);
-    reject(
-        MockPaymentGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
-        violations,
-        "payment provider is mock");
-    reject(
-        !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
-        violations,
-        "payment provider is not production FreedomPay");
-    reject(!isFreedomPayLiveMode(), violations, "FreedomPay test mode is enabled");
-    reject(
-        isSandboxOrTestHost(hostOf(freedomPayProperties.getBaseUrl())),
-        violations,
-        "FreedomPay base URL points to sandbox/test host");
-    rejectBlank("ecopay.payments.freedompay.merchant-id", violations);
-    rejectBlank("ecopay.payments.freedompay.secret-key", violations);
-    rejectBlank("ecopay.payments.freedompay.payout-secret-key", violations);
+    validateMoneyMovement(violations);
     reject(!isStrongBase64Secret(prop("jwt.secret")), violations, "JWT secret is missing or weak");
     reject(
         !isStrongBase64Secret(prop("app.security.field-encryption-key")),
@@ -108,6 +93,46 @@ public class ProductionStartupGuard implements ApplicationRunner {
     reject(activeProfiles.contains("dev"), violations, "dev profile is active together with prod");
     reject(
         activeProfiles.contains("test"), violations, "test profile is active together with prod");
+  }
+
+  private void validateMoneyMovement(List<String> violations) {
+    boolean liveMoneyEnabled = boolProp("app.money.live-enabled");
+    boolean payoutDispatchEnabled = boolProp("app.money.payout-dispatch-enabled");
+    boolean refundDispatchEnabled = boolProp("app.money.refund-dispatch-enabled");
+    boolean postPayoutRefundEnabled = boolProp("app.money.post-payout-refund-enabled");
+    boolean ownerReceivableEnabled = boolProp("app.money.owner-receivable-enabled");
+
+    if (!liveMoneyEnabled) {
+      reject(
+          payoutDispatchEnabled || refundDispatchEnabled,
+          violations,
+          "money dispatch is enabled while the live-money gate is disabled");
+      return;
+    }
+
+    reject(
+        MockPaymentGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
+        violations,
+        "payment provider is mock");
+    reject(
+        !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
+        violations,
+        "payment provider is not production FreedomPay");
+    reject(!isFreedomPayLiveMode(), violations, "FreedomPay test mode is enabled");
+    reject(
+        isSandboxOrTestHost(hostOf(freedomPayProperties.getBaseUrl())),
+        violations,
+        "FreedomPay base URL points to sandbox/test host");
+    rejectBlank("ecopay.payments.freedompay.merchant-id", violations);
+    rejectBlank("ecopay.payments.freedompay.secret-key", violations);
+    rejectBlank("ecopay.payments.freedompay.payout-secret-key", violations);
+    reject(!payoutDispatchEnabled, violations, "payout dispatch is disabled in live-money mode");
+    reject(!refundDispatchEnabled, violations, "refund dispatch is disabled in live-money mode");
+    reject(intProp("app.payout.hold-days", -1) != 30, violations, "payout hold is not 30 days");
+    reject(
+        postPayoutRefundEnabled && !ownerReceivableEnabled,
+        violations,
+        "post-payout refunds require owner receivables");
   }
 
   private void validateFreedomPayUrls(List<String> violations) {
@@ -187,7 +212,8 @@ public class ProductionStartupGuard implements ApplicationRunner {
         hasPlaceholderValue(prop("app.production.legal-entity-name")),
         violations,
         "legal entity name is missing or placeholder");
-    reject(hasPlaceholderValue(prop("app.production.legal-bin")), violations, "legal BIN is missing");
+    reject(
+        hasPlaceholderValue(prop("app.production.legal-bin")), violations, "legal BIN is missing");
     reject(
         hasPlaceholderValue(prop("app.production.legal-address")),
         violations,
@@ -320,6 +346,18 @@ public class ProductionStartupGuard implements ApplicationRunner {
 
   private String prop(String name) {
     return environment.getProperty(name, "");
+  }
+
+  private boolean boolProp(String name) {
+    return "true".equalsIgnoreCase(prop(name));
+  }
+
+  private int intProp(String name, int fallback) {
+    try {
+      return Integer.parseInt(prop(name));
+    } catch (NumberFormatException ignored) {
+      return fallback;
+    }
   }
 
   private static void reject(boolean condition, List<String> violations, String message) {

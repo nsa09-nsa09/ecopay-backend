@@ -24,6 +24,8 @@ public class RoomMemberDto {
   private String accessMethod;
   private LocalDateTime ownerAccessConfirmedAt;
   private LocalDateTime memberConfirmedAt;
+  private LocalDateTime accessConfirmationDeadlineAt;
+  private LocalDateTime accessDeemedConfirmedAt;
   private LocalDateTime activatedAt;
   private LocalDateTime rejectedAt;
   private LocalDateTime endedAt;

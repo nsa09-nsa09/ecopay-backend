@@ -102,6 +102,32 @@ class ProductionStartupGuardTest {
     assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
   }
 
+  @Test
+  void disabledLiveMoneyAllowsSafeProductionStartupWithoutDispatch() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.money.live-enabled", "false");
+    environment.setProperty("app.money.payout-dispatch-enabled", "false");
+    environment.setProperty("app.money.refund-dispatch-enabled", "false");
+
+    assertDoesNotThrow(() -> guard(environment).run(null));
+  }
+
+  @Test
+  void dispatchCannotBeEnabledWithoutLiveMoneyGate() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.money.live-enabled", "false");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void liveMoneyRequiresExactlyThirtyDayHold() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.payout.hold-days", "1");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
   private ProductionStartupGuard guard(MockEnvironment environment) {
     return new ProductionStartupGuard(environment, validCors(), liveFreedomPay());
   }
@@ -138,6 +164,12 @@ class ProductionStartupGuardTest {
         .withProperty("app.production.legal-address", "Astana, Kazakhstan")
         .withProperty("app.production.legal-reviewed", "true")
         .withProperty("app.recurring.enabled", "false")
+        .withProperty("app.money.live-enabled", "true")
+        .withProperty("app.money.payout-dispatch-enabled", "true")
+        .withProperty("app.money.refund-dispatch-enabled", "true")
+        .withProperty("app.money.post-payout-refund-enabled", "false")
+        .withProperty("app.money.owner-receivable-enabled", "false")
+        .withProperty("app.payout.hold-days", "30")
         .withProperty("app.auth.refresh-cookie-secure", "true")
         .withProperty("springdoc.api-docs.enabled", "false")
         .withProperty("springdoc.swagger-ui.enabled", "false")

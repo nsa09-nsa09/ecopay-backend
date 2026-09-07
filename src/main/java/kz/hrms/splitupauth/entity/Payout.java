@@ -40,6 +40,16 @@ public class Payout {
   @Column(nullable = false, precision = 12, scale = 2)
   private BigDecimal amount;
 
+  @Column(name = "original_amount", nullable = false, precision = 12, scale = 2)
+  private BigDecimal originalAmount;
+
+  @Column(name = "refunded_share_amount", nullable = false, precision = 12, scale = 2)
+  @Builder.Default
+  private BigDecimal refundedShareAmount = BigDecimal.ZERO;
+
+  @Column(name = "payable_amount", nullable = false, precision = 12, scale = 2)
+  private BigDecimal payableAmount;
+
   @Column(nullable = false, length = 10)
   @Builder.Default
   private String currency = "KZT";
@@ -74,6 +84,9 @@ public class Payout {
   @Column(name = "release_at")
   private LocalDateTime releaseAt;
 
+  @Column(name = "captured_at")
+  private LocalDateTime capturedAt;
+
   @Column(name = "next_retry_at")
   private LocalDateTime nextRetryAt;
 
@@ -95,6 +108,9 @@ public class Payout {
     if (status == null) status = "PENDING";
     if (currency == null) currency = "KZT";
     if (retryCount == null) retryCount = 0;
+    if (originalAmount == null) originalAmount = amount;
+    if (refundedShareAmount == null) refundedShareAmount = BigDecimal.ZERO;
+    if (payableAmount == null) payableAmount = amount;
     // Defensive: a payout with no explicit hold releases immediately.
     if (releaseAt == null) releaseAt = createdAt;
   }

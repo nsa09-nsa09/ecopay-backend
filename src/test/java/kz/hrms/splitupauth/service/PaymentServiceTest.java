@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.Optional;
+import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
@@ -19,7 +21,6 @@ import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
@@ -54,6 +55,7 @@ class PaymentServiceTest {
   @Mock private NotificationService notificationService;
   @Mock private CommissionCalculator commissionCalculator;
   @Mock private MoneyLedgerService moneyLedgerService;
+  @Mock private LiveMoneyGuard liveMoneyGuard;
   @Mock private PlatformTransactionManager transactionManager;
 
   private PaymentService paymentService;
@@ -78,13 +80,16 @@ class PaymentServiceTest {
             notificationService,
             commissionCalculator,
             moneyLedgerService,
+            liveMoneyGuard,
+            Clock.systemUTC(),
             transactionManager);
   }
 
   private PaymentIntent pendingIntent(BigDecimal amount) {
     User user = User.builder().id(1L).email("m@test.kz").build();
     Room room = Room.builder().id(2L).maxMembers(2).status(RoomStatus.OPEN).build();
-    RoomMember member = RoomMember.builder().id(3L).user(user).room(room).status(MemberStatus.APPLIED).build();
+    RoomMember member =
+        RoomMember.builder().id(3L).user(user).room(room).status(MemberStatus.APPLIED).build();
     return PaymentIntent.builder()
         .id(100L)
         .idempotencyKey("k-100")
@@ -182,6 +187,20 @@ class PaymentServiceTest {
   }
 
   @Test
+  void pendingPayoutWebhookDoesNotBecomeFailure() {
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .kind("PAYOUT")
+            .resultStatus("PENDING")
+            .externalPaymentId("MOCK-OUT-9")
+            .build();
+
+    paymentService.applyWebhookEvent(event);
+
+    verify(payoutService, never()).applyPayoutWebhook(any(), any(Boolean.class));
+  }
+
+  @Test
   void refundWebhook_isRoutedToRefundService() {
     GatewayWebhookEvent event =
         GatewayWebhookEvent.builder()
@@ -248,8 +267,7 @@ class PaymentServiceTest {
 
     FreedomWebhookProcessingException error =
         assertThrows(
-            FreedomWebhookProcessingException.class,
-            () -> paymentService.applyWebhookEvent(event));
+            FreedomWebhookProcessingException.class, () -> paymentService.applyWebhookEvent(event));
 
     assertEquals("INTENT_NOT_FOUND", error.getErrorCode());
     assertTrue(error.isRetryable());
@@ -261,8 +279,10 @@ class PaymentServiceTest {
     when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
     when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
     when(roomMemberRepository.findWithLockById(3L)).thenReturn(Optional.of(intent.getRoomMember()));
-    when(roomRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(intent.getRoomMember().getRoom()));
-    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(any(), any())).thenReturn(1L);
+    when(roomRepository.findByIdForUpdate(2L))
+        .thenReturn(Optional.of(intent.getRoomMember().getRoom()));
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(any(), any()))
+        .thenReturn(1L);
     when(paymentTransactionRepository.findFirstByPaymentIntentAndTypeAndStatus(any(), any(), any()))
         .thenReturn(Optional.empty());
     when(paymentTransactionRepository.save(any()))
@@ -273,11 +293,7 @@ class PaymentServiceTest {
               return tx;
             });
     when(refundService.createAutomaticCompensationRefund(any(), any()))
-        .thenReturn(
-            RefundTransaction.builder()
-                .id(300L)
-                .status(RefundStatus.PENDING)
-                .build());
+        .thenReturn(RefundTransaction.builder().id(300L).status(RefundStatus.PENDING).build());
 
     PaymentIntent result =
         paymentService.finalizeSuccessfulPayment(

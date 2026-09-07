@@ -10,10 +10,8 @@ import kz.hrms.splitupauth.entity.PayoutCardBinding;
 import kz.hrms.splitupauth.entity.PayoutMethod;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
-import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
-import kz.hrms.splitupauth.payment.gateway.GatewayChargeResponse;
-import kz.hrms.splitupauth.payment.gateway.GatewayRefundRequest;
-import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingRequest;
+import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingResponse;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PayoutCardBindingRepository;
@@ -26,11 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Owner payout-card connection via the provider's hosted page.
  *
- * <p>FreedomPay only hands back a reusable card token after a card has gone through its hosted
- * page, so we run a small verification charge (card-save enabled) to tokenize the card, then
- * auto-refund it. The resulting token is saved and registered as the owner's payout method — the
- * owner never sees or types a token. This flow is deliberately isolated from the room-payment
- * {@code PaymentIntent} path (which is bound to a room member).
+ * <p>FreedomPay's universal {@code cardstorage/add2} hosted flow tokenizes the card without a
+ * verification charge. Its signed callback provides the payout-compatible card token, which is
+ * then registered as the owner's payout method. The owner never sees or types a token.
  */
 @Service
 @RequiredArgsConstructor
@@ -41,20 +37,15 @@ public class PayoutCardBindingService {
   private final PaymentGatewayRegistry gatewayRegistry;
   private final PayoutService payoutService;
 
-  /** Verification charge amount (KZT). Auto-refunded once the card is tokenized. */
-  @Value("${app.payout.card-binding-amount:100}")
-  private BigDecimal cardBindingAmount;
-
   @Value("${app.frontend-url}")
   private String frontendUrl;
 
   /**
-   * Starts a binding: creates a verification charge on the hosted page and returns the URL the
-   * owner must visit to enter their card. {@code returnUrl} is the frontend page the provider
-   * should redirect back to; the binding id and status are appended to it.
+   * Starts a zero-amount binding and returns the hosted page where the owner enters their card.
+   * The client-supplied return URL is ignored; redirects always use the configured frontend.
    */
   @Transactional
-  public PayoutCardBindingResponse initBinding(User user, String returnUrl) {
+  public PayoutCardBindingResponse initBinding(User user, String ignoredReturnUrl) {
     PaymentGateway gateway = gatewayRegistry.defaultGateway();
 
     PayoutCardBinding binding =
@@ -62,36 +53,24 @@ public class PayoutCardBindingService {
             PayoutCardBinding.builder()
                 .user(user)
                 .providerName(gateway.providerName())
-                .amount(cardBindingAmount)
+                .amount(BigDecimal.ZERO.setScale(2))
                 .currency("KZT")
                 .status("PENDING")
                 .idempotencyKey("cardbind-" + user.getId() + "-" + UUID.randomUUID())
                 .build());
 
     String trustedReturnUrl = trustedReturnUrl();
-    String successUrl =
-        appendQuery(trustedReturnUrl, "binding=" + binding.getId() + "&status=success");
-    String failureUrl =
-        appendQuery(trustedReturnUrl, "binding=" + binding.getId() + "&status=failure");
+    String backUrl = appendQuery(trustedReturnUrl, "binding=" + binding.getId());
 
-    GatewayChargeResponse resp;
+    GatewayCardBindingResponse resp;
     try {
       resp =
-          gateway.initCharge(
-              GatewayChargeRequest.builder()
-                  // Non-numeric order id keeps this binding's webhook from being mistaken
-                  // for a real PaymentIntent (which uses a bare numeric order id).
-                  .orderIdOverride("cardbind-" + binding.getId())
+          gateway.initCardBinding(
+              GatewayCardBindingRequest.builder()
+                  .bindingId(binding.getId())
                   .idempotencyKey(binding.getIdempotencyKey())
-                  .amount(cardBindingAmount)
-                  .currency("KZT")
-                  .description("EcoPay payout card verification")
-                  .userEmail(user.getEmail())
-                  .userPhone(user.getPhone())
                   .userId(String.valueOf(user.getId()))
-                  .saveCardRequested(true)
-                  .successUrl(successUrl)
-                  .failureUrl(failureUrl)
+                  .backUrl(backUrl)
                   .build());
     } catch (Exception ex) {
       log.error("Payout card binding {} init failed: {}", binding.getId(), ex.getMessage());
@@ -116,21 +95,29 @@ public class PayoutCardBindingService {
           .build();
     }
 
-    binding.setExternalPaymentId(resp.getExternalPaymentId());
+    binding.setExternalPaymentId(resp.getExternalBindingId());
     bindingRepository.save(binding);
+
+    if (resp.getCardToken() != null && !resp.getCardToken().isBlank()) {
+      completeBinding(binding, user, resp.getCardToken(), resp.getCardPanMask());
+      return PayoutCardBindingResponse.builder()
+          .bindingId(binding.getId())
+          .requiresRedirect(false)
+          .status("SUCCESS")
+          .build();
+    }
 
     return PayoutCardBindingResponse.builder()
         .bindingId(binding.getId())
-        .paymentUrl(resp.getPaymentUrl())
+        .paymentUrl(resp.getRedirectUrl())
         .requiresRedirect(resp.isRequiresRedirect())
         .status("PENDING")
         .build();
   }
 
   /**
-   * Confirms a binding after the owner returns from the hosted page: queries the provider for the
-   * card token, saves it, registers the payout method, and refunds the verification charge.
-   * Idempotent — a binding that already succeeded just returns its payout method.
+   * Reads a binding after the owner returns. The signed provider callback is the only authority
+   * that can complete a real binding. Idempotent.
    */
   @Transactional
   public PayoutCardBindingConfirmResponse confirmBinding(User user, Long bindingId) {
@@ -154,63 +141,19 @@ public class PayoutCardBindingService {
           .message(binding.getFailureMessage())
           .build();
     }
-    if (binding.getExternalPaymentId() == null) {
-      return PayoutCardBindingConfirmResponse.builder().status("PENDING").build();
-    }
-
-    PaymentGateway gateway = gatewayRegistry.defaultGateway();
-    GatewayStatusResponse status = gateway.getStatus(binding.getExternalPaymentId());
-
-    if ("SUCCESS".equals(status.getStatus())) {
-      String token = status.getCardToken();
-      String panMask = status.getCardPanMask();
-
-      // get_status does not return the saved-card token; look it up via the cardstorage
-      // list (keyed by pg_user_id). This avoids needing the result webhook on localhost.
-      if ((token == null || token.isBlank())
-          && gateway instanceof kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway fp) {
-        GatewayStatusResponse saved = fp.fetchSavedCardForUser(String.valueOf(user.getId()));
-        if (saved != null && saved.getCardToken() != null && !saved.getCardToken().isBlank()) {
-          token = saved.getCardToken();
-          if (panMask == null || panMask.isBlank()) panMask = saved.getCardPanMask();
-        }
-      }
-
-      if (token == null || token.isBlank()) {
-        // Charged, but the token isn't available yet (e.g. webhook-only delivery). Stay
-        // PENDING so the owner can retry — do NOT fail; the charge succeeded.
-        return PayoutCardBindingConfirmResponse.builder()
-            .status("PENDING")
-            .message("Card charged — still finalizing. Please re-check in a moment.")
-            .build();
-      }
-
-      PayoutMethod method = completeBinding(binding, user, token, panMask);
-      return PayoutCardBindingConfirmResponse.builder()
-          .status("SUCCESS")
-          .method(PayoutMethodDto.from(method))
-          .build();
-    }
-
-    if ("FAILED".equals(status.getStatus())) {
-      binding.setStatus("FAILED");
-      binding.setFailureMessage(status.getFailureMessage());
-      bindingRepository.save(binding);
-      return PayoutCardBindingConfirmResponse.builder()
-          .status("FAILED")
-          .message(status.getFailureMessage())
-          .build();
-    }
-
-    // Still pending at the provider — the owner may not have finished, or it's settling.
-    return PayoutCardBindingConfirmResponse.builder().status("PENDING").build();
+    /*
+     * A real binding is completed only by the signed add2 callback. Querying a user-level card
+     * list here could accidentally attach an older card to this new binding attempt.
+     */
+    return PayoutCardBindingConfirmResponse.builder()
+        .status("PENDING")
+        .message("Card tokenization is still being confirmed by the provider.")
+        .build();
   }
 
   /**
-   * Finalize a binding from the Freedom Pay result webhook. The webhook carries the saved-card
-   * token (pg_recurring_profile_id) for card-save flows, so this is the reliable completion path
-   * when the cardstorage lookup isn't available. Routed here by FreedomPayWebhookController when
-   * the order id is a "cardbind-..." marker. Idempotent.
+   * Finalize a binding from the Freedom Pay callback carrying {@code pg_card_token}. Routed here
+   * when the order id is a {@code cardbind-...} marker. Idempotent.
    */
   @Transactional
   public void applyBindingWebhook(Long bindingId, boolean success, String token, String panMask) {
@@ -233,30 +176,10 @@ public class PayoutCardBindingService {
     }
   }
 
-  /** Save the token, register the payout method, refund the verification charge, mark SUCCESS. */
+  /** Save the token, register the payout method, and mark the zero-amount binding successful. */
   private PayoutMethod completeBinding(
       PayoutCardBinding binding, User user, String token, String panMask) {
     PayoutMethod method = payoutService.registerVerifiedPayoutMethod(user, token, panMask);
-
-    // Return the verification charge. Best-effort: a failed refund must not block the binding
-    // (the amount is small and visible for manual reconciliation).
-    try {
-      gatewayRegistry
-          .defaultGateway()
-          .refund(
-              GatewayRefundRequest.builder()
-                  .externalPaymentId(binding.getExternalPaymentId())
-                  .amount(binding.getAmount())
-                  .currency(binding.getCurrency())
-                  .reason("Payout card verification refund")
-                  .idempotencyKey("cardbind-refund-" + binding.getId())
-                  .build());
-    } catch (Exception ex) {
-      log.warn(
-          "Card binding {} verification refund failed (manual reconcile needed): {}",
-          binding.getId(),
-          ex.getMessage());
-    }
 
     binding.setStatus("SUCCESS");
     binding.setPanMask(panMask);

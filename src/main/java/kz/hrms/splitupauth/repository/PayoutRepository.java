@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -22,6 +23,13 @@ public interface PayoutRepository
   long countByUserAndStatusIn(User user, List<String> statuses);
 
   List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
+
+  @Query(
+      "select p from Payout p where p.status = 'PENDING_PROVIDER' "
+          + "and p.providerPayoutId is not null "
+          + "and (p.nextRetryAt is null or p.nextRetryAt <= :now) "
+          + "order by p.createdAt asc")
+  List<Payout> findProviderPendingForReconciliation(@Param("now") LocalDateTime now);
 
   /**
    * Owner payouts that are still inside their hold window. Terminal, reversed, due, and already
@@ -48,9 +56,17 @@ public interface PayoutRepository
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select p from Payout p where p.providerPayoutId = :providerPayoutId")
-  Optional<Payout> findWithLockByProviderPayoutId(@Param("providerPayoutId") String providerPayoutId);
+  Optional<Payout> findWithLockByProviderPayoutId(
+      @Param("providerPayoutId") String providerPayoutId);
 
   Optional<Payout> findByTriggeringPaymentIntent(PaymentIntent triggeringPaymentIntent);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select p from Payout p where p.triggeringPaymentIntent.roomMember = :roomMember "
+          + "and p.status in :statuses")
+  List<Payout> findWithLockByRoomMemberAndStatusIn(
+      @Param("roomMember") RoomMember roomMember, @Param("statuses") List<String> statuses);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select p from Payout p where p.id = :id")

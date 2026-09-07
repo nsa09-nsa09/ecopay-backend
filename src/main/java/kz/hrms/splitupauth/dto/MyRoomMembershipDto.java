@@ -23,5 +23,7 @@ public class MyRoomMembershipDto {
   private String accessMethod;
   private LocalDateTime ownerAccessConfirmedAt;
   private LocalDateTime memberConfirmedAt;
+  private LocalDateTime accessConfirmationDeadlineAt;
+  private LocalDateTime accessDeemedConfirmedAt;
   private LocalDateTime activatedAt;
 }

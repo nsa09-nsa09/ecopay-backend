@@ -57,6 +57,12 @@ public class RoomMember {
   @Column(name = "member_confirmed_at")
   private LocalDateTime memberConfirmedAt;
 
+  @Column(name = "access_confirmation_deadline_at")
+  private LocalDateTime accessConfirmationDeadlineAt;
+
+  @Column(name = "access_deemed_confirmed_at")
+  private LocalDateTime accessDeemedConfirmedAt;
+
   @Column(name = "activated_at")
   private LocalDateTime activatedAt;
 

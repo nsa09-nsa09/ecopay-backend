@@ -38,6 +38,9 @@ public class FreedomPayUrlResolver {
   /** Backend webhook paths — must match {@code FreedomPayWebhookController}'s mappings. */
   public static final String RESULT_PATH = "/api/v1/webhooks/freedompay/result";
 
+  public static final String CARD_STORAGE_RESULT_PATH =
+      "/api/v1/webhooks/freedompay/card-storage-result";
+
   public static final String PAYOUT_RESULT_PATH = "/api/v1/webhooks/freedompay/payout-result";
 
   /** Frontend SPA redirect routes. */
@@ -50,6 +53,11 @@ public class FreedomPayUrlResolver {
   /** Charge webhook URL Freedom Pay POSTs to — points at THIS backend. */
   public String resultUrl() {
     return resolveBackend(properties.getResultUrl(), RESULT_PATH);
+  }
+
+  /** Universal card-storage callback URL Freedom Pay POSTs to. */
+  public String cardStorageResultUrl() {
+    return resolveBackend(properties.getCardStorageResultUrl(), CARD_STORAGE_RESULT_PATH);
   }
 
   /** Payout webhook URL Freedom Pay POSTs to — points at THIS backend. */

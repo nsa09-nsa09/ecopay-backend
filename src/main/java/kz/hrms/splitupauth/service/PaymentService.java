@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -30,8 +31,8 @@ import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -79,20 +80,20 @@ public class PaymentService {
   private final NotificationService notificationService;
   private final CommissionCalculator commissionCalculator;
   private final MoneyLedgerService moneyLedgerService;
+  private final LiveMoneyGuard liveMoneyGuard;
+  private final Clock clock;
   private final PlatformTransactionManager transactionManager;
 
   public PaymentIntentResponse createPaymentIntent(
       Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
+    liveMoneyGuard.requireEnabledForNewCharge();
     PreparedPayment prepared;
     try {
       prepared =
-          tx()
-              .execute(
-                  status -> createIntentAndReservation(roomMemberId, currentUser, request));
+          tx().execute(status -> createIntentAndReservation(roomMemberId, currentUser, request));
     } catch (DataIntegrityViolationException ex) {
       PaymentIntentResponse existingResponse =
-          tx()
-              .execute(
+          tx().execute(
                   status ->
                       paymentIntentRepository
                           .findByIdempotencyKey(request.getIdempotencyKey())
@@ -106,8 +107,7 @@ public class PaymentService {
         return existingResponse;
       }
       PaymentIntentResponse openResponse =
-          tx()
-              .execute(
+          tx().execute(
                   status -> {
                     PaymentIntent openIntent = findOpenIntentForMember(roomMemberId, currentUser);
                     return openIntent == null ? null : mapToResponse(openIntent);
@@ -134,8 +134,7 @@ public class PaymentService {
       log.error(
           "Gateway charge initiation failed for intent {}: {}", intent.getId(), ex.getMessage());
       PaymentIntentResponse failed =
-          tx()
-              .execute(
+          tx().execute(
                   status ->
                       mapToResponse(
                           markIntentUnknownAfterGatewayException(
@@ -144,8 +143,7 @@ public class PaymentService {
     }
 
     PaymentIntentResponse updated =
-        tx()
-            .execute(
+        tx().execute(
                 status ->
                     mapToResponse(
                         applyGatewayInitResponse(intent.getId(), chargeResp, currentUser.getId())));
@@ -153,8 +151,7 @@ public class PaymentService {
     if (chargeResp.isSuccess() && !chargeResp.isRequiresRedirect()) {
       Long updatedIntentId = updated.getId();
       updated =
-          tx()
-              .execute(
+          tx().execute(
                   status ->
                       mapToResponse(
                           finalizeSuccessfulPayment(
@@ -436,7 +433,8 @@ public class PaymentService {
   }
 
   @Transactional(readOnly = true)
-  public PaymentIntentResponse getCurrentPaymentIntentForMember(Long roomMemberId, User currentUser) {
+  public PaymentIntentResponse getCurrentPaymentIntentForMember(
+      Long roomMemberId, User currentUser) {
     PaymentIntent intent = findOpenIntentForMember(roomMemberId, currentUser);
     if (intent == null) {
       throw new ResourceNotFoundException("Open payment intent not found");
@@ -559,6 +557,9 @@ public class PaymentService {
   public void applyWebhookEvent(GatewayWebhookEvent event) {
     // Async payout result callback (no intent id) — route to the payout service.
     if ("PAYOUT".equals(event.getKind())) {
+      if ("PENDING".equals(event.getResultStatus())) {
+        return;
+      }
       payoutService.applyPayoutWebhook(
           event.getExternalPaymentId(), "SUCCESS".equals(event.getResultStatus()));
       return;
@@ -566,6 +567,9 @@ public class PaymentService {
 
     // Async refund result callback — route to the refund service.
     if ("REFUND".equals(event.getKind())) {
+      if ("PENDING".equals(event.getResultStatus())) {
+        return;
+      }
       refundService.applyRefundWebhook(
           event.getExternalPaymentId(), "SUCCESS".equals(event.getResultStatus()));
       return;
@@ -743,6 +747,9 @@ public class PaymentService {
     }
 
     String fromStatus = intent.getStatus().name();
+    if (intent.getCapturedAt() == null) {
+      intent.setCapturedAt(LocalDateTime.now(clock));
+    }
     if (externalPaymentId != null && !externalPaymentId.isBlank()) {
       intent.setExternalPaymentId(externalPaymentId);
     }
@@ -751,7 +758,8 @@ public class PaymentService {
     }
     SeatConsumptionResult seat = consumeReservedSeatIfAvailable(intent);
     if (!seat.accepted()) {
-      PaymentTransaction chargeTx = recordSuccessTransaction(intent, cardPanMask, providerSignature, false);
+      PaymentTransaction chargeTx =
+          recordSuccessTransaction(intent, cardPanMask, providerSignature, false);
       intent.setStatus(PaymentIntentStatus.REFUND_REQUIRED);
       intent.setCompensationRequired(true);
       intent.setReviewRequired(true);
@@ -789,7 +797,10 @@ public class PaymentService {
           intent.setReviewRequired(true);
         }
       } catch (Exception ex) {
-        log.error("Automatic compensation refund failed for intent {}: {}", intent.getId(), ex.getMessage());
+        log.error(
+            "Automatic compensation refund failed for intent {}: {}",
+            intent.getId(),
+            ex.getMessage());
         intent.setStatus(PaymentIntentStatus.REQUIRES_REVIEW);
         intent.setReviewRequired(true);
         intent.setReviewReason(seat.reason() + ": " + ex.getMessage());
@@ -988,7 +999,10 @@ public class PaymentService {
   }
 
   private PaymentIntent requireSameIdempotentRequest(
-      PaymentIntent existing, Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
+      PaymentIntent existing,
+      Long roomMemberId,
+      User currentUser,
+      CreatePaymentIntentRequest request) {
     boolean sameUser =
         existing.getUser() != null && existing.getUser().getId().equals(currentUser.getId());
     boolean sameMember =
@@ -1055,6 +1069,7 @@ public class PaymentService {
             .rawPayload(rawPayload)
             .providerSignature(providerSignature)
             .cardPanMask(cardPanMask)
+            .capturedAt(intent.getCapturedAt())
             .build();
     tx = paymentTransactionRepository.save(tx);
     RoomMember member = intent.getRoomMember();
@@ -1160,7 +1175,8 @@ public class PaymentService {
     if (!isRoomPayable(lockedRoom)) {
       throw new InvalidRequestException("Room is not payable in status " + lockedRoom.getStatus());
     }
-    if (lockedRoom.getStartDate() != null && !LocalDateTime.now().isBefore(lockedRoom.getStartDate())) {
+    if (lockedRoom.getStartDate() != null
+        && !LocalDateTime.now().isBefore(lockedRoom.getStartDate())) {
       throw new InvalidRequestException("Payment window is closed for this room");
     }
     if (!isActiveUser(currentUser) || !isActiveUser(roomMember.getUser())) {

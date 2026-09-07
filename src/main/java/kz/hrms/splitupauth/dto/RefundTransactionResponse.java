@@ -15,6 +15,7 @@ public class RefundTransactionResponse {
   private Long id;
   private Long paymentTransactionId;
   private Long disputeId;
+  private Long refundRequestId;
   private Long adminUserId;
   private String status;
   private BigDecimal amount;

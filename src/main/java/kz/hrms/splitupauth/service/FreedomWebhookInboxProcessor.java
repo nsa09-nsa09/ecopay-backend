@@ -49,7 +49,11 @@ public class FreedomWebhookInboxProcessor {
             "INVALID_BINDING_ID", "Card-binding webhook has an invalid order id", false);
       }
       boolean success =
-          "1".equals(params.get("pg_result")) || "SUCCESS".equals(event.getResultStatus());
+          "1".equals(params.get("pg_result"))
+              || "SUCCESS".equals(event.getResultStatus())
+              || ("approve".equalsIgnoreCase(params.get("pg_type"))
+                  && event.getCardToken() != null
+                  && !event.getCardToken().isBlank());
       cardBindingService.applyBindingWebhook(
           bindingId, success, event.getCardToken(), event.getCardPanMask());
     } else {

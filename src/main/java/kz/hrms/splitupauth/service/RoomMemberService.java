@@ -44,6 +44,9 @@ public class RoomMemberService {
   @Value("${app.identifier-reveal.ttl-seconds:30}")
   private long identifierRevealTtlSeconds;
 
+  @Value("${app.access.deemed-confirmation-hours:72}")
+  private long deemedConfirmationHours;
+
   @Value("${app.rate-limit.identifier-reveal.owner.burst-max:5}")
   private int ownerRevealBurstMax;
 
@@ -246,7 +249,9 @@ public class RoomMemberService {
     }
 
     if (roomMember.getOwnerAccessConfirmedAt() == null) {
-      roomMember.setOwnerAccessConfirmedAt(LocalDateTime.now());
+      LocalDateTime confirmedAt = LocalDateTime.now();
+      roomMember.setOwnerAccessConfirmedAt(confirmedAt);
+      roomMember.setAccessConfirmationDeadlineAt(confirmedAt.plusHours(deemedConfirmationHours));
     }
 
     roomMember.setAccessMethod(request.getAccessMethod());
@@ -413,6 +418,13 @@ public class RoomMemberService {
     }
   }
 
+  /** Internal entry point used only after deemed-confirmation checks have succeeded. */
+  @Transactional
+  public void activateAfterDeemedConfirmation(RoomMember roomMember) {
+    tryActivateMembership(roomMember);
+    roomMemberRepository.save(roomMember);
+  }
+
   private void tryActivateMembership(RoomMember roomMember) {
     if (roomMember.getStatus() != MemberStatus.PENDING) {
       return;
@@ -430,7 +442,8 @@ public class RoomMemberService {
       return;
     }
 
-    if (roomMember.getMemberConfirmedAt() == null) {
+    if (roomMember.getMemberConfirmedAt() == null
+        && roomMember.getAccessDeemedConfirmedAt() == null) {
       return;
     }
 

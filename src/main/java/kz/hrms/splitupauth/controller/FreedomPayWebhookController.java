@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayXmlParser;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,24 @@ public class FreedomPayWebhookController {
   @PostMapping(value = "/payout-result", produces = MediaType.APPLICATION_XML_VALUE)
   public ResponseEntity<String> payoutResult(@RequestParam Map<String, String> params) {
     return processWebhook("payout-result", params);
+  }
+
+  /** Callback for universal card tokenization ({@code cardstorage/add2}). */
+  @PostMapping(value = "/card-storage-result", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> cardStorageResult(@RequestParam Map<String, String> params) {
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay card-storage callback rejected: payload too large");
+      return errorResponse("card-storage-result", "payload too large");
+    }
+    try {
+      String xml = params.get("pg_xml");
+      Map<String, String> normalized =
+          xml == null || xml.isBlank() ? params : FreedomPayXmlParser.parseFlatXml(xml);
+      return processWebhook("card-storage-result", normalized);
+    } catch (RuntimeException ex) {
+      log.warn("Freedom Pay card-storage callback rejected: invalid pg_xml");
+      return errorResponse("card-storage-result", "invalid payload");
+    }
   }
 
   private ResponseEntity<String> processWebhook(String script, Map<String, String> params) {

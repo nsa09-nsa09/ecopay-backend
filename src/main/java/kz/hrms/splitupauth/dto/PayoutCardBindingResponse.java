@@ -10,6 +10,6 @@ public class PayoutCardBindingResponse {
   private Long bindingId;
   private String paymentUrl;
   private boolean requiresRedirect;
-  private String status; // PENDING | FAILED
+  private String status; // PENDING | SUCCESS | FAILED
   private String failureMessage;
 }

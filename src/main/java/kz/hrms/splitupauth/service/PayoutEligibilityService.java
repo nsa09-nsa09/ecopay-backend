@@ -10,6 +10,7 @@ import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionType;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.PayoutBlockStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
@@ -18,6 +19,7 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.PayoutBlockRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -29,6 +31,7 @@ public class PayoutEligibilityService {
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RefundTransactionRepository refundTransactionRepository;
   private final DisputeRepository disputeRepository;
+  private final PayoutBlockRepository payoutBlockRepository;
   private final Clock clock;
 
   public Decision evaluate(Payout payout) {
@@ -55,8 +58,16 @@ public class PayoutEligibilityService {
       return Decision.blocked("CAPTURE_TRANSACTION_MISSING");
     }
     if (refundTransactionRepository.existsByPaymentIntentAndStatusIn(
-        intent, List.of(RefundStatus.PENDING, RefundStatus.FAILED, RefundStatus.REQUIRES_REVIEW))) {
+        intent,
+        List.of(
+            RefundStatus.PENDING,
+            RefundStatus.PENDING_PROVIDER,
+            RefundStatus.FAILED,
+            RefundStatus.REQUIRES_REVIEW))) {
       return Decision.blocked("REFUND_ACTIVE");
+    }
+    if (payoutBlockRepository.existsByPayoutAndStatus(payout, PayoutBlockStatus.ACTIVE)) {
+      return Decision.blocked("PAYOUT_BLOCK_ACTIVE");
     }
 
     RoomMember member = intent.getRoomMember();
@@ -64,7 +75,7 @@ public class PayoutEligibilityService {
         || member.getStatus() != MemberStatus.ACTIVE
         || member.getActivatedAt() == null
         || member.getOwnerAccessConfirmedAt() == null
-        || member.getMemberConfirmedAt() == null
+        || (member.getMemberConfirmedAt() == null && member.getAccessDeemedConfirmedAt() == null)
         || Boolean.TRUE.equals(member.getRequiresAdminReview())) {
       return Decision.waiting("ACCESS_NOT_CONFIRMED");
     }

@@ -24,6 +24,8 @@ public class RoomMemberMapper {
         .accessMethod(roomMember.getAccessMethod())
         .ownerAccessConfirmedAt(roomMember.getOwnerAccessConfirmedAt())
         .memberConfirmedAt(roomMember.getMemberConfirmedAt())
+        .accessConfirmationDeadlineAt(roomMember.getAccessConfirmationDeadlineAt())
+        .accessDeemedConfirmedAt(roomMember.getAccessDeemedConfirmedAt())
         .activatedAt(roomMember.getActivatedAt())
         .rejectedAt(roomMember.getRejectedAt())
         .endedAt(roomMember.getEndedAt())
@@ -44,6 +46,8 @@ public class RoomMemberMapper {
         .accessMethod(roomMember.getAccessMethod())
         .ownerAccessConfirmedAt(roomMember.getOwnerAccessConfirmedAt())
         .memberConfirmedAt(roomMember.getMemberConfirmedAt())
+        .accessConfirmationDeadlineAt(roomMember.getAccessConfirmationDeadlineAt())
+        .accessDeemedConfirmedAt(roomMember.getAccessDeemedConfirmedAt())
         .activatedAt(roomMember.getActivatedAt())
         .build();
   }

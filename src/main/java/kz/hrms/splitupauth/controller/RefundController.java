@@ -1,13 +1,10 @@
 package kz.hrms.splitupauth.controller;
 
-import jakarta.validation.Valid;
 import java.util.List;
-import kz.hrms.splitupauth.dto.CreateRefundRequest;
 import kz.hrms.splitupauth.dto.RefundTransactionResponse;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.RefundService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -18,12 +15,6 @@ import org.springframework.web.bind.annotation.*;
 public class RefundController {
 
   private final RefundService refundService;
-
-  @PostMapping
-  public ResponseEntity<RefundTransactionResponse> request(
-      @AuthenticationPrincipal User user, @Valid @RequestBody CreateRefundRequest body) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(refundService.requestRefund(user, body));
-  }
 
   @GetMapping("/me")
   public ResponseEntity<List<RefundTransactionResponse>> listMine(

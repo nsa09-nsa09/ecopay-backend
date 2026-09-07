@@ -9,10 +9,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Tracks an owner's attempt to connect a payout card through the Freedom Pay hosted page. A small
- * verification charge (auto-refunded) is used to tokenize the card; this row links the resulting
- * provider payment id back to the user so the confirmation step can only register a token the same
- * user actually produced.
+ * Tracks an owner's attempt to connect a payout card through Freedom Pay's zero-amount universal
+ * card-storage page. This row links the provider callback to the user so only a token produced by
+ * that binding attempt can become the user's payout destination.
  */
 @Entity
 @Table(

@@ -10,12 +10,12 @@ import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentTransaction;
 import kz.hrms.splitupauth.entity.RefundTransaction;
 import kz.hrms.splitupauth.entity.User;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.data.domain.Pageable;
 
 public interface RefundTransactionRepository
     extends JpaRepository<RefundTransaction, Long>, JpaSpecificationExecutor<RefundTransaction> {
@@ -70,7 +70,16 @@ public interface RefundTransactionRepository
             tx,
             List.of(
                 kz.hrms.splitupauth.entity.RefundStatus.PENDING,
+                kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER,
                 kz.hrms.splitupauth.entity.RefundStatus.SUCCESS))
+        .stream()
+        .map(RefundTransaction::getAmount)
+        .reduce(BigDecimal.ZERO, BigDecimal::add);
+  }
+
+  default BigDecimal sumSuccessfulRefundAmounts(PaymentTransaction tx) {
+    return findByPaymentTransactionAndStatusIn(
+            tx, List.of(kz.hrms.splitupauth.entity.RefundStatus.SUCCESS))
         .stream()
         .map(RefundTransaction::getAmount)
         .reduce(BigDecimal.ZERO, BigDecimal::add);

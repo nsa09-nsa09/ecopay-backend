@@ -3,8 +3,8 @@ package kz.hrms.splitupauth.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -23,6 +23,7 @@ import kz.hrms.splitupauth.entity.Payout;
 import kz.hrms.splitupauth.entity.PayoutMethod;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.payment.gateway.GatewayPayoutResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
@@ -50,14 +51,15 @@ class PayoutServiceTest {
   @Mock private PayoutEligibilityService payoutEligibilityService;
   @Mock private PlatformTransactionManager transactionManager;
 
-  private final Clock clock =
-      Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneId.of("UTC"));
+  private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneId.of("UTC"));
 
   private PayoutService payoutService;
 
   @BeforeEach
   void setUp() {
-    lenient().when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+    lenient()
+        .when(transactionManager.getTransaction(any()))
+        .thenReturn(new SimpleTransactionStatus());
     payoutService =
         new PayoutService(
             payoutRepository,
@@ -114,6 +116,124 @@ class PayoutServiceTest {
   }
 
   @Test
+  void successfulPartialRefundReducesFutureOwnerPayout() {
+    PaymentIntent intent =
+        PaymentIntent.builder()
+            .amount(new BigDecimal("5700.00"))
+            .commissionAmount(new BigDecimal("700.00"))
+            .build();
+    Payout payout =
+        Payout.builder()
+            .id(123L)
+            .status("FROZEN")
+            .amount(new BigDecimal("5000.00"))
+            .originalAmount(new BigDecimal("5000.00"))
+            .payableAmount(new BigDecimal("5000.00"))
+            .idempotencyKey("payout-123")
+            .build();
+    when(payoutRepository.findByTriggeringPaymentIntent(intent)).thenReturn(Optional.of(payout));
+    when(payoutRepository.findWithLockById(123L)).thenReturn(Optional.of(payout));
+
+    payoutService.adjustOwnerPayoutForSuccessfulRefund(intent, new BigDecimal("2850.00"));
+
+    assertEquals(0, new BigDecimal("2500.00").compareTo(payout.getRefundedShareAmount()));
+    assertEquals(0, new BigDecimal("2500.00").compareTo(payout.getPayableAmount()));
+    assertEquals(0, new BigDecimal("2500.00").compareTo(payout.getAmount()));
+    assertEquals("FROZEN", payout.getStatus());
+    verify(payoutRepository).save(payout);
+  }
+
+  @Test
+  void freedomPaySynchronousAcceptanceWaitsForFinalCallback() {
+    User owner = User.builder().id(42L).build();
+    Payout payout =
+        Payout.builder()
+            .id(124L)
+            .user(owner)
+            .amount(new BigDecimal("1000.00"))
+            .currency("KZT")
+            .status("PENDING")
+            .idempotencyKey("payout-124")
+            .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
+            .build();
+    PayoutMethod method =
+        PayoutMethod.builder().user(owner).providerCardToken("tok-owner").status("ACTIVE").build();
+    when(payoutRepository.findWithLockById(124L)).thenReturn(Optional.of(payout));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.providerName()).thenReturn("freedompay");
+    when(paymentGateway.payout(any()))
+        .thenReturn(
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("FP-124").build());
+
+    payoutService.dispatchPayout(124L);
+
+    assertEquals("PENDING_PROVIDER", payout.getStatus());
+    verify(moneyLedgerService, never())
+        .append(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void reconcilePendingProviderPayout_finalSuccessSettlesWithoutResending() {
+    User owner = User.builder().id(42L).build();
+    Payout payout =
+        Payout.builder()
+            .id(125L)
+            .user(owner)
+            .amount(new BigDecimal("1000.00"))
+            .currency("KZT")
+            .status("PENDING_PROVIDER")
+            .providerPayoutId("FP-125")
+            .build();
+    when(payoutRepository.findProviderPendingForReconciliation(any())).thenReturn(List.of(payout));
+    when(payoutRepository.findWithLockById(125L)).thenReturn(Optional.of(payout));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.getPayoutStatus("FP-125", "125"))
+        .thenReturn(
+            GatewayStatusResponse.builder()
+                .externalPaymentId("FP-125")
+                .status("SUCCESS")
+                .build());
+
+    payoutService.reconcilePendingProviderPayouts();
+
+    assertEquals("SUCCESS", payout.getStatus());
+    assertNotNull(payout.getProcessedAt());
+    verify(paymentGateway, never()).payout(any());
+    verify(payoutRepository).save(payout);
+  }
+
+  @Test
+  void reconcilePendingProviderPayout_finalFailureRequiresReview() {
+    Payout payout =
+        Payout.builder()
+            .id(126L)
+            .amount(new BigDecimal("1000.00"))
+            .currency("KZT")
+            .status("PENDING_PROVIDER")
+            .providerPayoutId("FP-126")
+            .build();
+    when(payoutRepository.findProviderPendingForReconciliation(any())).thenReturn(List.of(payout));
+    when(payoutRepository.findWithLockById(126L)).thenReturn(Optional.of(payout));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.getPayoutStatus("FP-126", "126"))
+        .thenReturn(
+            GatewayStatusResponse.builder()
+                .externalPaymentId("FP-126")
+                .status("FAILED")
+                .failureMessage("declined")
+                .build());
+
+    payoutService.reconcilePendingProviderPayouts();
+
+    assertEquals("REQUIRES_REVIEW", payout.getStatus());
+    assertEquals("declined", payout.getFailureReason());
+    verify(paymentGateway, never()).payout(any());
+  }
+
+  @Test
   void reverse_nullIntent_isNoop() {
     payoutService.reverseOwnerPayoutForRefund(null, true);
     verifyNoInteractions(payoutRepository);
@@ -124,19 +244,12 @@ class PayoutServiceTest {
     User owner = User.builder().id(42L).build();
     LocalDateTime laterRelease = LocalDateTime.now().plusDays(12);
     LocalDateTime nextRelease = LocalDateTime.now().plusDays(5);
-    when(payoutRepository
-            .findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
-                any(), any(), any(), any()))
+    when(payoutRepository.findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
+            any(), any(), any(), any()))
         .thenReturn(
             List.of(
-                Payout.builder()
-                    .amount(new BigDecimal("1500.25"))
-                    .releaseAt(laterRelease)
-                    .build(),
-                Payout.builder()
-                    .amount(new BigDecimal("499.75"))
-                    .releaseAt(nextRelease)
-                    .build()));
+                Payout.builder().amount(new BigDecimal("1500.25")).releaseAt(laterRelease).build(),
+                Payout.builder().amount(new BigDecimal("499.75")).releaseAt(nextRelease).build()));
 
     PayoutBalanceDto balance = payoutService.getHeldBalance(owner);
 
@@ -171,11 +284,7 @@ class PayoutServiceTest {
             .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
             .build();
     PayoutMethod method =
-        PayoutMethod.builder()
-            .user(owner)
-            .providerCardToken("tok-owner")
-            .status("ACTIVE")
-            .build();
+        PayoutMethod.builder().user(owner).providerCardToken("tok-owner").status("ACTIVE").build();
     when(payoutRepository.findDispatchable(any(), any())).thenReturn(List.of(payout));
     when(payoutRepository.findWithLockById(77L)).thenReturn(Optional.of(payout));
     when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
@@ -184,10 +293,7 @@ class PayoutServiceTest {
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
     when(paymentGateway.payout(any()))
         .thenReturn(
-            GatewayPayoutResponse.builder()
-                .success(true)
-                .externalPayoutId("MOCK-OUT-77")
-                .build());
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("MOCK-OUT-77").build());
 
     payoutService.processPendingPayouts();
 
@@ -222,11 +328,7 @@ class PayoutServiceTest {
             .leaseUntil(LocalDateTime.now(clock).minusMinutes(1))
             .build();
     PayoutMethod method =
-        PayoutMethod.builder()
-            .user(owner)
-            .providerCardToken("tok-owner")
-            .status("ACTIVE")
-            .build();
+        PayoutMethod.builder().user(owner).providerCardToken("tok-owner").status("ACTIVE").build();
     when(payoutRepository.findWithLockById(89L)).thenReturn(Optional.of(payout));
     when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
         .thenReturn(Optional.of(method));
@@ -234,10 +336,7 @@ class PayoutServiceTest {
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
     when(paymentGateway.payout(any()))
         .thenReturn(
-            GatewayPayoutResponse.builder()
-                .success(true)
-                .externalPayoutId("MOCK-OUT-89")
-                .build());
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("MOCK-OUT-89").build());
 
     payoutService.dispatchPayout(89L);
 
@@ -259,11 +358,7 @@ class PayoutServiceTest {
             .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
             .build();
     PayoutMethod method =
-        PayoutMethod.builder()
-            .user(owner)
-            .providerCardToken("tok-owner")
-            .status("ACTIVE")
-            .build();
+        PayoutMethod.builder().user(owner).providerCardToken("tok-owner").status("ACTIVE").build();
     when(payoutRepository.findWithLockById(99L)).thenReturn(Optional.of(payout));
     when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
         .thenReturn(Optional.of(method));
@@ -271,10 +366,7 @@ class PayoutServiceTest {
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
     when(paymentGateway.payout(any()))
         .thenReturn(
-            GatewayPayoutResponse.builder()
-                .success(true)
-                .externalPayoutId("MOCK-OUT-99")
-                .build());
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("MOCK-OUT-99").build());
 
     payoutService.dispatchPayout(99L);
     payoutService.dispatchPayout(99L);

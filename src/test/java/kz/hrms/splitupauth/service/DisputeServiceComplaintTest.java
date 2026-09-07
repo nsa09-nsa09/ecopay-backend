@@ -53,7 +53,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
-/** Covers the member complaint -> admin case -> confirmed owner breach refund path without Docker. */
+/**
+ * Covers the member complaint -> admin case -> confirmed owner breach refund path without Docker.
+ */
 @ExtendWith(MockitoExtension.class)
 class DisputeServiceComplaintTest {
 
@@ -207,7 +209,11 @@ class DisputeServiceComplaintTest {
         ArgumentCaptor.forClass(CreateRefundRequest.class);
     verify(refundService, org.mockito.Mockito.times(2))
         .createRefund(eq(admin), refundCaptor.capture(), eq(httpRequest));
-    assertEquals(List.of(70L, 71L), refundCaptor.getAllValues().stream().map(CreateRefundRequest::getPaymentTransactionId).toList());
+    assertEquals(
+        List.of(70L, 71L),
+        refundCaptor.getAllValues().stream()
+            .map(CreateRefundRequest::getPaymentTransactionId)
+            .toList());
     assertEquals(
         List.of(new BigDecimal("1500.00"), new BigDecimal("2000.00")),
         refundCaptor.getAllValues().stream().map(CreateRefundRequest::getAmount).toList());
@@ -243,7 +249,10 @@ class DisputeServiceComplaintTest {
         InvalidRequestException.class,
         () ->
             service.applyOwnerViolationSanctions(
-                dispute.getId(), admin, request, org.mockito.Mockito.mock(HttpServletRequest.class)));
+                dispute.getId(),
+                admin,
+                request,
+                org.mockito.Mockito.mock(HttpServletRequest.class)));
 
     verify(refundService, never()).createRefund(any(), any(), any());
     verify(roomRepository, never()).save(any());
@@ -263,6 +272,7 @@ class DisputeServiceComplaintTest {
             gatewayRegistry,
             org.mockito.Mockito.mock(PaymentEventLogger.class),
             org.mockito.Mockito.mock(PayoutService.class),
+            org.mockito.Mockito.mock(PayoutBlockService.class),
             notificationService,
             org.mockito.Mockito.mock(MoneyLedgerService.class),
             Clock.systemUTC(),
@@ -286,15 +296,18 @@ class DisputeServiceComplaintTest {
 
     when(refundTransactionRepository.findByIdempotencyKey(request.getIdempotencyKey()))
         .thenReturn(Optional.empty());
-    when(paymentTransactionRepository.findWithLockById(charge.getId())).thenReturn(Optional.of(charge));
-    when(refundTransactionRepository.sumActiveRefundAmounts(charge))
-        .thenReturn(BigDecimal.ZERO, new BigDecimal("1500.00"));
+    when(paymentTransactionRepository.findWithLockById(charge.getId()))
+        .thenReturn(Optional.of(charge));
+    when(refundTransactionRepository.sumActiveRefundAmounts(charge)).thenReturn(BigDecimal.ZERO);
+    when(refundTransactionRepository.sumSuccessfulRefundAmounts(charge))
+        .thenReturn(new BigDecimal("1500.00"));
     java.util.concurrent.atomic.AtomicReference<kz.hrms.splitupauth.entity.RefundTransaction>
         savedRefund = new java.util.concurrent.atomic.AtomicReference<>();
     when(refundTransactionRepository.save(any()))
         .thenAnswer(
             invocation -> {
-              var refund = invocation.getArgument(0, kz.hrms.splitupauth.entity.RefundTransaction.class);
+              var refund =
+                  invocation.getArgument(0, kz.hrms.splitupauth.entity.RefundTransaction.class);
               if (refund.getId() == null) {
                 refund.setId(80L);
               }
@@ -303,7 +316,11 @@ class DisputeServiceComplaintTest {
             });
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
     when(paymentGateway.refund(any(GatewayRefundRequest.class)))
-        .thenReturn(GatewayRefundResponse.builder().success(true).externalRefundId("provider-refund-80").build());
+        .thenReturn(
+            GatewayRefundResponse.builder()
+                .success(true)
+                .externalRefundId("provider-refund-80")
+                .build());
 
     refundService.createRefund(admin, request, httpRequest);
     verify(paymentGateway, never()).refund(any());
@@ -324,6 +341,11 @@ class DisputeServiceComplaintTest {
   }
 
   private static User user(Long id, Role role) {
-    return User.builder().id(id).role(role).status(UserStatus.ACTIVE).displayName("User " + id).build();
+    return User.builder()
+        .id(id)
+        .role(role)
+        .status(UserStatus.ACTIVE)
+        .displayName("User " + id)
+        .build();
   }
 }

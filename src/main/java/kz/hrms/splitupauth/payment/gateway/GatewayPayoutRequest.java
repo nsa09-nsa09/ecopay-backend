@@ -9,6 +9,7 @@ import lombok.Data;
 public class GatewayPayoutRequest {
   private Long payoutId;
   private String idempotencyKey;
+  private String destinationUserId;
   private String destinationCardToken;
   private BigDecimal amount;
   private String currency;

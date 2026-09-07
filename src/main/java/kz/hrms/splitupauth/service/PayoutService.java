@@ -5,7 +5,6 @@ import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 import kz.hrms.splitupauth.dto.PayoutBalanceDto;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
@@ -17,6 +16,8 @@ import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayPayoutRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayPayoutResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
+import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
@@ -25,9 +26,8 @@ import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -38,8 +38,9 @@ public class PayoutService {
 
   private static final int MAX_RETRY = 3;
   private static final String PAYOUT_CURRENCY = "KZT";
-  private static final List<String> HELD_STATUSES = List.of("PENDING", "PENDING_METHOD");
+  private static final List<String> HELD_STATUSES = List.of("PENDING", "PENDING_METHOD", "FROZEN");
   private static final int DISPATCH_LEASE_MINUTES = 5;
+  private static final int PROVIDER_RECONCILIATION_DELAY_MINUTES = 5;
 
   private final PayoutRepository payoutRepository;
   private final PayoutMethodRepository payoutMethodRepository;
@@ -85,7 +86,8 @@ public class PayoutService {
     // Hold the payout: capture happened now, but the owner is only paid once the hold
     // window elapses. The dispatcher skips payouts until releaseAt is reached.
     LocalDateTime now = LocalDateTime.now(clock);
-    LocalDateTime releaseAt = now.plusDays(payoutHoldDays);
+    LocalDateTime capturedAt = intent.getCapturedAt() == null ? now : intent.getCapturedAt();
+    LocalDateTime releaseAt = capturedAt.plusDays(payoutHoldDays);
 
     Payout payout =
         Payout.builder()
@@ -93,9 +95,13 @@ public class PayoutService {
             .room(intent.getRoomMember().getRoom())
             .triggeringPaymentIntent(intent)
             .amount(payoutAmount)
+            .originalAmount(payoutAmount)
+            .refundedShareAmount(BigDecimal.ZERO.setScale(2))
+            .payableAmount(payoutAmount)
             .currency("KZT")
             .status("PENDING")
             .releaseAt(releaseAt)
+            .capturedAt(capturedAt)
             .idempotencyKey("payout-intent-" + intent.getId())
             .build();
     payout = payoutRepository.save(payout);
@@ -138,7 +144,6 @@ public class PayoutService {
    * Run every minute: pick up payouts whose hold window has elapsed (releaseAt &lt;= now) and try
    * to dispatch them. Held payouts (releaseAt in the future) are skipped until due.
    */
-  @Scheduled(fixedDelay = 60_000)
   public void processPendingPayouts() {
     List<Payout> pending =
         payoutRepository.findDispatchable(
@@ -152,30 +157,61 @@ public class PayoutService {
     }
   }
 
+  /**
+   * Polls the provider for payouts whose initial response was non-final. A status check never
+   * resends money: only an explicit SUCCESS settles the ledger, while an explicit failure is held
+   * for review.
+   */
+  public void reconcilePendingProviderPayouts() {
+    List<Payout> pending =
+        payoutRepository.findProviderPendingForReconciliation(LocalDateTime.now(clock));
+    for (Payout payout : pending) {
+      if (payout.getProviderPayoutId() == null || payout.getProviderPayoutId().isBlank()) {
+        continue;
+      }
+      try {
+        PaymentGateway gateway = gatewayRegistry.defaultGateway();
+        GatewayStatusResponse providerStatus =
+            gateway.getPayoutStatus(
+                payout.getProviderPayoutId(), String.valueOf(payout.getId()));
+        tx().executeWithoutResult(
+            status -> completePayoutReconciliation(payout.getId(), providerStatus));
+      } catch (Exception ex) {
+        log.warn("Payout {} status reconciliation failed: {}", payout.getId(), ex.getMessage());
+        tx().executeWithoutResult(
+            status -> deferPayoutReconciliation(payout.getId(), ex.getMessage()));
+      }
+    }
+  }
+
   public void dispatchPayout(Long payoutId) {
     DispatchClaim claim = tx().execute(status -> claimPayoutForDispatch(payoutId));
     if (claim == null) {
       return;
     }
     GatewayPayoutResponse resp;
+    String providerName;
     try {
+      PaymentGateway gateway = gatewayRegistry.defaultGateway();
+      providerName = gateway.providerName();
       resp =
-          gatewayRegistry
-              .defaultGateway()
-              .payout(
-                  GatewayPayoutRequest.builder()
-                      .payoutId(claim.payoutId())
-                      .idempotencyKey(claim.idempotencyKey())
-                      .destinationCardToken(claim.destinationCardToken())
-                      .amount(claim.amount())
-                      .currency(claim.currency())
-                      .description("EcoPay payout #" + claim.payoutId())
-                      .build());
+          gateway.payout(
+              GatewayPayoutRequest.builder()
+                  .payoutId(claim.payoutId())
+                  .idempotencyKey(claim.idempotencyKey())
+                  .destinationUserId(claim.destinationUserId())
+                  .destinationCardToken(claim.destinationCardToken())
+                  .amount(claim.amount())
+                  .currency(claim.currency())
+                  .description("EcoPay payout #" + claim.payoutId())
+                  .build());
     } catch (Exception ex) {
       tx().executeWithoutResult(status -> markPayoutDispatchException(claim.payoutId(), ex));
       return;
     }
-    tx().executeWithoutResult(status -> completePayoutDispatch(claim.payoutId(), resp));
+    String finalProviderName = providerName;
+    tx().executeWithoutResult(
+            status -> completePayoutDispatch(claim.payoutId(), resp, finalProviderName));
   }
 
   private DispatchClaim claimPayoutForDispatch(Long payoutId) {
@@ -239,28 +275,31 @@ public class PayoutService {
     return new DispatchClaim(
         payout.getId(),
         payout.getIdempotencyKey(),
+        String.valueOf(payout.getUser().getId()),
         method.getProviderCardToken(),
         payout.getAmount(),
         payout.getCurrency());
   }
 
-  private void completePayoutDispatch(Long payoutId, GatewayPayoutResponse resp) {
+  private void completePayoutDispatch(
+      Long payoutId, GatewayPayoutResponse resp, String providerName) {
     Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
     if (payout == null || !"PROCESSING".equals(payout.getStatus())) {
       return;
     }
-    if (resp.isSuccess()) {
+    if (resp.isSuccess() && !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(providerName)) {
       payout.setStatus("SUCCESS");
       payout.setProviderPayoutId(resp.getExternalPayoutId());
       payout.setProcessedAt(LocalDateTime.now(clock));
       payout.setLeaseUntil(null);
       payout.setNextRetryAt(null);
       appendPayoutSuccessLedger(payout);
-    } else if (resp.isPending()) {
-      payout.setStatus("PROCESSING");
+    } else if (resp.isPending() || resp.isSuccess()) {
+      payout.setStatus("PENDING_PROVIDER");
       payout.setProviderPayoutId(resp.getExternalPayoutId());
       payout.setLeaseUntil(null);
-      payout.setNextRetryAt(null);
+      payout.setNextRetryAt(
+          LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
     } else {
       payout.setRetryCount((payout.getRetryCount() == null ? 0 : payout.getRetryCount()) + 1);
       payout.setFailureReason(resp.getFailureMessage());
@@ -271,6 +310,50 @@ public class PayoutService {
               ? null
               : LocalDateTime.now(clock).plusSeconds(retryBackoffSeconds(payout.getRetryCount())));
     }
+    payoutRepository.save(payout);
+  }
+
+  private void completePayoutReconciliation(
+      Long payoutId, GatewayStatusResponse providerStatus) {
+    Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
+    if (payout == null || !"PENDING_PROVIDER".equals(payout.getStatus())) {
+      return;
+    }
+    String status = providerStatus == null ? "PENDING" : providerStatus.getStatus();
+    if ("SUCCESS".equals(status)) {
+      payout.setStatus("SUCCESS");
+      payout.setFailureReason(null);
+      payout.setProcessedAt(LocalDateTime.now(clock));
+      payout.setNextRetryAt(null);
+      appendPayoutSuccessLedger(payout);
+      payoutRepository.save(payout);
+      notifyPayoutSent(payout);
+      return;
+    }
+    if ("FAILED".equals(status)) {
+      payout.setStatus("REQUIRES_REVIEW");
+      payout.setFailureReason(
+          providerStatus.getFailureMessage() == null
+              ? "Provider status reported payout failure"
+              : providerStatus.getFailureMessage());
+      payout.setProcessedAt(LocalDateTime.now(clock));
+      payout.setNextRetryAt(null);
+      payoutRepository.save(payout);
+      return;
+    }
+    payout.setNextRetryAt(
+        LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
+    payoutRepository.save(payout);
+  }
+
+  private void deferPayoutReconciliation(Long payoutId, String failureMessage) {
+    Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
+    if (payout == null || !"PENDING_PROVIDER".equals(payout.getStatus())) {
+      return;
+    }
+    payout.setFailureReason("Status check failed: " + failureMessage);
+    payout.setNextRetryAt(
+        LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
     payoutRepository.save(payout);
   }
 
@@ -316,7 +399,7 @@ public class PayoutService {
     if ("SUCCESS".equals(payout.getStatus()) || "FAILED".equals(payout.getStatus())) {
       return; // terminal — idempotent no-op
     }
-    payout.setStatus(success ? "SUCCESS" : "FAILED");
+    payout.setStatus(success ? "SUCCESS" : "REQUIRES_REVIEW");
     if (!success) {
       payout.setFailureReason("Provider reported payout failure");
     }
@@ -327,19 +410,24 @@ public class PayoutService {
     payoutRepository.save(payout);
     log.info("Payout {} marked {} by provider callback", payout.getId(), payout.getStatus());
 
-    if (success && payout.getUser() != null) {
-      notificationService.notify(
-          payout.getUser(),
-          kz.hrms.splitupauth.entity.NotificationType.PAYOUT_SENT,
-          "Выплата отправлена",
-          "Выплата на сумму "
-              + payout.getAmount()
-              + " "
-              + payout.getCurrency()
-              + " была отправлена на ваш способ получения.",
-          "/payment/payout",
-          java.util.Map.of("payoutId", payout.getId()));
+    if (success) {
+      notifyPayoutSent(payout);
     }
+  }
+
+  private void notifyPayoutSent(Payout payout) {
+    if (payout.getUser() == null) return;
+    notificationService.notify(
+        payout.getUser(),
+        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_SENT,
+        "Выплата отправлена",
+        "Выплата на сумму "
+            + payout.getAmount()
+            + " "
+            + payout.getCurrency()
+            + " была отправлена на ваш способ получения.",
+        "/payment/payout",
+        java.util.Map.of("payoutId", payout.getId()));
   }
 
   private void appendPayoutSuccessLedger(Payout payout) {
@@ -423,6 +511,78 @@ public class PayoutService {
           status,
           fullRefund);
     }
+  }
+
+  /**
+   * Recomputes the unpaid owner share from provider-confirmed refunds only. Pending refund requests
+   * freeze dispatch elsewhere but never reduce accounting balances until they succeed.
+   */
+  @Transactional
+  public void adjustOwnerPayoutForSuccessfulRefund(
+      PaymentIntent triggeringIntent, BigDecimal successfulRefundTotal) {
+    if (triggeringIntent == null || successfulRefundTotal == null) return;
+    Payout existing = payoutRepository.findByTriggeringPaymentIntent(triggeringIntent).orElse(null);
+    if (existing == null) return;
+    Payout payout = payoutRepository.findWithLockById(existing.getId()).orElse(null);
+    if (payout == null) return;
+
+    String status = payout.getStatus();
+    boolean notYetDispatched =
+        "PENDING".equals(status) || "PENDING_METHOD".equals(status) || "FROZEN".equals(status);
+    if (!notYetDispatched) {
+      eventLogger.log(
+          "PAYOUT",
+          payout.getId(),
+          "CLAWBACK_REQUIRED",
+          status,
+          status,
+          null,
+          null,
+          payout.getIdempotencyKey(),
+          java.util.Map.of("successfulRefundTotal", successfulRefundTotal.toPlainString()));
+      return;
+    }
+
+    BigDecimal totalCharged = triggeringIntent.getAmount();
+    BigDecimal commission =
+        triggeringIntent.getCommissionAmount() == null
+            ? BigDecimal.ZERO
+            : triggeringIntent.getCommissionAmount();
+    BigDecimal originalShare =
+        payout.getOriginalAmount() == null
+            ? totalCharged.subtract(commission)
+            : payout.getOriginalAmount();
+    BigDecimal cappedRefund = successfulRefundTotal.min(totalCharged).max(BigDecimal.ZERO);
+    BigDecimal refundedShare =
+        cappedRefund.compareTo(totalCharged) >= 0
+            ? originalShare
+            : originalShare
+                .multiply(cappedRefund)
+                .divide(totalCharged, 2, RoundingMode.HALF_UP)
+                .min(originalShare);
+    BigDecimal payable = originalShare.subtract(refundedShare).max(BigDecimal.ZERO).setScale(2);
+
+    payout.setOriginalAmount(originalShare.setScale(2));
+    payout.setRefundedShareAmount(refundedShare.setScale(2));
+    payout.setPayableAmount(payable);
+    payout.setAmount(payable);
+    if (payable.signum() == 0) {
+      payout.setStatus("REVERSED");
+      payout.setProcessedAt(LocalDateTime.now(clock));
+      payout.setFailureReason("Reversed: successful refunds exhausted owner share");
+    }
+    payoutRepository.save(payout);
+    eventLogger.log(
+        "PAYOUT",
+        payout.getId(),
+        "REFUND_ADJUSTED",
+        status,
+        payout.getStatus(),
+        null,
+        null,
+        payout.getIdempotencyKey(),
+        java.util.Map.of(
+            "refundedShare", refundedShare.toPlainString(), "payable", payable.toPlainString()));
   }
 
   @Transactional(readOnly = true)
@@ -520,7 +680,8 @@ public class PayoutService {
   }
 
   @Transactional
-  public PayoutMethod registerVerifiedPayoutMethod(User user, String providerCardToken, String panMask) {
+  public PayoutMethod registerVerifiedPayoutMethod(
+      User user, String providerCardToken, String panMask) {
     if (providerCardToken == null || providerCardToken.isBlank()) {
       throw new InvalidRequestException("providerCardToken is required");
     }
@@ -573,6 +734,7 @@ public class PayoutService {
   private record DispatchClaim(
       Long payoutId,
       String idempotencyKey,
+      String destinationUserId,
       String destinationCardToken,
       BigDecimal amount,
       String currency) {}

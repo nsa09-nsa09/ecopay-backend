@@ -37,6 +37,7 @@ public class SupportTicketService {
   private final ModerationService moderationService;
   private final SupportTicketRealtimeService supportTicketRealtimeService;
   private final NotificationService notificationService;
+  private final PayoutBlockService payoutBlockService;
 
   @Transactional
   public SupportTicketResponse createTicket(User currentUser, CreateSupportTicketRequest request) {
@@ -94,6 +95,11 @@ public class SupportTicketService {
             .build();
 
     ticket = supportTicketRepository.save(ticket);
+
+    if (roomMember != null) {
+      payoutBlockService.blockForRoomMember(
+          roomMember, PayoutBlockSourceType.SUPPORT_TICKET, ticket.getId(), "SUPPORT_TICKET_OPEN");
+    }
 
     SupportMessage firstMessage =
         SupportMessage.builder()
@@ -429,6 +435,9 @@ public class SupportTicketService {
             .build();
 
     ticket = supportTicketRepository.save(ticket);
+
+    payoutBlockService.blockForRoomMember(
+        roomMember, PayoutBlockSourceType.SUPPORT_TICKET, ticket.getId(), "ACCESS_ISSUE");
 
     SupportMessage systemMessage =
         SupportMessage.builder()

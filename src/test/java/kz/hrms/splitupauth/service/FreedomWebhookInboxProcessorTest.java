@@ -82,6 +82,37 @@ class FreedomWebhookInboxProcessorTest {
     verify(repository, never()).save(any());
   }
 
+  @Test
+  void approvedAdd2CallbackCompletesPayoutCardBinding() {
+    Map<String, String> params =
+        Map.of(
+            "pg_order_id", "cardbind-17",
+            "pg_type", "approve",
+            "pg_card_token", "payout-token",
+            "pg_sig", "valid");
+    FreedomWebhookInbox inbox = processingInbox(params);
+    inbox.setCallbackScript("card-storage-result");
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .kind("CHARGE")
+            .resultStatus("PENDING")
+            .cardToken("payout-token")
+            .cardPanMask("411111******1111")
+            .build();
+    when(repository.findClaimedWithLockById(1L, "worker-1"))
+        .thenReturn(Optional.of(inbox));
+    when(gateway.verifyWebhookSignature("card-storage-result", params)).thenReturn(true);
+    when(gateway.verifyAndParseWebhook("card-storage-result", params)).thenReturn(event);
+    when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    processor.processClaimed(1L, "worker-1");
+
+    verify(cardBindingService)
+        .applyBindingWebhook(17L, true, "payout-token", "411111******1111");
+    verify(paymentService, never()).applyWebhookEvent(any());
+    assertEquals("PROCESSED", inbox.getProcessingStatus());
+  }
+
   private static FreedomWebhookInbox processingInbox(Map<String, String> params) {
     return FreedomWebhookInbox.builder()
         .id(1L)

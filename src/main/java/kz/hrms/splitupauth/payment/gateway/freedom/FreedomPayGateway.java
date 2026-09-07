@@ -5,8 +5,12 @@ import java.math.RoundingMode;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingRequest;
+import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayPayoutRequest;
@@ -39,6 +43,43 @@ public class FreedomPayGateway implements PaymentGateway {
     return PROVIDER_NAME;
   }
 
+  /**
+   * Starts Freedom Pay's universal, zero-amount card-storage flow ({@code add2}). The merchant
+   * payment secret is deliberately used here; the separate payout secret is only for the later
+   * {@code reg2reg}/{@code reg2nonreg} money transfer.
+   */
+  @Override
+  public GatewayCardBindingResponse initCardBinding(GatewayCardBindingRequest request) {
+    String merchantId = properties.getMerchantId();
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("pg_merchant_id", merchantId);
+    params.put("pg_user_id", request.getUserId());
+    params.put("pg_post_link", urlResolver.cardStorageResultUrl());
+    params.put("pg_back_link", request.getBackUrl());
+    params.put("pg_order_id", "cardbind-" + request.getBindingId());
+    params.put("pg_salt", randomSalt());
+    params.put("pg_sig", signatureService.signWithMerchantSecret("add2", params));
+
+    Map<String, String> response =
+        client.postForm("/v1/merchant/" + merchantId + "/cardstorage/add2", params);
+    String status = response.getOrDefault("pg_status", "");
+    if ("ok".equalsIgnoreCase(status)) {
+      return GatewayCardBindingResponse.builder()
+          .success(true)
+          .externalBindingId(response.get("pg_payment_id"))
+          .redirectUrl(response.get("pg_redirect_url"))
+          .requiresRedirect(true)
+          .providerStatusCode(status)
+          .build();
+    }
+    return GatewayCardBindingResponse.builder()
+        .success(false)
+        .providerStatusCode(status)
+        .failureCode(response.get("pg_error_code"))
+        .failureMessage(response.get("pg_error_description"))
+        .build();
+  }
+
   @Override
   public GatewayChargeResponse initCharge(GatewayChargeRequest request) {
     Map<String, String> params = baseParams("init_payment.php");
@@ -48,6 +89,7 @@ public class FreedomPayGateway implements PaymentGateway {
             ? request.getOrderIdOverride()
             : String.valueOf(request.getIntentId()));
     params.put("pg_amount", formatAmount(request.getAmount()));
+    params.put("pg_idempotency_key", request.getIdempotencyKey());
     params.put("pg_currency", request.getCurrency() != null ? request.getCurrency() : "KZT");
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay payment"));
     params.put("pg_user_phone", nonNull(request.getUserPhone(), ""));
@@ -100,6 +142,7 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_order_id", String.valueOf(request.getIntentId()));
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay subscription"));
+    params.put("pg_idempotency_key", request.getIdempotencyKey());
 
     String sig = signatureService.signWithMerchantSecret("recurring.php", params);
     params.put("pg_sig", sig);
@@ -129,6 +172,7 @@ public class FreedomPayGateway implements PaymentGateway {
     if (request.getAmount() != null) {
       params.put("pg_refund_amount", formatAmount(request.getAmount()));
     }
+    params.put("pg_idempotency_key", request.getIdempotencyKey());
 
     String sig = signatureService.signWithMerchantSecret("revoke.php", params);
     params.put("pg_sig", sig);
@@ -148,26 +192,33 @@ public class FreedomPayGateway implements PaymentGateway {
 
   @Override
   public GatewayPayoutResponse payout(GatewayPayoutRequest request) {
-    Map<String, String> params = baseParams("payouts.php");
+    Map<String, String> params = baseParams("reg2reg");
     params.put("pg_amount", formatAmount(request.getAmount()));
-    params.put("pg_card_token", request.getDestinationCardToken());
+    params.put("pg_card_token_to", request.getDestinationCardToken());
     params.put("pg_order_id", String.valueOf(request.getPayoutId()));
+    params.put("pg_user_id", request.getDestinationUserId());
+    params.put("pg_idempotency_key", request.getIdempotencyKey());
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay payout"));
-    params.put("pg_result_url", urlResolver.payoutResultUrl());
+    params.put("pg_post_link", urlResolver.payoutResultUrl());
+    params.put(
+        "pg_order_time_limit",
+        LocalDateTime.now()
+            .plusMinutes(30)
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
-    String sig = signatureService.signWithPayoutSecret("payouts.php", params);
+    String sig = signatureService.signWithPayoutSecret("reg2reg", params);
     params.put("pg_sig", sig);
 
-    Map<String, String> response = client.postForm("/payouts.php", params);
+    Map<String, String> response = client.postForm("/api/reg2reg", params);
     String status = response.getOrDefault("pg_status", "");
     boolean ok = "ok".equalsIgnoreCase(status);
     return GatewayPayoutResponse.builder()
         .success(ok)
-        .externalPayoutId(response.get("pg_payout_id"))
+        .externalPayoutId(response.get("pg_payment_id"))
         .providerStatusCode(status)
         .failureCode(ok ? null : response.get("pg_error_code"))
         .failureMessage(ok ? null : response.get("pg_error_description"))
-        .pending(!ok && "pending".equalsIgnoreCase(status))
+        .pending("process".equalsIgnoreCase(status) || "pending".equalsIgnoreCase(status))
         .build();
   }
 
@@ -218,10 +269,39 @@ public class FreedomPayGateway implements PaymentGateway {
         .build();
   }
 
+  @Override
+  public GatewayStatusResponse getPayoutStatus(
+      String externalPayoutId, String merchantOrderId) {
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("pg_merchant_id", properties.getMerchantId());
+    params.put("pg_payment_id", externalPayoutId);
+    params.put("pg_order_id", merchantOrderId);
+    params.put("pg_salt", randomSalt());
+
+    String script = "payment_status2";
+    params.put("pg_sig", signatureService.signWithPayoutSecret(script, params));
+
+    Map<String, String> response = client.postForm("/api/payment_status2", params);
+    String requestStatus = response.getOrDefault("pg_status", "");
+    String paymentStatus = response.getOrDefault("pg_payment_status", "").trim().toLowerCase();
+    String mapped =
+        switch (paymentStatus) {
+          case "success" -> "SUCCESS";
+          case "error" -> "FAILED";
+          default -> "PENDING"; // process, missing, or a non-final provider response
+        };
+    return GatewayStatusResponse.builder()
+        .externalPaymentId(firstNonBlank(response.get("pg_payment_id"), externalPayoutId))
+        .status(mapped)
+        .providerStatusCode(paymentStatus.isBlank() ? requestStatus : paymentStatus)
+        .failureCode(response.get("pg_error_code"))
+        .failureMessage(response.get("pg_error_description"))
+        .build();
+  }
+
   /**
    * Look up a user's most recently saved card via the cardstorage/list API. Freedom Pay returns the
-   * reusable token (pg_recurring_profile_id) here keyed by pg_user_id, so this lets us obtain it
-   * without the result webhook (which can't reach localhost). Returns null if none/unavailable.
+   * saved-card token here keyed by pg_user_id. Returns null if none/unavailable.
    */
   public GatewayStatusResponse fetchSavedCardForUser(String userId) {
     if (userId == null || userId.isBlank()) return null;
@@ -251,7 +331,7 @@ public class FreedomPayGateway implements PaymentGateway {
     for (Map<String, String> c : cards) {
       String token =
           firstNonBlank(
-              c.get("pg_recurring_profile_id"), c.get("pg_card_token"), c.get("pg_card_id"));
+              c.get("pg_card_token"), c.get("pg_card_id"), c.get("pg_recurring_profile_id"));
       if (token == null) continue;
       String created = c.getOrDefault("created_at", "");
       // ISO-8601 timestamps compare lexicographically; keep the newest card.
@@ -265,9 +345,9 @@ public class FreedomPayGateway implements PaymentGateway {
         .status("SUCCESS")
         .cardToken(
             firstNonBlank(
-                best.get("pg_recurring_profile_id"),
                 best.get("pg_card_token"),
-                best.get("pg_card_id")))
+                best.get("pg_card_id"),
+                best.get("pg_recurring_profile_id")))
         .cardPanMask(firstNonBlank(best.get("pg_card_hash"), best.get("pg_card_pan")))
         .build();
   }
@@ -285,10 +365,16 @@ public class FreedomPayGateway implements PaymentGateway {
     boolean valid = verifyWebhookSignature(script, params);
 
     String paymentId = params.get("pg_payment_id");
+    boolean cardBinding =
+        params.getOrDefault("pg_order_id", "").startsWith("cardbind-");
     String salt = params.get("pg_salt");
     String eventType =
-        firstNonBlank(params.get("pg_event_type"), params.get("pg_payout_id") == null ? null : "PAYOUT",
-            params.get("pg_refund_id") == null ? null : "REFUND", "CHARGE");
+        firstNonBlank(
+            params.get("pg_event_type"),
+            script.contains("payout") ? "PAYOUT" : null,
+            params.get("pg_payout_id") == null ? null : "PAYOUT",
+            params.get("pg_refund_id") == null ? null : "REFUND",
+            "CHARGE");
     String providerReference =
         firstNonBlank(paymentId, params.get("pg_refund_id"), params.get("pg_payout_id"), params.get("pg_order_id"), "missing");
     String requestId =
@@ -305,13 +391,7 @@ public class FreedomPayGateway implements PaymentGateway {
             + (salt == null ? "" : salt);
 
     // pg_result: 1 = success, 0 = failure, 2 = not completed yet.
-    String resultRaw = params.get("pg_result");
-    String resultStatus =
-        switch (nonNull(resultRaw, "")) {
-          case "1" -> "SUCCESS";
-          case "0" -> "FAILED";
-          default -> "PENDING";
-        };
+    String resultStatus = mapWebhookResult(params);
     if ("REFUND".equals(params.get("pg_event_type")) || params.get("pg_refund_id") != null) {
       // Refund result callback (async). NOTE: confirm exact Freedom Pay refund
       // callback param names against the live provider spec before relying on it.
@@ -324,12 +404,12 @@ public class FreedomPayGateway implements PaymentGateway {
           .rawParams(params)
           .build();
     }
-    if ("PAYOUT".equals(params.get("pg_event_type")) || params.get("pg_payout_id") != null) {
+    if ("PAYOUT".equals(eventType)) {
       // Payout webhook
       return GatewayWebhookEvent.builder()
           .kind("PAYOUT")
           .resultStatus(resultStatus)
-          .externalPaymentId(params.get("pg_payout_id"))
+          .externalPaymentId(firstNonBlank(params.get("pg_payout_id"), paymentId))
           .providerRequestId(requestId)
           .signature(params.get("pg_sig"))
           .rawParams(params)
@@ -351,11 +431,17 @@ public class FreedomPayGateway implements PaymentGateway {
         .failureMessage(params.get("pg_error_description"))
         .cardPanMask(params.get("pg_card_pan"))
         .cardToken(
-            firstNonBlank(
-                params.get("pg_recurring_profile_id"),
-                params.get("pg_recurring_profile"),
-                params.get("pg_card_token"),
-                params.get("pg_card_id")))
+            cardBinding
+                ? firstNonBlank(
+                    params.get("pg_card_token"),
+                    params.get("pg_card_id"),
+                    params.get("pg_recurring_profile_id"),
+                    params.get("pg_recurring_profile"))
+                : firstNonBlank(
+                    params.get("pg_recurring_profile_id"),
+                    params.get("pg_recurring_profile"),
+                    params.get("pg_card_token"),
+                    params.get("pg_card_id")))
         .rawParams(params)
         .signature(params.get("pg_sig"))
         .providerRequestId(valid ? requestId : "INVALID:" + requestId)
@@ -450,6 +536,26 @@ public class FreedomPayGateway implements PaymentGateway {
 
   private static String nonNull(String value, String fallback) {
     return value == null || value.isBlank() ? fallback : value;
+  }
+
+  private static String mapWebhookResult(Map<String, String> params) {
+    String resultRaw = params.get("pg_result");
+    if (resultRaw != null) {
+      return switch (resultRaw) {
+        case "1" -> "SUCCESS";
+        case "0" -> "FAILED";
+        default -> "PENDING";
+      };
+    }
+    String paymentStatus =
+        nonNull(params.get("pg_payment_status"), params.get("pg_status"))
+            .trim()
+            .toLowerCase();
+    return switch (paymentStatus) {
+      case "success", "ok" -> "SUCCESS";
+      case "error", "failed", "incomplete" -> "FAILED";
+      default -> "PENDING";
+    };
   }
 
   /** First non-blank value, or null if all are blank. */

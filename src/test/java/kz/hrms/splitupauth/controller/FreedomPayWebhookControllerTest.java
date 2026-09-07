@@ -55,4 +55,26 @@ class FreedomPayWebhookControllerTest {
     verify(gateway)
         .buildWebhookResponse("result", "error", "temporarily unavailable");
   }
+
+  @Test
+  void cardStorageCallbackUnwrapsPgXmlBeforeDurableProcessing() {
+    Map<String, String> normalized =
+        Map.of(
+            "pg_order_id", "cardbind-17",
+            "pg_type", "approve",
+            "pg_card_token", "payout-token",
+            "pg_sig", "valid");
+    String xml =
+        "<response><pg_order_id>cardbind-17</pg_order_id><pg_type>approve</pg_type>"
+            + "<pg_card_token>payout-token</pg_card_token><pg_sig>valid</pg_sig></response>";
+    when(coordinator.acceptAndProcess("card-storage-result", normalized))
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(8L, false));
+    when(gateway.buildWebhookResponse("card-storage-result", "ok", "Order processed"))
+        .thenReturn("<ok/>");
+
+    var response = controller.cardStorageResult(Map.of("pg_xml", xml));
+
+    assertEquals("<ok/>", response.getBody());
+    verify(coordinator).acceptAndProcess("card-storage-result", normalized);
+  }
 }

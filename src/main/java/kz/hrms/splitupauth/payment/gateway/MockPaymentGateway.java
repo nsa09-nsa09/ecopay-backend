@@ -39,6 +39,19 @@ public class MockPaymentGateway implements PaymentGateway {
   }
 
   @Override
+  public GatewayCardBindingResponse initCardBinding(GatewayCardBindingRequest request) {
+    String externalId = newId("MOCK-CARD-");
+    return GatewayCardBindingResponse.builder()
+        .success(true)
+        .externalBindingId(externalId)
+        .requiresRedirect(false)
+        .providerStatusCode("ok")
+        .cardToken("MOCK-CARD-TOKEN-" + request.getBindingId())
+        .cardPanMask("411111******1111")
+        .build();
+  }
+
+  @Override
   public GatewayChargeResponse initCharge(GatewayChargeRequest request) {
     chargeAttempts.incrementAndGet();
     String ext = newId("MOCK-PAY-");
@@ -109,6 +122,16 @@ public class MockPaymentGateway implements PaymentGateway {
         .externalPaymentId(externalPaymentId)
         .status("SUCCESS")
         .providerStatusCode("ok")
+        .build();
+  }
+
+  @Override
+  public GatewayStatusResponse getPayoutStatus(
+      String externalPayoutId, String merchantOrderId) {
+    return GatewayStatusResponse.builder()
+        .externalPaymentId(externalPayoutId)
+        .status("SUCCESS")
+        .providerStatusCode("success")
         .build();
   }
 

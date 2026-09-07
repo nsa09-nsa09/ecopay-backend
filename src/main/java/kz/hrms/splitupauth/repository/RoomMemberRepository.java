@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.repository;
 
 import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -29,6 +30,14 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
   List<RoomMember> findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(User user);
 
   List<RoomMember> findByStatusAndDeletedAtIsNull(MemberStatus status);
+
+  @Query(
+      "select m.id from RoomMember m where m.status = kz.hrms.splitupauth.entity.MemberStatus.PENDING "
+          + "and m.deletedAt is null and m.ownerAccessConfirmedAt is not null "
+          + "and m.memberConfirmedAt is null and m.accessDeemedConfirmedAt is null "
+          + "and m.accessConfirmationDeadlineAt <= :now and m.requiresAdminReview = false "
+          + "order by m.accessConfirmationDeadlineAt asc")
+  List<Long> findDueDeemedConfirmationIds(@Param("now") LocalDateTime now, Pageable pageable);
 
   List<RoomMember> findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(Room room);
 
