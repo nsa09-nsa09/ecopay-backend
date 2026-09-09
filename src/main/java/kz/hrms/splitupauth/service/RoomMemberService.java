@@ -400,12 +400,11 @@ public class RoomMemberService {
         "/rooms/owner/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
-    // A room's member seats = maxMembers - 1 (the owner holds one). When the paid
-    // members reach that count, every seat is filled and awaiting access.
+    // When paid EcoPay marketplace members reach the marketplace capacity, the room is full.
     long occupiedSlots =
         roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
             room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
-    if (occupiedSlots >= room.getMaxMembers() - 1) {
+    if (RoomSeatMath.marketplaceFull(room, occupiedSlots)) {
       notificationService.notify(
           owner,
           NotificationType.ROOM_FULL_AWAITING_ACCESS,
@@ -557,7 +556,7 @@ public class RoomMemberService {
         roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
             room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
 
-    if (occupiedSlots >= room.getMaxMembers() - 1) {
+    if (RoomSeatMath.marketplaceFull(room, occupiedSlots)) {
       throw new InvalidRequestException("No available slots in this room");
     }
 

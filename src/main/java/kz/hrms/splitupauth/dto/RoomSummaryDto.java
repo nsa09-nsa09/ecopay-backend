@@ -22,6 +22,8 @@ public class RoomSummaryDto {
   private RoomType roomType;
   private RoomStatus status;
   private Integer maxMembers;
+  private Integer existingMembersCount;
+  private Integer marketplaceCapacity;
   private Integer filledSeats;
   private Integer freeSeats;
   private BigDecimal priceTotal;

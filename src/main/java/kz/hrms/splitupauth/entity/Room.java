@@ -65,6 +65,10 @@ public class Room {
   @Column(name = "max_members", nullable = false)
   private Integer maxMembers;
 
+  @Column(name = "existing_members_count", nullable = false)
+  @Builder.Default
+  private Integer existingMembersCount = 1;
+
   @Column(name = "price_total", precision = 12, scale = 2)
   private BigDecimal priceTotal;
 
@@ -176,6 +180,10 @@ public class Room {
 
     if (currency == null) {
       currency = "KZT";
+    }
+
+    if (existingMembersCount == null) {
+      existingMembersCount = 1;
     }
 
     if (operatorTermsConfirmed == null) {

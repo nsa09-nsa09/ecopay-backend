@@ -30,6 +30,8 @@ public class CreateRoomRequest {
 
   private String description;
 
+  private Integer existingMembersCount;
+
   private LocalDateTime startDate;
 
   private String cancellationPolicy;

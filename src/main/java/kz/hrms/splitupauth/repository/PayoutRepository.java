@@ -42,9 +42,11 @@ public interface PayoutRepository
   @Query(
       "SELECT p FROM Payout p WHERE ("
           + "p.status IN :statuses "
+          + "AND p.payoutBatch IS NULL "
           + "AND (p.releaseAt IS NULL OR p.releaseAt <= :now) "
           + "AND (p.nextRetryAt IS NULL OR p.nextRetryAt <= :now)) "
           + "OR (p.status = 'PROCESSING' "
+          + "AND p.payoutBatch IS NULL "
           + "AND p.providerPayoutId IS NULL "
           + "AND p.leaseUntil IS NOT NULL "
           + "AND p.leaseUntil <= :now) "
@@ -71,4 +73,10 @@ public interface PayoutRepository
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select p from Payout p where p.id = :id")
   Optional<Payout> findWithLockById(@Param("id") Long id);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.id in :ids order by p.id asc")
+  List<Payout> findWithLockByIdIn(@Param("ids") List<Long> ids);
+
+  List<Payout> findByPayoutBatch_IdOrderByIdAsc(Long payoutBatchId);
 }

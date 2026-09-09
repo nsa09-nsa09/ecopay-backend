@@ -48,6 +48,9 @@ public class CommissionCalculator {
   @Value("${app.commission.tier4-fee:1000}")
   private BigDecimal tier4Fee;
 
+  @Value("${app.commission.mixed-room-surcharge:300}")
+  private BigDecimal mixedRoomSurcharge;
+
   /**
    * EcoPay commission for a given per-member tariff share. A non-positive or null share yields a
    * zero commission (defensive — callers validate the share first).
@@ -67,5 +70,18 @@ public class CommissionCalculator {
       fee = tier4Fee;
     }
     return fee.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+  }
+
+  /**
+   * Room-aware commission. Mixed rooms (owner already has offline members in the subscription)
+   * charge marketplace participants a fixed surcharge on top of the normal tier.
+   */
+  public BigDecimal commissionFor(BigDecimal share, int existingMembersCount) {
+    BigDecimal base = commissionFor(share);
+    if (share == null || share.signum() <= 0 || existingMembersCount <= 1) {
+      return base;
+    }
+    BigDecimal surcharge = mixedRoomSurcharge == null ? BigDecimal.ZERO : mixedRoomSurcharge;
+    return base.add(surcharge).setScale(MONEY_SCALE, RoundingMode.HALF_UP);
   }
 }

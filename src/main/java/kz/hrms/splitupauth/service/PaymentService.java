@@ -230,7 +230,8 @@ public class PaymentService {
 
     PaymentGateway gateway = gatewayRegistry.defaultGateway();
     BigDecimal share = resolveShareAmount(lockedRoom);
-    BigDecimal commission = commissionCalculator.commissionFor(share);
+    BigDecimal commission =
+        commissionCalculator.commissionFor(share, RoomSeatMath.existingMembersCount(lockedRoom));
     BigDecimal amount = share.add(commission);
 
     long paidSeats =
@@ -240,7 +241,7 @@ public class PaymentService {
     long activeReservations =
         paymentReservationRepository.countByRoomAndStatusAndExpiresAtAfter(
             lockedRoom, PaymentReservationStatus.RESERVED, now);
-    if (paidSeats + activeReservations >= lockedRoom.getMaxMembers() - 1L) {
+    if (paidSeats + activeReservations >= RoomSeatMath.marketplaceCapacity(lockedRoom)) {
       throw new ResourceConflictException("ROOM_FULL", "Room is full");
     }
 
@@ -910,7 +911,7 @@ public class PaymentService {
             room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
     return member.getStatus() == MemberStatus.PENDING
         || member.getStatus() == MemberStatus.ACTIVE
-        || occupiedSlots < room.getMaxMembers() - 1L;
+        || !RoomSeatMath.marketplaceFull(room, occupiedSlots);
   }
 
   private record SeatConsumptionResult(boolean accepted, String reason) {

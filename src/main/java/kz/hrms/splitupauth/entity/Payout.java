@@ -37,6 +37,10 @@ public class Payout {
   @JoinColumn(name = "payout_method_id")
   private PayoutMethod payoutMethod;
 
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "payout_batch_id")
+  private PayoutBatch payoutBatch;
+
   @Column(nullable = false, precision = 12, scale = 2)
   private BigDecimal amount;
 

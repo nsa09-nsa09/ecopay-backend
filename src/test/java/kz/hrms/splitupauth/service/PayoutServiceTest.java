@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -17,9 +18,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import kz.hrms.splitupauth.dto.PayoutBalanceDto;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.PayoutBatch;
 import kz.hrms.splitupauth.entity.PayoutMethod;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.payment.gateway.GatewayPayoutResponse;
@@ -28,6 +31,7 @@ import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
+import kz.hrms.splitupauth.repository.PayoutBatchRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +45,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 class PayoutServiceTest {
 
   @Mock private PayoutRepository payoutRepository;
+  @Mock private PayoutBatchRepository payoutBatchRepository;
   @Mock private PayoutMethodRepository payoutMethodRepository;
   @Mock private PaymentGatewayRegistry gatewayRegistry;
   @Mock private PaymentGateway paymentGateway;
@@ -63,6 +68,7 @@ class PayoutServiceTest {
     payoutService =
         new PayoutService(
             payoutRepository,
+            payoutBatchRepository,
             payoutMethodRepository,
             gatewayRegistry,
             eventLogger,
@@ -72,9 +78,15 @@ class PayoutServiceTest {
             payoutEligibilityService,
             clock,
             transactionManager);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        payoutService, "payoutBatchCoalesceHours", 0);
     lenient()
         .when(payoutEligibilityService.evaluate(any()))
         .thenReturn(new PayoutEligibilityService.Decision(true, false, null));
+    lenient().when(payoutBatchRepository.findRetryableForDispatch(any())).thenReturn(List.of());
+    lenient()
+        .when(payoutBatchRepository.findProviderPendingForReconciliation(any()))
+        .thenReturn(List.of());
   }
 
   @Test
@@ -305,6 +317,64 @@ class PayoutServiceTest {
   }
 
   @Test
+  void processPendingPayouts_threeEligibleSameOwnerMethodCurrency_dispatchesOneBatch() {
+    User owner = User.builder().id(42L).build();
+    LocalDateTime due = LocalDateTime.now(clock).minusHours(1);
+    Payout p1 = payout(1L, owner, "1000.00", due);
+    Payout p2 = payout(2L, owner, "1500.50", due);
+    Payout p3 = payout(3L, owner, "499.50", due);
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .id(5L)
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .status("ACTIVE")
+            .build();
+    AtomicReference<PayoutBatch> savedBatch = new AtomicReference<>();
+
+    when(payoutRepository.findDispatchable(any(), any())).thenReturn(List.of(p1, p2, p3));
+    when(payoutRepository.findWithLockById(1L)).thenReturn(Optional.of(p1));
+    when(payoutRepository.findWithLockById(2L)).thenReturn(Optional.of(p2));
+    when(payoutRepository.findWithLockById(3L)).thenReturn(Optional.of(p3));
+    when(payoutRepository.findWithLockByIdIn(List.of(1L, 2L, 3L)))
+        .thenReturn(List.of(p1, p2, p3));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutBatchRepository.save(any(PayoutBatch.class)))
+        .thenAnswer(
+            invocation -> {
+              PayoutBatch batch = invocation.getArgument(0);
+              if (batch.getId() == null) {
+                batch.setId(900L);
+              }
+              savedBatch.set(batch);
+              return batch;
+            });
+    when(payoutBatchRepository.findWithLockById(900L))
+        .thenAnswer(invocation -> Optional.of(savedBatch.get()));
+    when(payoutRepository.findByPayoutBatch_IdOrderByIdAsc(900L)).thenReturn(List.of(p1, p2, p3));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.payout(any()))
+        .thenReturn(
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("MOCK-BATCH").build());
+
+    payoutService.processPendingPayouts();
+
+    verify(paymentGateway)
+        .payout(
+            argThat(
+                request ->
+                    request.getPayoutId().equals(900L)
+                        && request.getIdempotencyKey().startsWith("payout-batch-")
+                        && new BigDecimal("3000.00").compareTo(request.getAmount()) == 0));
+    assertEquals("SUCCESS", savedBatch.get().getStatus());
+    assertEquals("SUCCESS", p1.getStatus());
+    assertEquals("SUCCESS", p2.getStatus());
+    assertEquals("SUCCESS", p3.getStatus());
+  }
+
+  @Test
   void dispatchPayout_activeProcessingLease_isNotSentAgain() {
     Payout payout = Payout.builder().id(88L).status("PROCESSING").build();
     when(payoutRepository.findWithLockById(88L)).thenReturn(Optional.of(payout));
@@ -373,5 +443,18 @@ class PayoutServiceTest {
 
     assertEquals("SUCCESS", payout.getStatus());
     verify(paymentGateway, times(1)).payout(any());
+  }
+
+  private Payout payout(Long id, User owner, String amount, LocalDateTime releaseAt) {
+    return Payout.builder()
+        .id(id)
+        .user(owner)
+        .amount(new BigDecimal(amount))
+        .payableAmount(new BigDecimal(amount))
+        .currency("KZT")
+        .status("PENDING")
+        .idempotencyKey("payout-" + id)
+        .releaseAt(releaseAt)
+        .build();
   }
 }

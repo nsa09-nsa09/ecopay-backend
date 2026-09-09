@@ -13,12 +13,16 @@ import static org.mockito.Mockito.when;
 import java.math.BigDecimal;
 import java.util.List;
 import kz.hrms.splitupauth.dto.CatalogSearchResultDto;
+import kz.hrms.splitupauth.dto.RoomMatchDto;
 import kz.hrms.splitupauth.dto.ServiceDto;
 import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.ProviderType;
+import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.ServiceEntity;
 import kz.hrms.splitupauth.entity.TariffPlan;
+import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -197,5 +201,33 @@ class CatalogServiceTest {
     assertEquals("KZT", result.get(0).getCurrency());
     // 7290/4 = 1822.50 is cheapest.
     assertEquals(0, new BigDecimal("1822.50").compareTo(result.get(0).getMinPricePerMember()));
+  }
+
+  @Test
+  void matchRoomForService_doesNotReturnFullMixedRoom() {
+    ServiceEntity netflix = svc(1L, "Netflix");
+    User owner = User.builder().id(10L).build();
+    User joiner = User.builder().id(11L).build();
+    Room mixedRoom =
+        Room.builder()
+            .id(50L)
+            .owner(owner)
+            .service(netflix)
+            .status(RoomStatus.OPEN)
+            .maxMembers(6)
+            .existingMembersCount(3)
+            .startDate(java.time.LocalDateTime.now().plusDays(1))
+            .build();
+    when(serviceRepository.existsById(1L)).thenReturn(true);
+    when(roomRepository.findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+            eq(1L), eq(RoomStatus.OPEN), any()))
+        .thenReturn(List.of(mixedRoom));
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(eq(mixedRoom), any()))
+        .thenReturn(3L);
+
+    RoomMatchDto result = service.matchRoomForService(1L, joiner);
+
+    assertEquals("CREATE", result.getAction());
+    assertNull(result.getRoomId());
   }
 }

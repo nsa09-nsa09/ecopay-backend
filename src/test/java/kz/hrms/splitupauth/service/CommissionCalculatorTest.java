@@ -22,6 +22,7 @@ class CommissionCalculatorTest {
     ReflectionTestUtils.setField(calc, "tier2Fee", new BigDecimal("700"));
     ReflectionTestUtils.setField(calc, "tier3Fee", new BigDecimal("900"));
     ReflectionTestUtils.setField(calc, "tier4Fee", new BigDecimal("1000"));
+    ReflectionTestUtils.setField(calc, "mixedRoomSurcharge", new BigDecimal("300"));
   }
 
   private void assertFee(String share, String expectedFee) {
@@ -53,5 +54,13 @@ class CommissionCalculatorTest {
     assertEquals(0, BigDecimal.ZERO.compareTo(calc.commissionFor(BigDecimal.ZERO)));
     assertEquals(0, BigDecimal.ZERO.compareTo(calc.commissionFor(new BigDecimal("-5"))));
     assertEquals(0, BigDecimal.ZERO.compareTo(calc.commissionFor(null)));
+  }
+
+  @Test
+  void mixedRoomAddsConfiguredSurchargeWithoutChangingLegacyMethod() {
+    assertEquals(0, new BigDecimal("500.00").compareTo(calc.commissionFor(new BigDecimal("1500"))));
+    assertEquals(
+        0,
+        new BigDecimal("800.00").compareTo(calc.commissionFor(new BigDecimal("1500"), 3)));
   }
 }

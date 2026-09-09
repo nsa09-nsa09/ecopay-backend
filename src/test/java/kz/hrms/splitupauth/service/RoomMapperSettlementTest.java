@@ -39,7 +39,7 @@ class RoomMapperSettlementTest {
   @Test
   void usdRoomSettlementFieldsUseFrozenKztShare() {
     BigDecimal shareKzt = new BigDecimal("12300.00");
-    when(commissionCalculator.commissionFor(shareKzt)).thenReturn(new BigDecimal("1000.00"));
+    when(commissionCalculator.commissionFor(shareKzt, 1)).thenReturn(new BigDecimal("1000.00"));
 
     RoomResponse response =
         mapper.toResponse(room("USD", new BigDecimal("25.00"), new BigDecimal("492.000000"), shareKzt));
@@ -51,13 +51,13 @@ class RoomMapperSettlementTest {
     assertEquals(0, new BigDecimal("492.000000").compareTo(response.getFxRateSnapshot()));
     assertEquals(0, new BigDecimal("25.00").compareTo(response.getOriginalTariffPrice()));
     assertEquals("USD", response.getOriginalTariffCurrency());
-    verify(commissionCalculator).commissionFor(shareKzt);
+    verify(commissionCalculator).commissionFor(shareKzt, 1);
   }
 
   @Test
   void eurRoomSettlementFieldsUseFrozenKztShare() {
     BigDecimal shareKzt = new BigDecimal("8200.00");
-    when(commissionCalculator.commissionFor(shareKzt)).thenReturn(new BigDecimal("1000.00"));
+    when(commissionCalculator.commissionFor(shareKzt, 1)).thenReturn(new BigDecimal("1000.00"));
 
     RoomResponse response =
         mapper.toResponse(room("EUR", new BigDecimal("15.00"), new BigDecimal("546.666667"), shareKzt));
@@ -69,7 +69,7 @@ class RoomMapperSettlementTest {
     assertEquals(0, new BigDecimal("546.666667").compareTo(response.getFxRateSnapshot()));
     assertEquals(0, new BigDecimal("15.00").compareTo(response.getOriginalTariffPrice()));
     assertEquals("EUR", response.getOriginalTariffCurrency());
-    verify(commissionCalculator).commissionFor(shareKzt);
+    verify(commissionCalculator).commissionFor(shareKzt, 1);
   }
 
   private static Room room(

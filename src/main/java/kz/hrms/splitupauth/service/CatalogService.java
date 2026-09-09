@@ -136,7 +136,7 @@ public class CatalogService {
   /**
    * FIFO subscription matcher: returns the oldest still-OPEN room on this service that the caller
    * can join, falling back to "CREATE" when none fits. "Fits" means the room has at least one free
-   * seat (owner counts as one occupied seat per CLAUDE.md), the caller is not the owner, the
+   * EcoPay marketplace seat, the caller is not the owner, the
    * start_date is still in the future, and the room isn't soft-deleted.
    *
    * <p>The repository pre-filters by {@code status=OPEN, deleted_at IS NULL, start_date > now};
@@ -169,8 +169,7 @@ public class CatalogService {
 
       long occupied =
           roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
-      // Owner = 1, plus PENDING/ACTIVE members. Free = max - 1 - occupied.
-      long free = room.getMaxMembers() - 1L - occupied;
+      long free = RoomSeatMath.freeSeats(room, occupied);
       if (free >= 1L) {
         return RoomMatchDto.builder().action("JOIN").roomId(room.getId()).build();
       }

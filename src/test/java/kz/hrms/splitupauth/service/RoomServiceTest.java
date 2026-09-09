@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.argThat;
@@ -17,12 +18,18 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.entity.PeriodType;
+import kz.hrms.splitupauth.entity.ProviderType;
+import kz.hrms.splitupauth.entity.PayoutMethod;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
+import kz.hrms.splitupauth.entity.ServiceEntity;
+import kz.hrms.splitupauth.entity.TariffPlan;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.entity.VerificationMode;
@@ -151,6 +158,71 @@ class RoomServiceTest {
     verify(roomRepository, never()).findByIdForUpdate(21L);
   }
 
+  @Test
+  void getRoomUsesExistingMembersCountInSeatMath() {
+    Room room = room(31L, LocalDateTime.now().plusDays(1));
+    room.setMaxMembers(6);
+    room.setExistingMembersCount(3);
+    RoomResponse response =
+        RoomResponse.builder().maxMembers(6).existingMembersCount(3).marketplaceCapacity(3).build();
+
+    when(roomRepository.findByIdAndDeletedAtIsNull(31L)).thenReturn(Optional.of(room));
+    when(roomMapper.toResponse(room)).thenReturn(response);
+    when(reviewRepository.aggregateRatingByRecipientIds(List.of(room.getOwner().getId())))
+        .thenReturn(List.of());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(eq(room), any()))
+        .thenReturn(2L);
+
+    RoomResponse result = roomService.getRoom(31L);
+
+    assertEquals(3, result.getExistingMembersCount());
+    assertEquals(3, result.getMarketplaceCapacity());
+    assertEquals(5, result.getFilledSeats());
+    assertEquals(1, result.getFreeSeats());
+  }
+
+  @Test
+  void createRoomDefaultsMissingExistingMembersCountToOne() {
+    User owner = user(7L);
+    owner.setPhoneVerifiedAt(LocalDateTime.now());
+    ServiceEntity service = service();
+    TariffPlan tariff = tariff(service, 6);
+    CreateRoomRequest request = createRoomRequest(service, tariff);
+    AtomicReference<Room> saved = new AtomicReference<>();
+
+    stubCreateRoomDependencies(owner, service, tariff);
+    when(roomRepository.save(any(Room.class)))
+        .thenAnswer(
+            invocation -> {
+              Room room = invocation.getArgument(0);
+              saved.set(room);
+              return room;
+            });
+    when(roomMapper.toResponse(any(Room.class))).thenReturn(RoomResponse.builder().build());
+
+    roomService.createRoom(owner, request);
+
+    assertEquals(1, saved.get().getExistingMembersCount());
+    verify(roomMemberRepository, never()).save(any());
+  }
+
+  @Test
+  void createRoomRejectsExistingMembersCountOutsideTariffCapacity() {
+    User owner = user(8L);
+    owner.setPhoneVerifiedAt(LocalDateTime.now());
+    ServiceEntity service = service();
+    TariffPlan tariff = tariff(service, 6);
+    stubCreateRoomDependencies(owner, service, tariff);
+
+    CreateRoomRequest zero = createRoomRequest(service, tariff);
+    zero.setExistingMembersCount(0);
+    assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class, () -> roomService.createRoom(owner, zero));
+
+    CreateRoomRequest full = createRoomRequest(service, tariff);
+    full.setExistingMembersCount(6);
+    assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class, () -> roomService.createRoom(owner, full));
+  }
+
   private Room room(Long roomId, LocalDateTime startDate) {
     return Room.builder()
         .id(roomId)
@@ -161,11 +233,53 @@ class RoomServiceTest {
         .title("Test room")
         .description("Test description")
         .maxMembers(3)
+        .existingMembersCount(1)
         .priceTotal(BigDecimal.valueOf(3000))
         .currency("KZT")
         .periodType(PeriodType.MONTHLY)
         .startDate(startDate)
         .operatorTermsConfirmed(false)
+        .build();
+  }
+
+  private void stubCreateRoomDependencies(User owner, ServiceEntity service, TariffPlan tariff) {
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(PayoutMethod.builder().id(1L).user(owner).status("ACTIVE").build()));
+    lenient()
+        .when(roomRepository.countByOwnerAndDeletedAtIsNullAndStatusIn(eq(owner), any()))
+        .thenReturn(0L);
+    when(serviceRepository.findById(service.getId())).thenReturn(Optional.of(service));
+    when(tariffPlanRepository.findById(tariff.getId())).thenReturn(Optional.of(tariff));
+  }
+
+  private CreateRoomRequest createRoomRequest(ServiceEntity service, TariffPlan tariff) {
+    CreateRoomRequest request = new CreateRoomRequest();
+    request.setServiceId(service.getId());
+    request.setTariffPlanId(tariff.getId());
+    request.setTitle("Mixed room");
+    return request;
+  }
+
+  private ServiceEntity service() {
+    return ServiceEntity.builder()
+        .id(100L)
+        .name("Digital")
+        .slug("digital")
+        .providerType(ProviderType.DIGITAL)
+        .isActive(true)
+        .build();
+  }
+
+  private TariffPlan tariff(ServiceEntity service, int maxMembers) {
+    return TariffPlan.builder()
+        .id(200L)
+        .service(service)
+        .name("Family")
+        .periodType(PeriodType.MONTHLY)
+        .maxMembers(maxMembers)
+        .basePriceTotal(new BigDecimal("6000.00"))
+        .currency("KZT")
+        .isActive(true)
         .build();
   }
 

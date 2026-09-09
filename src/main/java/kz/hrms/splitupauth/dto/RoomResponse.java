@@ -48,6 +48,8 @@ public class RoomResponse {
   private String title;
   private String description;
   private Integer maxMembers;
+  private Integer existingMembersCount;
+  private Integer marketplaceCapacity;
   private Integer filledSeats;
   private Integer freeSeats;
   private BigDecimal priceTotal;

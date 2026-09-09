@@ -262,6 +262,7 @@ public class RoomService {
     // later never silently re-prices existing rooms. The per-member share is the total
     // split equally across the seats the admin configured.
     Integer maxMembers = tariffPlan.getMaxMembers();
+    int existingMembersCount = resolveExistingMembersCount(request, maxMembers);
     PeriodType periodType = tariffPlan.getPeriodType();
     java.math.BigDecimal priceTotal = tariffPlan.getBasePriceTotal();
     java.math.BigDecimal pricePerMember = priceTotal;
@@ -289,6 +290,7 @@ public class RoomService {
             .title(request.getTitle())
             .description(request.getDescription())
             .maxMembers(maxMembers)
+            .existingMembersCount(existingMembersCount)
             .priceTotal(priceTotal)
             .pricePerMember(pricePerMember)
             .currency(currency)
@@ -326,6 +328,8 @@ public class RoomService {
             String.valueOf(room.getRoomType()),
             "maxMembers",
             room.getMaxMembers(),
+            "existingMembersCount",
+            room.getExistingMembersCount(),
             "pricePerMember",
             String.valueOf(room.getPricePerMember())));
 
@@ -344,10 +348,10 @@ public class RoomService {
     int memberOccupied =
         (int)
             roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(room, OCCUPYING_STATUSES);
-    // Owner always occupies 1 slot — they created the room.
-    int occupied = Math.min(response.getMaxMembers(), 1 + memberOccupied);
-    response.setFilledSeats(occupied);
-    response.setFreeSeats(Math.max(0, response.getMaxMembers() - occupied));
+    response.setExistingMembersCount(RoomSeatMath.existingMembersCount(room));
+    response.setMarketplaceCapacity(RoomSeatMath.marketplaceCapacity(room));
+    response.setFilledSeats(RoomSeatMath.filledSeats(room, memberOccupied));
+    response.setFreeSeats(RoomSeatMath.freeSeats(room, memberOccupied));
     return response;
   }
 
@@ -396,9 +400,15 @@ public class RoomService {
       spec =
           spec.and(
               (root, q, cb) -> {
-                // maxMembers - occupied >= minFree  ⇔  occupied <= maxMembers - minFree
+                // marketplaceCapacity - occupied >= minFree
                 Subquery<Long> occupied = occupiedSubquery(q, cb, root);
-                return cb.le(occupied, cb.diff(root.<Integer>get("maxMembers"), minFree));
+                return cb.le(
+                    occupied.as(Integer.class),
+                    cb.diff(
+                        cb.diff(
+                            root.<Integer>get("maxMembers"),
+                            root.<Integer>get("existingMembersCount")),
+                        minFree));
               });
     }
 
@@ -485,9 +495,15 @@ public class RoomService {
       switch (key) {
         case "most_seats":
           {
-            // free seats = maxMembers - occupied, descending
+            // free seats = maxMembers - existingMembersCount - marketplace occupied.
             Subquery<Long> occupied = occupiedSubquery(q, cb, root);
-            q.orderBy(cb.desc(cb.diff(root.<Integer>get("maxMembers"), occupied)));
+            q.orderBy(
+                cb.desc(
+                    cb.diff(
+                        cb.diff(
+                            root.<Integer>get("maxMembers"),
+                            root.<Integer>get("existingMembersCount")),
+                        occupied.as(Integer.class))));
             break;
           }
         case "best_rating":
@@ -564,11 +580,14 @@ public class RoomService {
                     RoomOccupancyProjection::getRoomId, RoomOccupancyProjection::getOccupied));
     for (RoomSummaryDto summary : summaries) {
       int memberOccupied = occupiedByRoom.getOrDefault(summary.getId(), 0L).intValue();
-      int max = summary.getMaxMembers() != null ? summary.getMaxMembers() : 0;
-      // Owner always occupies 1 slot — they created the room.
-      int occupied = Math.min(max, 1 + memberOccupied);
-      summary.setFilledSeats(occupied);
-      summary.setFreeSeats(Math.max(0, max - occupied));
+      Room seatRoom =
+          Room.builder()
+              .maxMembers(summary.getMaxMembers())
+              .existingMembersCount(summary.getExistingMembersCount())
+              .build();
+      summary.setMarketplaceCapacity(RoomSeatMath.marketplaceCapacity(seatRoom));
+      summary.setFilledSeats(RoomSeatMath.filledSeats(seatRoom, memberOccupied));
+      summary.setFreeSeats(RoomSeatMath.freeSeats(seatRoom, memberOccupied));
     }
   }
 
@@ -744,6 +763,8 @@ public class RoomService {
       throw new InvalidRequestException("Max members must be at least 2");
     }
 
+    validateExistingMembersCount(room.getExistingMembersCount(), room.getMaxMembers());
+
     if (room.getRoomType() == RoomType.TELECOM) {
       if (room.getProviderName() == null || room.getProviderName().isBlank()) {
         throw new InvalidRequestException("Provider name is required for TELECOM room");
@@ -761,6 +782,27 @@ public class RoomService {
 
   private boolean hasPositiveAmount(BigDecimal amount) {
     return amount != null && amount.signum() > 0;
+  }
+
+  private int resolveExistingMembersCount(CreateRoomRequest request, Integer maxMembers) {
+    int existingMembersCount =
+        request.getExistingMembersCount() == null
+            ? RoomSeatMath.DEFAULT_EXISTING_MEMBERS_COUNT
+            : request.getExistingMembersCount();
+    validateExistingMembersCount(existingMembersCount, maxMembers);
+    return existingMembersCount;
+  }
+
+  private void validateExistingMembersCount(Integer existingMembersCount, Integer maxMembers) {
+    if (maxMembers == null || maxMembers < 2) {
+      throw new InvalidRequestException("Max members must be at least 2");
+    }
+    if (existingMembersCount == null || existingMembersCount < 1) {
+      throw new InvalidRequestException("existingMembersCount must be at least 1");
+    }
+    if (existingMembersCount >= maxMembers) {
+      throw new InvalidRequestException("existingMembersCount must be less than maxMembers");
+    }
   }
 
   /** Parse a tariff plan's operator_rules JSON; returns null if absent or malformed. */

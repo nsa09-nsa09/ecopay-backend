@@ -56,7 +56,7 @@ public class RoomMapper {
     if (commissionCalculator == null || share == null) {
       return null;
     }
-    return commissionCalculator.commissionFor(share);
+    return commissionCalculator.commissionFor(share, RoomSeatMath.existingMembersCount(room));
   }
 
   private BigDecimal effectiveShareKzt(Room room) {
@@ -96,6 +96,8 @@ public class RoomMapper {
         .title(room.getTitle())
         .description(room.getDescription())
         .maxMembers(room.getMaxMembers())
+        .existingMembersCount(RoomSeatMath.existingMembersCount(room))
+        .marketplaceCapacity(RoomSeatMath.marketplaceCapacity(room))
         .priceTotal(room.getPriceTotal())
         .pricePerMember(room.getPricePerMember())
         .pricePerMemberCommission(commission)
@@ -140,6 +142,8 @@ public class RoomMapper {
         .roomType(room.getRoomType())
         .status(room.getStatus())
         .maxMembers(room.getMaxMembers())
+        .existingMembersCount(RoomSeatMath.existingMembersCount(room))
+        .marketplaceCapacity(RoomSeatMath.marketplaceCapacity(room))
         .priceTotal(room.getPriceTotal())
         .pricePerMember(room.getPricePerMember())
         .currency(room.getCurrency())
