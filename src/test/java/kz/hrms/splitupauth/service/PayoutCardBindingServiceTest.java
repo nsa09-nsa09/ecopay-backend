@@ -129,4 +129,41 @@ class PayoutCardBindingServiceTest {
     assertNull(binding.getPayoutMethod());
     verify(gatewayRegistry, never()).defaultGateway();
   }
+
+  @Test
+  void confirmBindingActivelyReconcilesWithProviderWhenPendingAndExternalPaymentIdPresent() {
+    User user = User.builder().id(42L).build();
+    PayoutCardBinding binding =
+        PayoutCardBinding.builder()
+            .id(17L)
+            .user(user)
+            .status("PENDING")
+            .providerName("freedompay")
+            .externalPaymentId("ext-18490")
+            .amount(new BigDecimal("0.00"))
+            .currency("KZT")
+            .idempotencyKey("cardbind-42-17")
+            .build();
+    PayoutMethod method =
+        PayoutMethod.builder().id(9L).user(user).providerCardToken("payout-token").build();
+
+    when(bindingRepository.findByIdAndUser(17L, user)).thenReturn(Optional.of(binding));
+    when(gatewayRegistry.resolve("freedompay")).thenReturn(gateway);
+    when(gateway.getStatus("ext-18490"))
+        .thenReturn(
+            kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse.builder()
+                .status("SUCCESS")
+                .cardToken("payout-token")
+                .cardPanMask("4111-11XX-XXXX-1111")
+                .build());
+    when(payoutService.registerVerifiedPayoutMethod(user, "payout-token", "4111-11XX-XXXX-1111"))
+        .thenReturn(method);
+
+    var response = service.confirmBinding(user, 17L);
+
+    assertEquals("SUCCESS", response.getStatus());
+    assertEquals("SUCCESS", binding.getStatus());
+    assertEquals("4111-11XX-XXXX-1111", binding.getPanMask());
+    verify(bindingRepository).save(binding);
+  }
 }

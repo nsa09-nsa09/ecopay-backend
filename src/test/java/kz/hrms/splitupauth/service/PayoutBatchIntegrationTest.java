@@ -11,6 +11,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import kz.hrms.splitupauth.AbstractIntegrationTest;
 import kz.hrms.splitupauth.entity.*;
+import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.payment.gateway.*;
 import kz.hrms.splitupauth.repository.*;
 import org.junit.jupiter.api.*;

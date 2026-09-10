@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.repository;
 
+import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.PayoutCardBinding;
 import kz.hrms.splitupauth.entity.User;
@@ -9,4 +10,5 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface PayoutCardBindingRepository extends JpaRepository<PayoutCardBinding, Long> {
   Optional<PayoutCardBinding> findByIdAndUser(Long id, User user);
+  List<PayoutCardBinding> findByUserAndStatusOrderByCreatedAtDesc(User user, String status);
 }

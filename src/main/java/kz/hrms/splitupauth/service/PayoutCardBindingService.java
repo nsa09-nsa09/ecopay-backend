@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.PayoutCardBindingConfirmResponse;
 import kz.hrms.splitupauth.dto.PayoutCardBindingResponse;
@@ -12,8 +13,10 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PayoutCardBindingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -116,8 +119,8 @@ public class PayoutCardBindingService {
   }
 
   /**
-   * Reads a binding after the owner returns. The signed provider callback is the only authority
-   * that can complete a real binding. Idempotent.
+   * Reads a binding after the owner returns. Checks if webhook already completed it,
+   * or actively reconciles with the provider if still pending. Idempotent.
    */
   @Transactional
   public PayoutCardBindingConfirmResponse confirmBinding(User user, Long bindingId) {
@@ -141,14 +144,105 @@ public class PayoutCardBindingService {
           .message(binding.getFailureMessage())
           .build();
     }
-    /*
-     * A real binding is completed only by the signed add2 callback. Querying a user-level card
-     * list here could accidentally attach an older card to this new binding attempt.
-     */
+
+    // Active reconciliation: in local dev or before webhook delivery, query provider directly
+    if (reconcileBindingWithProvider(binding, user)) {
+      return PayoutCardBindingConfirmResponse.builder()
+          .status("SUCCESS")
+          .method(
+              binding.getPayoutMethod() == null
+                  ? null
+                  : PayoutMethodDto.from(binding.getPayoutMethod()))
+          .build();
+    }
+    if ("FAILED".equals(binding.getStatus())) {
+      return PayoutCardBindingConfirmResponse.builder()
+          .status("FAILED")
+          .message(binding.getFailureMessage())
+          .build();
+    }
+
     return PayoutCardBindingConfirmResponse.builder()
         .status("PENDING")
         .message("Card tokenization is still being confirmed by the provider.")
         .build();
+  }
+
+  /**
+   * Reconciles all pending card bindings for the specified user with the provider.
+   * Useful when returning to room creation or method list without waiting for a webhook.
+   */
+  @Transactional
+  public void reconcilePendingBindingsForUser(User user) {
+    if (user == null) return;
+    List<PayoutCardBinding> pending =
+        bindingRepository.findByUserAndStatusOrderByCreatedAtDesc(user, "PENDING");
+    for (PayoutCardBinding binding : pending) {
+      if (reconcileBindingWithProvider(binding, user)) {
+        break;
+      }
+    }
+  }
+
+  /**
+   * Directly queries the provider for the outcome of this specific binding transaction.
+   * Returns true if the binding reached SUCCESS.
+   */
+  public boolean reconcileBindingWithProvider(PayoutCardBinding binding, User user) {
+    if (binding == null || !"PENDING".equals(binding.getStatus())) {
+      return "SUCCESS".equals(binding != null ? binding.getStatus() : null);
+    }
+    if (binding.getExternalPaymentId() == null || binding.getExternalPaymentId().isBlank()) {
+      return false;
+    }
+    try {
+      PaymentGateway gateway =
+          binding.getProviderName() != null
+              ? gatewayRegistry.resolve(binding.getProviderName())
+              : gatewayRegistry.defaultGateway();
+      if (gateway == null) {
+        return false;
+      }
+      GatewayStatusResponse statusResp = gateway.getStatus(binding.getExternalPaymentId());
+      if (statusResp == null) {
+        return false;
+      }
+
+      String token = statusResp.getCardToken();
+      String mask = statusResp.getCardPanMask();
+
+      // If provider marked transaction as success but omitted card token in get_status,
+      // look up the card stored for this user via cardstorage/list
+      if ("SUCCESS".equals(statusResp.getStatus())
+          && (token == null || token.isBlank())
+          && gateway instanceof FreedomPayGateway freedomGateway) {
+        GatewayStatusResponse savedCard =
+            freedomGateway.fetchSavedCardForUser(String.valueOf(user.getId()));
+        if (savedCard != null
+            && savedCard.getCardToken() != null
+            && !savedCard.getCardToken().isBlank()) {
+          token = savedCard.getCardToken();
+          if (mask == null || mask.isBlank()) {
+            mask = savedCard.getCardPanMask();
+          }
+        }
+      }
+
+      if ("SUCCESS".equals(statusResp.getStatus()) && token != null && !token.isBlank()) {
+        completeBinding(binding, user, token, mask);
+        log.info("Binding {} actively reconciled with provider: status=SUCCESS", binding.getId());
+        return true;
+      } else if ("FAILED".equals(statusResp.getStatus())) {
+        binding.setStatus("FAILED");
+        binding.setFailureMessage(statusResp.getFailureMessage());
+        bindingRepository.save(binding);
+        log.info("Binding {} actively reconciled with provider: status=FAILED", binding.getId());
+        return false;
+      }
+    } catch (Exception ex) {
+      log.warn("Active reconciliation for binding {} failed: {}", binding.getId(), ex.getMessage());
+    }
+    return false;
   }
 
   /**

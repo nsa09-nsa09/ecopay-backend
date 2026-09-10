@@ -41,6 +41,7 @@ public class PayoutController {
 
   @GetMapping("/methods")
   public ResponseEntity<List<PayoutMethodDto>> listMethods(@AuthenticationPrincipal User user) {
+    cardBindingService.reconcilePendingBindingsForUser(user);
     return ResponseEntity.ok(
         payoutService.listMethods(user).stream().map(PayoutMethodDto::from).toList());
   }
