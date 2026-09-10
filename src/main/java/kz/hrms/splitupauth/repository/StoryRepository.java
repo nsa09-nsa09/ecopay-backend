@@ -10,8 +10,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface StoryRepository extends JpaRepository<Story, Long> {
 
-  Page<Story> findByStatusOrderBySortOrderAscPublishedAtDesc(
-      StoryStatus status, Pageable pageable);
+  Page<Story> findByStatusOrderBySortOrderAscPublishedAtDesc(StoryStatus status, Pageable pageable);
 
   Page<Story> findAllByOrderByCreatedAtDesc(Pageable pageable);
 

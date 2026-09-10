@@ -10,5 +10,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface PayoutCardBindingRepository extends JpaRepository<PayoutCardBinding, Long> {
   Optional<PayoutCardBinding> findByIdAndUser(Long id, User user);
+
   List<PayoutCardBinding> findByUserAndStatusOrderByCreatedAtDesc(User user, String status);
 }

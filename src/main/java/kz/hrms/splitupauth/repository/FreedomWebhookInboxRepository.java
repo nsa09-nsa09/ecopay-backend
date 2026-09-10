@@ -16,7 +16,8 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface FreedomWebhookInboxRepository
-    extends JpaRepository<FreedomWebhookInbox, Long>, JpaSpecificationExecutor<FreedomWebhookInbox> {
+    extends JpaRepository<FreedomWebhookInbox, Long>,
+        JpaSpecificationExecutor<FreedomWebhookInbox> {
 
   Optional<FreedomWebhookInbox> findByProviderRequestId(String providerRequestId);
 

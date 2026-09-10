@@ -78,14 +78,9 @@ public class FreedomPayWebhookController {
   private boolean payloadTooLarge(Map<String, String> params) {
     long bytes = 0;
     for (Map.Entry<String, String> entry : params.entrySet()) {
+      bytes += entry.getKey() == null ? 0 : entry.getKey().getBytes(StandardCharsets.UTF_8).length;
       bytes +=
-          entry.getKey() == null
-              ? 0
-              : entry.getKey().getBytes(StandardCharsets.UTF_8).length;
-      bytes +=
-          entry.getValue() == null
-              ? 0
-              : entry.getValue().getBytes(StandardCharsets.UTF_8).length;
+          entry.getValue() == null ? 0 : entry.getValue().getBytes(StandardCharsets.UTF_8).length;
       if (bytes > MAX_WEBHOOK_PARAM_BYTES) return true;
     }
     return false;

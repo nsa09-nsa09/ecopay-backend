@@ -28,8 +28,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Owner payout-card connection via the provider's hosted page.
  *
  * <p>FreedomPay's universal {@code cardstorage/add2} hosted flow tokenizes the card without a
- * verification charge. Its signed callback provides the payout-compatible card token, which is
- * then registered as the owner's payout method. The owner never sees or types a token.
+ * verification charge. Its signed callback provides the payout-compatible card token, which is then
+ * registered as the owner's payout method. The owner never sees or types a token.
  */
 @Service
 @RequiredArgsConstructor
@@ -44,8 +44,8 @@ public class PayoutCardBindingService {
   private String frontendUrl;
 
   /**
-   * Starts a zero-amount binding and returns the hosted page where the owner enters their card.
-   * The client-supplied return URL is ignored; redirects always use the configured frontend.
+   * Starts a zero-amount binding and returns the hosted page where the owner enters their card. The
+   * client-supplied return URL is ignored; redirects always use the configured frontend.
    */
   @Transactional
   public PayoutCardBindingResponse initBinding(User user, String ignoredReturnUrl) {
@@ -119,8 +119,8 @@ public class PayoutCardBindingService {
   }
 
   /**
-   * Reads a binding after the owner returns. Checks if webhook already completed it,
-   * or actively reconciles with the provider if still pending. Idempotent.
+   * Reads a binding after the owner returns. Checks if webhook already completed it, or actively
+   * reconciles with the provider if still pending. Idempotent.
    */
   @Transactional
   public PayoutCardBindingConfirmResponse confirmBinding(User user, Long bindingId) {
@@ -169,8 +169,8 @@ public class PayoutCardBindingService {
   }
 
   /**
-   * Reconciles all pending card bindings for the specified user with the provider.
-   * Useful when returning to room creation or method list without waiting for a webhook.
+   * Reconciles all pending card bindings for the specified user with the provider. Useful when
+   * returning to room creation or method list without waiting for a webhook.
    */
   @Transactional
   public void reconcilePendingBindingsForUser(User user) {
@@ -185,8 +185,8 @@ public class PayoutCardBindingService {
   }
 
   /**
-   * Directly queries the provider for the outcome of this specific binding transaction.
-   * Returns true if the binding reached SUCCESS.
+   * Directly queries the provider for the outcome of this specific binding transaction. Returns
+   * true if the binding reached SUCCESS.
    */
   public boolean reconcileBindingWithProvider(PayoutCardBinding binding, User user) {
     if (binding == null || !"PENDING".equals(binding.getStatus())) {
@@ -296,7 +296,8 @@ public class PayoutCardBindingService {
       origin = origin.substring(0, origin.length() - 1);
     }
     if (origin.isBlank()) {
-      throw new IllegalStateException("app.frontend-url must be configured for payout card binding");
+      throw new IllegalStateException(
+          "app.frontend-url must be configured for payout card binding");
     }
     return origin + "/payment/card-connected";
   }

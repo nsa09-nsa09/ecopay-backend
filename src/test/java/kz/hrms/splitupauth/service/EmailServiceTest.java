@@ -71,7 +71,11 @@ class EmailServiceTest {
     when(mailSender.createMimeMessage()).thenReturn(message);
 
     emailService.sendNotificationEmail(
-        "user@example.com", "Заявка отправлена", "Ваша заявка отправлена", "/rooms/member/123", MailLocale.RU);
+        "user@example.com",
+        "Заявка отправлена",
+        "Ваша заявка отправлена",
+        "/rooms/member/123",
+        MailLocale.RU);
 
     String html = sentHtml();
     assertTrue(html.contains("http://localhost:5173/rooms/member/123"));
@@ -106,7 +110,11 @@ class EmailServiceTest {
     when(mailSender.createMimeMessage()).thenReturn(message);
 
     emailService.sendNotificationEmail(
-        "user@example.com", "Оплата подтверждена", "Оплата прошла", "/rooms/member/789", MailLocale.RU);
+        "user@example.com",
+        "Оплата подтверждена",
+        "Оплата прошла",
+        "/rooms/member/789",
+        MailLocale.RU);
 
     String html = sentHtml();
     assertTrue(html.contains("https://app.ecopay.kz/rooms/member/789"));

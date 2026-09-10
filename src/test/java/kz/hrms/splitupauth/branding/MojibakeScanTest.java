@@ -29,7 +29,10 @@ class MojibakeScanTest {
     for (Path root : roots) {
       if (!Files.exists(root)) continue;
       try (Stream<Path> paths = Files.walk(root)) {
-        paths.filter(Files::isRegularFile).filter(MojibakeScanTest::isTextFile).forEach(path -> scan(path, failures));
+        paths
+            .filter(Files::isRegularFile)
+            .filter(MojibakeScanTest::isTextFile)
+            .forEach(path -> scan(path, failures));
       }
     }
 

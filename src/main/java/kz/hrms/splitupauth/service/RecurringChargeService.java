@@ -99,7 +99,11 @@ public class RecurringChargeService {
     }
     if (paymentIntentRepository
         .findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
-            memberId, List.of(PaymentIntentStatus.PENDING, PaymentIntentStatus.UNKNOWN, PaymentIntentStatus.RECONCILING))
+            memberId,
+            List.of(
+                PaymentIntentStatus.PENDING,
+                PaymentIntentStatus.UNKNOWN,
+                PaymentIntentStatus.RECONCILING))
         .isPresent()) {
       roomMemberRepository.save(member);
       return;
@@ -122,7 +126,12 @@ public class RecurringChargeService {
     }
 
     String idempotencyKey =
-        "recurring-" + memberId + "-" + member.getNextBillingAt().toLocalDate() + "-attempt-" + attempt;
+        "recurring-"
+            + memberId
+            + "-"
+            + member.getNextBillingAt().toLocalDate()
+            + "-attempt-"
+            + attempt;
     if (paymentIntentRepository.findByIdempotencyKey(idempotencyKey).isPresent()) {
       roomMemberRepository.save(member);
       return;
@@ -210,7 +219,8 @@ public class RecurringChargeService {
     }
   }
 
-  private void initializeBillingSchedule(RoomMember member, PaymentIntent lastSuccess, LocalDateTime now) {
+  private void initializeBillingSchedule(
+      RoomMember member, PaymentIntent lastSuccess, LocalDateTime now) {
     LocalDateTime anchor = member.getBillingAnchorAt();
     if (anchor == null) {
       anchor = lastSuccess.getCreatedAt() == null ? now : lastSuccess.getCreatedAt();
@@ -228,9 +238,9 @@ public class RecurringChargeService {
   }
 
   private void scheduleRetry(RoomMember member, LocalDateTime now) {
-    int nextRetryCount = (member.getRecurringRetryCount() == null ? 0 : member.getRecurringRetryCount()) + 1;
+    int nextRetryCount =
+        (member.getRecurringRetryCount() == null ? 0 : member.getRecurringRetryCount()) + 1;
     member.setRecurringRetryCount(nextRetryCount);
-    member.setRecurringNextRetryAt(
-        nextRetryCount >= MAX_RETRY_COUNT ? null : now.plusDays(1));
+    member.setRecurringNextRetryAt(nextRetryCount >= MAX_RETRY_COUNT ? null : now.plusDays(1));
   }
 }

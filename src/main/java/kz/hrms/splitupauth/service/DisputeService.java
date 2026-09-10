@@ -7,8 +7,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.ApplyDisputeSanctionsRequest;
-import kz.hrms.splitupauth.dto.CreateRoomComplaintRequest;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
+import kz.hrms.splitupauth.dto.CreateRoomComplaintRequest;
 import kz.hrms.splitupauth.dto.DisputeDecisionRequest;
 import kz.hrms.splitupauth.dto.DisputeResponse;
 import kz.hrms.splitupauth.dto.PageResponse;
@@ -60,14 +60,16 @@ public class DisputeService {
     RoomMember member =
         roomMemberRepository
             .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
-            .orElseThrow(() -> new ForbiddenOperationException("You are not a member of this room"));
+            .orElseThrow(
+                () -> new ForbiddenOperationException("You are not a member of this room"));
 
     if (member.getStatus() != MemberStatus.PENDING && member.getStatus() != MemberStatus.ACTIVE) {
       throw new InvalidRequestException("Only a paid active or pending membership can be reported");
     }
     if (!paymentTransactionRepository.existsByRoomMember_IdAndStatus(
         member.getId(), PaymentTransactionStatus.SUCCESS)) {
-      throw new InvalidRequestException("A successful payment is required before opening a complaint");
+      throw new InvalidRequestException(
+          "A successful payment is required before opening a complaint");
     }
     if (disputeRepository.existsByRoomMemberAndStatusIn(
         member, List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW))) {
@@ -399,7 +401,8 @@ public class DisputeService {
       throw new InvalidRequestException("No successful member payments are available for refund");
     }
     for (PaymentTransaction charge : capturedCharges) {
-      var remaining = charge.getAmount().subtract(refundTransactionRepository.sumActiveRefundAmounts(charge));
+      var remaining =
+          charge.getAmount().subtract(refundTransactionRepository.sumActiveRefundAmounts(charge));
       if (remaining.signum() <= 0) {
         continue;
       }

@@ -99,10 +99,7 @@ public class StoryImageStorageService {
           RequestBody.fromBytes(jpeg));
     } catch (S3Exception ex) {
       log.error(
-          "Failed to upload story image to bucket {} key {}",
-          s3Properties.getBucket(),
-          key,
-          ex);
+          "Failed to upload story image to bucket {} key {}", s3Properties.getBucket(), key, ex);
       throw new InvalidRequestException("Failed to store image");
     }
 
@@ -204,9 +201,7 @@ public class StoryImageStorageService {
         && (bytes[3] & 0xFF) == 0x47) {
       return true;
     }
-    return (bytes[0] & 0xFF) == 0xFF
-        && (bytes[1] & 0xFF) == 0xD8
-        && (bytes[2] & 0xFF) == 0xFF;
+    return (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF;
   }
 
   private BufferedImage downscale(BufferedImage src, int targetWidth) {

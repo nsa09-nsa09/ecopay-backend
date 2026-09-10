@@ -26,7 +26,8 @@ class SameOriginCookieEndpointFilterTest {
 
   @Test
   void allowedOriginPasses() throws ServletException, IOException {
-    MockHttpServletResponse response = execute(requestWithCookie("Origin", "https://app.ecopay.kz"));
+    MockHttpServletResponse response =
+        execute(requestWithCookie("Origin", "https://app.ecopay.kz"));
 
     assertEquals(200, response.getStatus());
   }

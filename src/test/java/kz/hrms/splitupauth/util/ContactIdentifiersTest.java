@@ -36,8 +36,7 @@ class ContactIdentifiersTest {
         ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.EMAIL));
     assertTrue(
         ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.PHONE));
-    assertFalse(
-        ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.SIM));
+    assertFalse(ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.SIM));
     assertFalse(
         ContactIdentifiers.allowedFor(ServiceAccessType.BOTH).contains(IdentifierType.ESIM));
     assertFalse(

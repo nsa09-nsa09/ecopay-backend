@@ -65,8 +65,7 @@ class PayoutCardBindingServiceTest {
 
     var response = service.initBinding(user, "https://attacker.test/redirect");
 
-    ArgumentCaptor<PayoutCardBinding> binding =
-        ArgumentCaptor.forClass(PayoutCardBinding.class);
+    ArgumentCaptor<PayoutCardBinding> binding = ArgumentCaptor.forClass(PayoutCardBinding.class);
     verify(bindingRepository, org.mockito.Mockito.atLeastOnce()).save(binding.capture());
     assertEquals(new BigDecimal("0.00"), binding.getAllValues().get(0).getAmount());
     ArgumentCaptor<GatewayCardBindingRequest> request =
@@ -96,8 +95,7 @@ class PayoutCardBindingServiceTest {
     PayoutMethod method =
         PayoutMethod.builder().id(9L).user(user).providerCardToken("payout-token").build();
     when(bindingRepository.findById(17L)).thenReturn(Optional.of(binding));
-    when(payoutService.registerVerifiedPayoutMethod(
-            user, "payout-token", "411111******1111"))
+    when(payoutService.registerVerifiedPayoutMethod(user, "payout-token", "411111******1111"))
         .thenReturn(method);
 
     service.applyBindingWebhook(17L, true, "payout-token", "411111******1111");

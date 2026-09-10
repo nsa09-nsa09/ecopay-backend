@@ -50,7 +50,8 @@ public class ServiceReviewService {
 
   @Transactional(readOnly = true)
   public List<PublicServiceReviewDto> getFeatured() {
-    return repository.findByFeaturedTrueAndFeaturedPositionIsNotNullOrderByFeaturedPositionAsc()
+    return repository
+        .findByFeaturedTrueAndFeaturedPositionIsNotNullOrderByFeaturedPositionAsc()
         .stream()
         .filter(review -> hasVerifiedExperience(review.getAuthor().getId()))
         .limit(MAX_HOMEPAGE_TESTIMONIALS)

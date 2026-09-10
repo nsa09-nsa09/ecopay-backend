@@ -126,8 +126,7 @@ public class MockPaymentGateway implements PaymentGateway {
   }
 
   @Override
-  public GatewayStatusResponse getPayoutStatus(
-      String externalPayoutId, String merchantOrderId) {
+  public GatewayStatusResponse getPayoutStatus(String externalPayoutId, String merchantOrderId) {
     return GatewayStatusResponse.builder()
         .externalPaymentId(externalPayoutId)
         .status("SUCCESS")

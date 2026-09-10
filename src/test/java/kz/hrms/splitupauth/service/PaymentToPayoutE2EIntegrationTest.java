@@ -14,7 +14,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -25,9 +24,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import kz.hrms.splitupauth.AbstractIntegrationTest;
 import kz.hrms.splitupauth.dto.ConfirmOwnerAccessRequest;
 import kz.hrms.splitupauth.dto.CreatePaymentIntentRequest;
-import kz.hrms.splitupauth.dto.PaymentHistoryItemDto;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.JoinRoomRequest;
+import kz.hrms.splitupauth.dto.PaymentHistoryItemDto;
 import kz.hrms.splitupauth.dto.PaymentIntentResponse;
 import kz.hrms.splitupauth.dto.RegisterRequest;
 import kz.hrms.splitupauth.dto.RoomMemberDto;
@@ -62,9 +61,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * in prod) → the hold elapses → the dispatcher releases the money to the host's payout card.
  *
  * <p>The production hold is {@code app.payout.hold-days} (default 30). Waiting 30 real days in a
- * test is obviously not viable, so this test injects a mutable {@link Clock}, moves it past
- * {@code releaseAt}, and calls the dispatcher synchronously. Nothing about the dispatcher or gateway
- * is stubbed.
+ * test is obviously not viable, so this test injects a mutable {@link Clock}, moves it past {@code
+ * releaseAt}, and calls the dispatcher synchronously. Nothing about the dispatcher or gateway is
+ * stubbed.
  *
  * <p>What is proven:
  *
@@ -84,7 +83,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * manual sandbox runs against a deployed environment.
  */
 @Import(PaymentToPayoutE2EIntegrationTest.ClockTestConfig.class)
-@org.springframework.test.context.TestPropertySource(properties = "app.payout.batch-coalesce-hours=0")
+@org.springframework.test.context.TestPropertySource(
+    properties = "app.payout.batch-coalesce-hours=0")
 class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
 
   private static final Instant BASE_INSTANT = Instant.parse("2026-01-01T00:00:00Z");
@@ -495,7 +495,8 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     RoomMemberDto otherMember = joinRoom(room.getId(), otherGuest, "history-two@test.kz");
 
     PaymentIntentResponse ownPayment = pay(member, guest, "history-own-" + member.getId());
-    PaymentIntentResponse otherPayment = pay(otherMember, otherGuest, "history-other-" + otherMember.getId());
+    PaymentIntentResponse otherPayment =
+        pay(otherMember, otherGuest, "history-other-" + otherMember.getId());
 
     List<PaymentHistoryItemDto> items =
         paymentHistoryService.history(guest, 0, 50, null, null, null, null).getItems();

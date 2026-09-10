@@ -18,7 +18,8 @@ public interface PaymentReservationRepository extends JpaRepository<PaymentReser
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select r from PaymentReservation r where r.paymentIntent.id = :paymentIntentId")
-  Optional<PaymentReservation> findWithLockByPaymentIntentId(@Param("paymentIntentId") Long paymentIntentId);
+  Optional<PaymentReservation> findWithLockByPaymentIntentId(
+      @Param("paymentIntentId") Long paymentIntentId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<PaymentReservation> findFirstByRoomMember_IdAndStatusOrderByCreatedAtDesc(

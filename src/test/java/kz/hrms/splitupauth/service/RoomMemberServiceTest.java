@@ -59,11 +59,11 @@ import kz.hrms.splitupauth.security.FieldEncryptionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 @ExtendWith(MockitoExtension.class)
 class RoomMemberServiceTest {
@@ -318,7 +318,9 @@ class RoomMemberServiceTest {
   }
 
   @ParameterizedTest
-  @EnumSource(value = IdentifierType.class, names = {"SIM", "ESIM", "ACCOUNT"})
+  @EnumSource(
+      value = IdentifierType.class,
+      names = {"SIM", "ESIM", "ACCOUNT"})
   void joinRoom_phoneServiceRejectsLegacyIdentifierTypes(IdentifierType identifierType) {
     User member = user(217L, Role.USER);
     Room room = room(117L);
@@ -333,7 +335,8 @@ class RoomMemberServiceTest {
             InvalidRequestException.class,
             () -> roomMemberService.joinRoom(ROOM_ID, member, request));
 
-    assertEquals("This service grants access by phone — a phone number is required", exception.getMessage());
+    assertEquals(
+        "This service grants access by phone — a phone number is required", exception.getMessage());
     verify(roomMemberRepository, never()).save(any(RoomMember.class));
   }
 
@@ -437,7 +440,9 @@ class RoomMemberServiceTest {
     InvalidRequestException exception =
         assertThrows(
             InvalidRequestException.class,
-            () -> roomMemberService.joinRoom(ROOM_ID, member, joinRequest(IdentifierType.PHONE, "+77051234567")));
+            () ->
+                roomMemberService.joinRoom(
+                    ROOM_ID, member, joinRequest(IdentifierType.PHONE, "+77051234567")));
 
     assertEquals("User has already joined this room", exception.getMessage());
     verify(roomMemberRepository, never()).save(any(RoomMember.class));

@@ -21,16 +21,7 @@ class LegacyBrandScanTest {
           Pattern.CASE_INSENSITIVE);
 
   private static final Set<String> TEXT_EXTENSIONS =
-      Set.of(
-          ".java",
-          ".json",
-          ".md",
-          ".properties",
-          ".sql",
-          ".txt",
-          ".xml",
-          ".yml",
-          ".yaml");
+      Set.of(".java", ".json", ".md", ".properties", ".sql", ".txt", ".xml", ".yml", ".yaml");
 
   @Test
   void resourcesOpenApiAndEmailTemplatesDoNotExposeLegacyBrand() throws IOException {

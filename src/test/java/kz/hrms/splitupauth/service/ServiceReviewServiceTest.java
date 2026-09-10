@@ -195,7 +195,8 @@ class ServiceReviewServiceTest {
     AdminUpdateServiceReviewRequest req = new AdminUpdateServiceReviewRequest();
     req.setText("corrected typo");
 
-    assertThrows(InvalidRequestException.class, () -> service.adminUpdate(50L, req, adminUser, http));
+    assertThrows(
+        InvalidRequestException.class, () -> service.adminUpdate(50L, req, adminUser, http));
     verify(repository, never()).save(any());
   }
 

@@ -60,8 +60,7 @@ class CommissionCalculatorTest {
   void mixedRoomUsesFixedMarketplaceFeeWithoutChangingLegacyMethod() {
     assertEquals(0, new BigDecimal("500.00").compareTo(calc.commissionFor(new BigDecimal("1500"))));
     assertEquals(
-        0,
-        new BigDecimal("450.00").compareTo(calc.commissionFor(new BigDecimal("1500"), 2)));
+        0, new BigDecimal("450.00").compareTo(calc.commissionFor(new BigDecimal("1500"), 2)));
   }
 
   @Test

@@ -26,9 +26,9 @@ import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
+import kz.hrms.splitupauth.repository.PayoutBatchRepository;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
-import kz.hrms.splitupauth.repository.PayoutBatchRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -215,14 +215,13 @@ public class PayoutService {
       try {
         PaymentGateway gateway = gatewayRegistry.defaultGateway();
         GatewayStatusResponse providerStatus =
-            gateway.getPayoutStatus(
-                payout.getProviderPayoutId(), payoutProviderOrderId(payout));
+            gateway.getPayoutStatus(payout.getProviderPayoutId(), payoutProviderOrderId(payout));
         tx().executeWithoutResult(
-            status -> completePayoutReconciliation(payout.getId(), providerStatus));
+                status -> completePayoutReconciliation(payout.getId(), providerStatus));
       } catch (Exception ex) {
         log.warn("Payout {} status reconciliation failed: {}", payout.getId(), ex.getMessage());
         tx().executeWithoutResult(
-            status -> deferPayoutReconciliation(payout.getId(), ex.getMessage()));
+                status -> deferPayoutReconciliation(payout.getId(), ex.getMessage()));
       }
     }
     List<PayoutBatch> pendingBatches =
@@ -236,11 +235,12 @@ public class PayoutService {
         GatewayStatusResponse providerStatus =
             gateway.getPayoutStatus(batch.getProviderPayoutId(), batch.getProviderOrderId());
         tx().executeWithoutResult(
-            status -> completeBatchReconciliation(batch.getId(), providerStatus));
+                status -> completeBatchReconciliation(batch.getId(), providerStatus));
       } catch (Exception ex) {
-        log.warn("Payout batch {} status reconciliation failed: {}", batch.getId(), ex.getMessage());
+        log.warn(
+            "Payout batch {} status reconciliation failed: {}", batch.getId(), ex.getMessage());
         tx().executeWithoutResult(
-            status -> deferBatchReconciliation(batch.getId(), ex.getMessage()));
+                status -> deferBatchReconciliation(batch.getId(), ex.getMessage()));
       }
     }
   }
@@ -278,63 +278,66 @@ public class PayoutService {
 
   private BatchCandidate prepareBatchCandidate(Long payoutId) {
     return tx().execute(
-        status -> {
-          Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
-          if (payout == null || payout.getPayoutBatch() != null) {
-            return null;
-          }
-          if (!"PENDING".equals(payout.getStatus()) && !"PENDING_METHOD".equals(payout.getStatus())) {
-            return null;
-          }
-          LocalDateTime now = LocalDateTime.now(clock);
-          if ((payout.getReleaseAt() != null && payout.getReleaseAt().isAfter(now))
-              || (payout.getNextRetryAt() != null && payout.getNextRetryAt().isAfter(now))) {
-            return null;
-          }
-          PayoutEligibilityService.Decision eligibility = payoutEligibilityService.evaluate(payout);
-          if (!eligibility.eligible()) {
-            payout.setFailureReason("Eligibility blocked: " + eligibility.reason());
-            payout.setNextRetryAt(now.plusMinutes(eligibility.temporary() ? 60 : 360));
-            payoutRepository.save(payout);
-            eventLogger.log(
-                "PAYOUT",
-                payout.getId(),
-                "ELIGIBILITY_BLOCKED",
-                payout.getStatus(),
-                payout.getStatus(),
-                null,
-                null,
-                payout.getIdempotencyKey(),
-                java.util.Map.of("reason", eligibility.reason()));
-            return null;
-          }
-          PayoutMethod method =
-              payoutMethodRepository
-                  .findByUserAndIsDefaultTrueAndStatus(payout.getUser(), "ACTIVE")
-                  .orElse(null);
-          if (method == null) {
-            payout.setStatus("PENDING_METHOD");
-            payoutRepository.save(payout);
-            return null;
-          }
-          if (payout.getRetryCount() != null && payout.getRetryCount() >= MAX_RETRY) {
-            payout.setStatus("FAILED");
-            payout.setFailureReason("Max retries exceeded");
-            payoutRepository.save(payout);
-            return null;
-          }
-          BigDecimal payable = payoutPayableAmount(payout);
-          if (payable.signum() <= 0) {
-            payout.setStatus("REVERSED");
-            payout.setFailureReason("Reversed: payable amount is zero");
-            payout.setProcessedAt(now);
-            payoutRepository.save(payout);
-            return null;
-          }
-          return new BatchCandidate(
-              payout.getId(),
-              new BatchGroupKey(payout.getUser().getId(), method.getId(), payout.getCurrency()));
-        });
+            status -> {
+              Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
+              if (payout == null || payout.getPayoutBatch() != null) {
+                return null;
+              }
+              if (!"PENDING".equals(payout.getStatus())
+                  && !"PENDING_METHOD".equals(payout.getStatus())) {
+                return null;
+              }
+              LocalDateTime now = LocalDateTime.now(clock);
+              if ((payout.getReleaseAt() != null && payout.getReleaseAt().isAfter(now))
+                  || (payout.getNextRetryAt() != null && payout.getNextRetryAt().isAfter(now))) {
+                return null;
+              }
+              PayoutEligibilityService.Decision eligibility =
+                  payoutEligibilityService.evaluate(payout);
+              if (!eligibility.eligible()) {
+                payout.setFailureReason("Eligibility blocked: " + eligibility.reason());
+                payout.setNextRetryAt(now.plusMinutes(eligibility.temporary() ? 60 : 360));
+                payoutRepository.save(payout);
+                eventLogger.log(
+                    "PAYOUT",
+                    payout.getId(),
+                    "ELIGIBILITY_BLOCKED",
+                    payout.getStatus(),
+                    payout.getStatus(),
+                    null,
+                    null,
+                    payout.getIdempotencyKey(),
+                    java.util.Map.of("reason", eligibility.reason()));
+                return null;
+              }
+              PayoutMethod method =
+                  payoutMethodRepository
+                      .findByUserAndIsDefaultTrueAndStatus(payout.getUser(), "ACTIVE")
+                      .orElse(null);
+              if (method == null) {
+                payout.setStatus("PENDING_METHOD");
+                payoutRepository.save(payout);
+                return null;
+              }
+              if (payout.getRetryCount() != null && payout.getRetryCount() >= MAX_RETRY) {
+                payout.setStatus("FAILED");
+                payout.setFailureReason("Max retries exceeded");
+                payoutRepository.save(payout);
+                return null;
+              }
+              BigDecimal payable = payoutPayableAmount(payout);
+              if (payable.signum() <= 0) {
+                payout.setStatus("REVERSED");
+                payout.setFailureReason("Reversed: payable amount is zero");
+                payout.setProcessedAt(now);
+                payoutRepository.save(payout);
+                return null;
+              }
+              return new BatchCandidate(
+                  payout.getId(),
+                  new BatchGroupKey(
+                      payout.getUser().getId(), method.getId(), payout.getCurrency()));
+            });
   }
 
   private boolean shouldWaitForCoalescing(Payout payout, LocalDateTime now) {
@@ -381,7 +384,7 @@ public class PayoutService {
     }
     String finalProviderName = providerName;
     tx().executeWithoutResult(
-        status -> completeBatchDispatch(claim.batchId(), resp, finalProviderName));
+            status -> completeBatchDispatch(claim.batchId(), resp, finalProviderName));
   }
 
   private BatchDispatchClaim claimNewPayoutBatchForDispatch(List<Long> payoutIds) {
@@ -652,8 +655,7 @@ public class PayoutService {
     }
   }
 
-  private void completeBatchReconciliation(
-      Long batchId, GatewayStatusResponse providerStatus) {
+  private void completeBatchReconciliation(Long batchId, GatewayStatusResponse providerStatus) {
     PayoutBatch batch = payoutBatchRepository.findWithLockById(batchId).orElse(null);
     if (batch == null || !"PENDING_PROVIDER".equals(batch.getStatus())) {
       return;
@@ -757,8 +759,7 @@ public class PayoutService {
     }
   }
 
-  private void completePayoutReconciliation(
-      Long payoutId, GatewayStatusResponse providerStatus) {
+  private void completePayoutReconciliation(Long payoutId, GatewayStatusResponse providerStatus) {
     Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
     if (payout == null || !"PENDING_PROVIDER".equals(payout.getStatus())) {
       return;
@@ -914,8 +915,8 @@ public class PayoutService {
   }
 
   private void appendPayoutSuccessLedger(Payout payout) {
-    BigDecimal amount = payout.getSubmittedAmount() == null
-        ? payout.getAmount() : payout.getSubmittedAmount();
+    BigDecimal amount =
+        payout.getSubmittedAmount() == null ? payout.getAmount() : payout.getSubmittedAmount();
     moneyLedgerService.append(
         "HOLD_RELEASE",
         amount,
@@ -1013,8 +1014,11 @@ public class PayoutService {
 
     String status = payout.getStatus();
     boolean notYetDispatched =
-        payout.getPayoutBatch() == null && payout.getSubmittedAmount() == null
-            && ("PENDING".equals(status) || "PENDING_METHOD".equals(status) || "FROZEN".equals(status));
+        payout.getPayoutBatch() == null
+            && payout.getSubmittedAmount() == null
+            && ("PENDING".equals(status)
+                || "PENDING_METHOD".equals(status)
+                || "FROZEN".equals(status));
     BigDecimal totalCharged = triggeringIntent.getAmount();
     BigDecimal commission =
         triggeringIntent.getCommissionAmount() == null
@@ -1038,13 +1042,22 @@ public class PayoutService {
     payout.setRefundedShareAmount(refundedShare.setScale(2));
     payout.setPayableAmount(payable);
     if (!notYetDispatched) {
-      BigDecimal submitted = payout.getSubmittedAmount() == null ? payout.getAmount() : payout.getSubmittedAmount();
+      BigDecimal submitted =
+          payout.getSubmittedAmount() == null ? payout.getAmount() : payout.getSubmittedAmount();
       BigDecimal exposure = submitted.subtract(payable).max(BigDecimal.ZERO).setScale(2);
       payout.setClawbackAmount(exposure);
       payout.setClawbackRequired(exposure.signum() > 0);
       payoutRepository.save(payout);
-      eventLogger.log("PAYOUT", payout.getId(), "CLAWBACK_REQUIRED", status, status,
-          null, null, payout.getIdempotencyKey(), java.util.Map.of(
+      eventLogger.log(
+          "PAYOUT",
+          payout.getId(),
+          "CLAWBACK_REQUIRED",
+          status,
+          status,
+          null,
+          null,
+          payout.getIdempotencyKey(),
+          java.util.Map.of(
               "successfulRefundTotal", successfulRefundTotal.toPlainString(),
               "clawbackAmount", exposure.toPlainString()));
       return;
@@ -1216,7 +1229,8 @@ public class PayoutService {
   }
 
   private BigDecimal payoutPayableAmount(Payout payout) {
-    BigDecimal amount = payout.getPayableAmount() == null ? payout.getAmount() : payout.getPayableAmount();
+    BigDecimal amount =
+        payout.getPayableAmount() == null ? payout.getAmount() : payout.getPayableAmount();
     return amount == null ? BigDecimal.ZERO.setScale(2) : amount.setScale(2, RoundingMode.HALF_UP);
   }
 
@@ -1227,7 +1241,9 @@ public class PayoutService {
   }
 
   private String payoutProviderOrderId(Payout payout) {
-    return payout.getProviderOrderId() == null ? String.valueOf(payout.getId()) : payout.getProviderOrderId();
+    return payout.getProviderOrderId() == null
+        ? String.valueOf(payout.getId())
+        : payout.getProviderOrderId();
   }
 
   private List<Payout> verifyBatchSnapshot(PayoutBatch batch) {
@@ -1240,7 +1256,8 @@ public class PayoutService {
       total = total.add(child.getSubmittedAmount());
     }
     if (total.compareTo(batch.getAmount()) != 0) {
-      throw new IllegalStateException("Batch amount differs from frozen children: " + batch.getId());
+      throw new IllegalStateException(
+          "Batch amount differs from frozen children: " + batch.getId());
     }
     return children;
   }

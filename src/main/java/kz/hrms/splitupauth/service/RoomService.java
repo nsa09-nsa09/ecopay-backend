@@ -27,9 +27,9 @@ import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
-import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionType;
+import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.ProviderType;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
@@ -46,8 +46,8 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.CategoryRepository;
 import kz.hrms.splitupauth.repository.OwnerRatingProjection;
-import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomOccupancyProjection;
@@ -89,9 +89,11 @@ public class RoomService {
   private final RefundService refundService;
 
   @Transactional(readOnly = true)
-  public RoomPricingPreviewResponse previewPricing(Long tariffPlanId, Integer existingMembersCount) {
+  public RoomPricingPreviewResponse previewPricing(
+      Long tariffPlanId, Integer existingMembersCount) {
     TariffPlan tariff =
-        tariffPlanRepository.findById(tariffPlanId)
+        tariffPlanRepository
+            .findById(tariffPlanId)
             .filter(plan -> Boolean.TRUE.equals(plan.getIsActive()))
             .orElseThrow(() -> new ResourceNotFoundException("Tariff plan not found"));
     Integer maxMembers = tariff.getMaxMembers();
@@ -100,7 +102,8 @@ public class RoomService {
     BigDecimal originalPrice = tariff.getBasePriceTotal();
     String originalCurrency = Currency.normalize(tariff.getCurrency()).name();
     BigDecimal fxRate = exchangeRateService.rateOf(originalCurrency);
-    BigDecimal shareOriginal = originalPrice.divide(BigDecimal.valueOf(maxMembers), 2, java.math.RoundingMode.HALF_UP);
+    BigDecimal shareOriginal =
+        originalPrice.divide(BigDecimal.valueOf(maxMembers), 2, java.math.RoundingMode.HALF_UP);
     BigDecimal shareKzt = exchangeRateService.toKzt(shareOriginal, originalCurrency);
     BigDecimal commissionKzt = commissionCalculator.commissionFor(shareKzt, existingMembersCount);
     int capacity = maxMembers - existingMembersCount;
@@ -931,7 +934,8 @@ public class RoomService {
     if (!(room.getStatus() == RoomStatus.OPEN
         || room.getStatus() == RoomStatus.IN_VERIFICATION
         || room.getStatus() == RoomStatus.ACTIVE)) {
-      throw new InvalidRequestException("Only OPEN, IN_VERIFICATION or ACTIVE rooms can be cancelled");
+      throw new InvalidRequestException(
+          "Only OPEN, IN_VERIFICATION or ACTIVE rooms can be cancelled");
     }
 
     ensureStatusTransition(room.getStatus(), RoomStatus.CANCELLED);
@@ -949,7 +953,8 @@ public class RoomService {
   }
 
   private void cancelMembershipsAfterRoomCancellation(Room room) {
-    for (RoomMember member : roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
+    for (RoomMember member :
+        roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
       if (member.getStatus() == MemberStatus.APPLIED
           || member.getStatus() == MemberStatus.PENDING
           || member.getStatus() == MemberStatus.ACTIVE) {

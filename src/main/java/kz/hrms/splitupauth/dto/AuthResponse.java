@@ -15,8 +15,7 @@ import lombok.NoArgsConstructor;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class AuthResponse {
   private String accessToken;
-  @JsonIgnore
-  private String refreshToken;
+  @JsonIgnore private String refreshToken;
   private UserDto user;
 
   // ADMIN / SUPPORT 2FA challenge fields. Populated only when the first login

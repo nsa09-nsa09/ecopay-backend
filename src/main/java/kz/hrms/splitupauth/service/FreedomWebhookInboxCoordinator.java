@@ -58,7 +58,8 @@ public class FreedomWebhookInboxCoordinator {
     } catch (RuntimeException ex) {
       initialErrorCode = "ACCEPT_PARSE_FAILED";
       initialErrorMessage = ex.getMessage();
-      log.warn("Freedom webhook accepted for retry after verification/parse failure: {}", ex.toString());
+      log.warn(
+          "Freedom webhook accepted for retry after verification/parse failure: {}", ex.toString());
     }
 
     String requestId =
@@ -80,8 +81,7 @@ public class FreedomWebhookInboxCoordinator {
             .processedAt(invalidSignature ? now : null)
             .deadLetteredAt(invalidSignature ? now : null)
             .lastErrorCode(invalidSignature ? "INVALID_SIGNATURE" : initialErrorCode)
-            .errorMessage(
-                invalidSignature ? "Signature verification failed" : initialErrorMessage)
+            .errorMessage(invalidSignature ? "Signature verification failed" : initialErrorMessage)
             .build();
 
     FreedomWebhookInbox stored;
@@ -89,9 +89,7 @@ public class FreedomWebhookInboxCoordinator {
       stored = transactions.insert(inbox);
     } catch (DataIntegrityViolationException duplicateOrFailure) {
       stored =
-          transactions
-              .findByProviderRequestId(requestId)
-              .orElseThrow(() -> duplicateOrFailure);
+          transactions.findByProviderRequestId(requestId).orElseThrow(() -> duplicateOrFailure);
       log.info("Duplicate Freedom Pay webhook for {}", requestId);
     }
 
@@ -115,8 +113,7 @@ public class FreedomWebhookInboxCoordinator {
     LocalDateTime now = LocalDateTime.now();
     String leaseOwner = "webhook-" + UUID.randomUUID();
     OptionalInt claim =
-        transactions.claim(
-            inboxId, leaseOwner, now, now.plusSeconds(Math.max(1, leaseSeconds)));
+        transactions.claim(inboxId, leaseOwner, now, now.plusSeconds(Math.max(1, leaseSeconds)));
     if (claim.isEmpty()) return;
 
     int attempt = claim.getAsInt();
@@ -124,20 +121,10 @@ public class FreedomWebhookInboxCoordinator {
       processor.processClaimed(inboxId, leaseOwner);
     } catch (FreedomWebhookProcessingException ex) {
       recordFailure(
-          inboxId,
-          leaseOwner,
-          attempt,
-          ex.isRetryable(),
-          ex.getErrorCode(),
-          ex.getMessage());
+          inboxId, leaseOwner, attempt, ex.isRetryable(), ex.getErrorCode(), ex.getMessage());
     } catch (RuntimeException ex) {
       recordFailure(
-          inboxId,
-          leaseOwner,
-          attempt,
-          true,
-          ex.getClass().getSimpleName(),
-          ex.getMessage());
+          inboxId, leaseOwner, attempt, true, ex.getClass().getSimpleName(), ex.getMessage());
     }
   }
 

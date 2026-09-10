@@ -98,8 +98,7 @@ class WebSocketAuthChannelInterceptorTest {
 
   @Test
   void connect_withoutAuthorization_isRejected() {
-    assertThrows(
-        ForbiddenOperationException.class, () -> interceptor.preSend(connect(null), null));
+    assertThrows(ForbiddenOperationException.class, () -> interceptor.preSend(connect(null), null));
   }
 
   @Test
@@ -108,8 +107,7 @@ class WebSocketAuthChannelInterceptorTest {
     when(jwtUtil.validateToken("bad", "pub-42")).thenReturn(false);
 
     assertThrows(
-        ForbiddenOperationException.class,
-        () -> interceptor.preSend(connect("Bearer bad"), null));
+        ForbiddenOperationException.class, () -> interceptor.preSend(connect("Bearer bad"), null));
   }
 
   @Test

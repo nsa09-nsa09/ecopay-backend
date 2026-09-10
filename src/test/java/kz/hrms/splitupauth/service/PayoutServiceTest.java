@@ -29,9 +29,9 @@ import kz.hrms.splitupauth.payment.gateway.GatewayPayoutResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
+import kz.hrms.splitupauth.repository.PayoutBatchRepository;
 import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
-import kz.hrms.splitupauth.repository.PayoutBatchRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -204,10 +204,7 @@ class PayoutServiceTest {
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
     when(paymentGateway.getPayoutStatus("FP-125", "125"))
         .thenReturn(
-            GatewayStatusResponse.builder()
-                .externalPaymentId("FP-125")
-                .status("SUCCESS")
-                .build());
+            GatewayStatusResponse.builder().externalPaymentId("FP-125").status("SUCCESS").build());
 
     payoutService.reconcilePendingProviderPayouts();
 
@@ -336,8 +333,7 @@ class PayoutServiceTest {
     when(payoutRepository.findWithLockById(1L)).thenReturn(Optional.of(p1));
     when(payoutRepository.findWithLockById(2L)).thenReturn(Optional.of(p2));
     when(payoutRepository.findWithLockById(3L)).thenReturn(Optional.of(p3));
-    when(payoutRepository.findWithLockByIdIn(List.of(1L, 2L, 3L)))
-        .thenReturn(List.of(p1, p2, p3));
+    when(payoutRepository.findWithLockByIdIn(List.of(1L, 2L, 3L))).thenReturn(List.of(p1, p2, p3));
     when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
         .thenReturn(Optional.of(method));
     when(payoutBatchRepository.save(any(PayoutBatch.class)))

@@ -35,8 +35,7 @@ class FreedomWebhookInboxTransactionsTest {
     when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     LocalDateTime retryAt = LocalDateTime.now().plusMinutes(1);
 
-    transactions.recordFailure(
-        1L, "worker-1", 2, 3, true, "TEMPORARY", "try again", retryAt);
+    transactions.recordFailure(1L, "worker-1", 2, 3, true, "TEMPORARY", "try again", retryAt);
 
     assertEquals("FAILED", inbox.getProcessingStatus());
     assertEquals(retryAt, inbox.getNextRetryAt());
@@ -75,14 +74,7 @@ class FreedomWebhookInboxTransactionsTest {
     when(repository.findWithLockById(1L)).thenReturn(Optional.of(inbox));
 
     transactions.recordFailure(
-        1L,
-        "old-worker",
-        2,
-        3,
-        true,
-        "OLD_FAILURE",
-        "late result",
-        LocalDateTime.now());
+        1L, "old-worker", 2, 3, true, "OLD_FAILURE", "late result", LocalDateTime.now());
 
     assertEquals("PROCESSING", inbox.getProcessingStatus());
     assertEquals("new-worker", inbox.getLeaseOwner());

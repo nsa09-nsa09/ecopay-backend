@@ -119,12 +119,10 @@ class FreedomPayGatewayIdempotencyTest {
                 .build());
 
     ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
-    verify(client)
-        .postForm(eq("/v1/merchant/merchant/cardstorage/add2"), params.capture());
+    verify(client).postForm(eq("/v1/merchant/merchant/cardstorage/add2"), params.capture());
     assertEquals("42", params.getValue().get("pg_user_id"));
     assertEquals("cardbind-17", params.getValue().get("pg_order_id"));
-    assertEquals(
-        "https://api.test/card-storage-result", params.getValue().get("pg_post_link"));
+    assertEquals("https://api.test/card-storage-result", params.getValue().get("pg_post_link"));
     assertEquals(false, params.getValue().containsKey("pg_amount"));
     assertEquals(true, response.isSuccess());
     assertEquals("binding-provider-1", response.getExternalBindingId());
@@ -132,8 +130,7 @@ class FreedomPayGatewayIdempotencyTest {
 
   @Test
   void payoutCallbackUsesPaymentIdAndFinalPaymentStatus() {
-    when(signatureService.verifyWithPayoutSecret(eq("payout-result"), anyMap()))
-        .thenReturn(true);
+    when(signatureService.verifyWithPayoutSecret(eq("payout-result"), anyMap())).thenReturn(true);
 
     GatewayWebhookEvent event =
         gateway.verifyAndParseWebhook(
@@ -153,8 +150,7 @@ class FreedomPayGatewayIdempotencyTest {
 
   @Test
   void payoutStatusUsesPayoutSecretAndDocumentedStatusEndpoint() {
-    when(signatureService.signWithPayoutSecret(eq("payment_status2"), anyMap()))
-        .thenReturn("sig");
+    when(signatureService.signWithPayoutSecret(eq("payment_status2"), anyMap())).thenReturn("sig");
     when(client.postForm(eq("/api/payment_status2"), anyMap()))
         .thenReturn(
             Map.of(
@@ -162,8 +158,7 @@ class FreedomPayGatewayIdempotencyTest {
                 "pg_payment_status", "success",
                 "pg_payment_id", "provider-payout-3"));
 
-    GatewayStatusResponse response =
-        gateway.getPayoutStatus("provider-payout-3", "3");
+    GatewayStatusResponse response = gateway.getPayoutStatus("provider-payout-3", "3");
 
     ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
     verify(client).postForm(eq("/api/payment_status2"), params.capture());

@@ -2,8 +2,6 @@ package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -36,8 +34,7 @@ class FreedomWebhookInboxCoordinatorTest {
   @BeforeEach
   void setUp() {
     coordinator =
-        new FreedomWebhookInboxCoordinator(
-            gateway, new ObjectMapper(), transactions, processor);
+        new FreedomWebhookInboxCoordinator(gateway, new ObjectMapper(), transactions, processor);
     ReflectionTestUtils.setField(coordinator, "maxAttempts", 3);
     ReflectionTestUtils.setField(coordinator, "retryBaseSeconds", 30L);
     ReflectionTestUtils.setField(coordinator, "retryMaxSeconds", 3600L);
@@ -58,8 +55,7 @@ class FreedomWebhookInboxCoordinatorTest {
               inbox.setId(7L);
               return inbox;
             });
-    when(transactions.claim(eq(7L), anyString(), any(), any()))
-        .thenReturn(OptionalInt.of(1));
+    when(transactions.claim(eq(7L), anyString(), any(), any())).thenReturn(OptionalInt.of(1));
     when(processor.processClaimed(eq(7L), anyString())).thenReturn(true);
 
     coordinator.acceptAndProcess("result", params);
@@ -92,8 +88,7 @@ class FreedomWebhookInboxCoordinatorTest {
 
   @Test
   void retryableFailure_isRecordedWithExponentialBackoff() {
-    when(transactions.claim(eq(11L), anyString(), any(), any()))
-        .thenReturn(OptionalInt.of(2));
+    when(transactions.claim(eq(11L), anyString(), any(), any())).thenReturn(OptionalInt.of(2));
     when(processor.processClaimed(eq(11L), anyString()))
         .thenThrow(new IllegalStateException("database unavailable"));
 
@@ -113,12 +108,10 @@ class FreedomWebhookInboxCoordinatorTest {
 
   @Test
   void nonRetryableFailure_isSentStraightToDeadLetter() {
-    when(transactions.claim(eq(12L), anyString(), any(), any()))
-        .thenReturn(OptionalInt.of(1));
+    when(transactions.claim(eq(12L), anyString(), any(), any())).thenReturn(OptionalInt.of(1));
     when(processor.processClaimed(eq(12L), anyString()))
         .thenThrow(
-            new FreedomWebhookProcessingException(
-                "INVALID_SIGNATURE", "signature failed", false));
+            new FreedomWebhookProcessingException("INVALID_SIGNATURE", "signature failed", false));
 
     coordinator.processInbox(12L);
 

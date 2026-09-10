@@ -30,13 +30,13 @@ import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -155,7 +155,9 @@ public class AdminFinanceService {
     int pageSize = clampSize(size);
     Set<String> columns = webhookInboxColumns();
     MapSqlParameterSource params =
-        new MapSqlParameterSource().addValue("limit", pageSize).addValue("offset", pageNumber * pageSize);
+        new MapSqlParameterSource()
+            .addValue("limit", pageSize)
+            .addValue("offset", pageNumber * pageSize);
 
     StringBuilder where = new StringBuilder(" WHERE 1 = 1");
     if (status != null) {

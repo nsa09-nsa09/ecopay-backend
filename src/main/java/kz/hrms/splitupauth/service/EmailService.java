@@ -121,7 +121,11 @@ public class EmailService {
 
   public void sendNotificationEmail(
       String to, String subject, String body, String link, MailLocale locale, String frontendBase) {
-    send(to, subject, buildNotificationEmail(subject, body, link, locale, frontendBase), "notification");
+    send(
+        to,
+        subject,
+        buildNotificationEmail(subject, body, link, locale, frontendBase),
+        "notification");
   }
 
   // ---------------------------------------------------------------------
@@ -297,9 +301,10 @@ public class EmailService {
     StringBuilder html = new StringBuilder();
     html.append("<p>").append(escape(body)).append("</p>");
     if (link != null && !link.isBlank()) {
-      String base = (frontendBase != null && !frontendBase.isBlank())
-          ? sanitizeFrontendBase(frontendBase)
-          : frontendPublicBase();
+      String base =
+          (frontendBase != null && !frontendBase.isBlank())
+              ? sanitizeFrontendBase(frontendBase)
+              : frontendPublicBase();
       String absolute = link.startsWith("http") ? link : base + link;
       html.append("<p><a href=\"")
           .append(absolute)
@@ -354,8 +359,8 @@ public class EmailService {
   }
 
   /**
-   * Resolves the frontend origin from the active HTTP request, if present.
-   * Checks the Origin header, then the Referer header.
+   * Resolves the frontend origin from the active HTTP request, if present. Checks the Origin
+   * header, then the Referer header.
    */
   public static String currentFrontendOrigin() {
     ServletRequestAttributes attrs =
@@ -366,7 +371,9 @@ public class EmailService {
     try {
       HttpServletRequest req = attrs.getRequest();
       String origin = req.getHeader("Origin");
-      if (origin != null && !origin.isBlank() && (origin.startsWith("http://") || origin.startsWith("https://"))) {
+      if (origin != null
+          && !origin.isBlank()
+          && (origin.startsWith("http://") || origin.startsWith("https://"))) {
         return origin.trim().replaceAll("/+$", "");
       }
       String referer = req.getHeader("Referer");
@@ -387,9 +394,7 @@ public class EmailService {
     return null;
   }
 
-  /**
-   * Sanitizes the frontend base URL by trimming whitespace and trailing slashes.
-   */
+  /** Sanitizes the frontend base URL by trimming whitespace and trailing slashes. */
   private static String sanitizeFrontendBase(String url) {
     if (url == null) return "";
     return url.trim().replaceAll("/+$", "");

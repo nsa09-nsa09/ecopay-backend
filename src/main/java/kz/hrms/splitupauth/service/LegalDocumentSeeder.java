@@ -17,9 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Boot-time idempotent seeder for {@code legal_documents}.
  *
  * <p>For each {@link LegalDocument.DocType}, if the row does not already exist, it is created with
- * {@code version=1} and the body loaded from the classpath-bundled {@code legal/*.md} resource files
- * (one per language). If the row already exists it is left untouched, so an admin's edits survive
- * redeploys.
+ * {@code version=1} and the body loaded from the classpath-bundled {@code legal/*.md} resource
+ * files (one per language). If the row already exists it is left untouched, so an admin's edits
+ * survive redeploys.
  */
 @Component
 @RequiredArgsConstructor

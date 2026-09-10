@@ -164,8 +164,14 @@ public class PaymentHistoryService {
         .status(rs.getString("status"))
         .amount(rs.getBigDecimal("amount"))
         .currency(rs.getString("currency"))
-        .createdAt(rs.getTimestamp("created_at") == null ? null : rs.getTimestamp("created_at").toLocalDateTime())
-        .updatedAt(rs.getTimestamp("updated_at") == null ? null : rs.getTimestamp("updated_at").toLocalDateTime())
+        .createdAt(
+            rs.getTimestamp("created_at") == null
+                ? null
+                : rs.getTimestamp("created_at").toLocalDateTime())
+        .updatedAt(
+            rs.getTimestamp("updated_at") == null
+                ? null
+                : rs.getTimestamp("updated_at").toLocalDateTime())
         .roomId(getLongOrNull(rs, "room_id"))
         .roomTitle(rs.getString("room_title"))
         .paymentIntentId(getLongOrNull(rs, "payment_intent_id"))
@@ -175,7 +181,10 @@ public class PaymentHistoryService {
         .providerName(rs.getString("provider_name"))
         .cardPanMask(rs.getString("card_pan_mask"))
         .failureCode(rs.getString("failure_code"))
-        .releaseAt(rs.getTimestamp("release_at") == null ? null : rs.getTimestamp("release_at").toLocalDateTime())
+        .releaseAt(
+            rs.getTimestamp("release_at") == null
+                ? null
+                : rs.getTimestamp("release_at").toLocalDateTime())
         .build();
   }
 

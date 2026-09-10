@@ -20,9 +20,7 @@ import lombok.NoArgsConstructor;
       @Index(
           name = "idx_service_reviews_featured_created",
           columnList = "featured, created_at DESC"),
-      @Index(
-          name = "idx_service_reviews_homepage_position",
-          columnList = "featured_position")
+      @Index(name = "idx_service_reviews_homepage_position", columnList = "featured_position")
     })
 @Data
 @Builder

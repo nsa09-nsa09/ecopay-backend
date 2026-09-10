@@ -42,7 +42,8 @@ class RoomMapperSettlementTest {
     when(commissionCalculator.commissionFor(shareKzt, 1)).thenReturn(new BigDecimal("1000.00"));
 
     RoomResponse response =
-        mapper.toResponse(room("USD", new BigDecimal("25.00"), new BigDecimal("492.000000"), shareKzt));
+        mapper.toResponse(
+            room("USD", new BigDecimal("25.00"), new BigDecimal("492.000000"), shareKzt));
 
     assertEquals(0, shareKzt.compareTo(response.getShareKzt()));
     assertEquals(0, new BigDecimal("1000.00").compareTo(response.getCommissionKzt()));
@@ -60,7 +61,8 @@ class RoomMapperSettlementTest {
     when(commissionCalculator.commissionFor(shareKzt, 1)).thenReturn(new BigDecimal("1000.00"));
 
     RoomResponse response =
-        mapper.toResponse(room("EUR", new BigDecimal("15.00"), new BigDecimal("546.666667"), shareKzt));
+        mapper.toResponse(
+            room("EUR", new BigDecimal("15.00"), new BigDecimal("546.666667"), shareKzt));
 
     assertEquals(0, shareKzt.compareTo(response.getShareKzt()));
     assertEquals(0, new BigDecimal("1000.00").compareTo(response.getCommissionKzt()));

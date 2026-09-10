@@ -128,8 +128,11 @@ public class RoomMemberService {
         currentUser,
         NotificationType.APPLICATION_SENT,
         "Заявка отправлена",
-        "Ваша заявка на участие в тарифе «" + tariffName(room) + "» сервиса «"
-            + serviceName(room) + "» отправлена.",
+        "Ваша заявка на участие в тарифе «"
+            + tariffName(room)
+            + "» сервиса «"
+            + serviceName(room)
+            + "» отправлена.",
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -269,7 +272,9 @@ public class RoomMemberService {
         roomMember.getUser(),
         NotificationType.OWNER_ACCESS_GRANTED,
         "Владелец выдал доступ",
-        "Вас приглашают в семейный тариф «" + tariffName(room) + "» сервиса «"
+        "Вас приглашают в семейный тариф «"
+            + tariffName(room)
+            + "» сервиса «"
             + serviceName(room)
             + "». Зайдите в приложение или сервис и подтвердите получение доступа в EcoPay.",
         "/rooms/member/" + room.getId(),
@@ -495,8 +500,11 @@ public class RoomMemberService {
         roomMember.getUser(),
         NotificationType.MEMBERSHIP_ACTIVATED,
         "Участие активно",
-        "Ваше участие в тарифе «" + tariffName(room) + "» сервиса «"
-            + serviceName(room) + "» активно.",
+        "Ваше участие в тарифе «"
+            + tariffName(room)
+            + "» сервиса «"
+            + serviceName(room)
+            + "» активно.",
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 

@@ -32,8 +32,7 @@ class FreedomPayWebhookControllerTest {
     Map<String, String> params = Map.of("pg_order_id", "42", "pg_sig", "valid");
     when(coordinator.acceptAndProcess("result", params))
         .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(7L, false));
-    when(gateway.buildWebhookResponse("result", "ok", "Order processed"))
-        .thenReturn("<ok/>");
+    when(gateway.buildWebhookResponse("result", "ok", "Order processed")).thenReturn("<ok/>");
 
     var response = controller.result(params);
 
@@ -52,8 +51,7 @@ class FreedomPayWebhookControllerTest {
     var response = controller.result(params);
 
     assertEquals("<retry/>", response.getBody());
-    verify(gateway)
-        .buildWebhookResponse("result", "error", "temporarily unavailable");
+    verify(gateway).buildWebhookResponse("result", "error", "temporarily unavailable");
   }
 
   @Test

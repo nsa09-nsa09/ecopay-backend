@@ -61,7 +61,9 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
           new UsernamePasswordAuthenticationToken(
               user, null, List.of(new SimpleGrantedAuthority(user.getRole().name()))));
       if (accessor.getSessionAttributes() != null) {
-        accessor.getSessionAttributes().put(WebSocketAuthHandshakeInterceptor.SESSION_USER_KEY, user);
+        accessor
+            .getSessionAttributes()
+            .put(WebSocketAuthHandshakeInterceptor.SESSION_USER_KEY, user);
       }
       return message;
     }
@@ -102,8 +104,11 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         throw new ForbiddenOperationException("WebSocket authentication required");
       }
       User user =
-          (subject.contains("@") ? userRepository.findByEmail(subject) : userRepository.findByPublicId(subject))
-              .orElseThrow(() -> new ForbiddenOperationException("WebSocket authentication required"));
+          (subject.contains("@")
+                  ? userRepository.findByEmail(subject)
+                  : userRepository.findByPublicId(subject))
+              .orElseThrow(
+                  () -> new ForbiddenOperationException("WebSocket authentication required"));
       if (user.getStatus() != UserStatus.ACTIVE) {
         throw new ForbiddenOperationException("WebSocket authentication required");
       }

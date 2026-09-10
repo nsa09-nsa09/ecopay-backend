@@ -20,11 +20,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
-import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomPricingPreviewResponse;
+import kz.hrms.splitupauth.dto.RoomResponse;
+import kz.hrms.splitupauth.entity.PayoutMethod;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.ProviderType;
-import kz.hrms.splitupauth.entity.PayoutMethod;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -35,8 +35,8 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.entity.VerificationMode;
 import kz.hrms.splitupauth.repository.CategoryRepository;
-import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -219,15 +219,20 @@ class RoomServiceTest {
 
     CreateRoomRequest zero = createRoomRequest(service, tariff);
     zero.setExistingMembersCount(0);
-    assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class, () -> roomService.createRoom(owner, zero));
+    assertThrows(
+        kz.hrms.splitupauth.exception.InvalidRequestException.class,
+        () -> roomService.createRoom(owner, zero));
 
     CreateRoomRequest full = createRoomRequest(service, tariff);
     full.setExistingMembersCount(6);
-    assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class, () -> roomService.createRoom(owner, full));
+    assertThrows(
+        kz.hrms.splitupauth.exception.InvalidRequestException.class,
+        () -> roomService.createRoom(owner, full));
     for (int count : List.of(3, 4, 5)) {
       CreateRoomRequest invalid = createRoomRequest(service, tariff);
       invalid.setExistingMembersCount(count);
-      assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class,
+      assertThrows(
+          kz.hrms.splitupauth.exception.InvalidRequestException.class,
           () -> roomService.createRoom(owner, invalid));
     }
   }
@@ -253,7 +258,8 @@ class RoomServiceTest {
 
   private void stubCreateRoomDependencies(User owner, ServiceEntity service, TariffPlan tariff) {
     when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
-        .thenReturn(Optional.of(PayoutMethod.builder().id(1L).user(owner).status("ACTIVE").build()));
+        .thenReturn(
+            Optional.of(PayoutMethod.builder().id(1L).user(owner).status("ACTIVE").build()));
     lenient()
         .when(roomRepository.countByOwnerAndDeletedAtIsNullAndStatusIn(eq(owner), any()))
         .thenReturn(0L);

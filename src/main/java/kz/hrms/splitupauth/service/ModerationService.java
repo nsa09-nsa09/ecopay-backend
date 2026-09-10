@@ -447,7 +447,9 @@ public class ModerationService {
         roomMember.getUser(),
         NotificationType.MEMBERSHIP_ACTIVATED,
         "Участие активно",
-        "Ваше участие в тарифе «" + tariffName + "» сервиса «"
+        "Ваше участие в тарифе «"
+            + tariffName
+            + "» сервиса «"
             + (room.getService() == null || room.getService().getName() == null
                 ? "сервиса"
                 : room.getService().getName())

@@ -34,7 +34,8 @@ class RoomMapperTest {
     ReflectionTestUtils.setField(commissionCalculator, "tier2Fee", new BigDecimal("700"));
     ReflectionTestUtils.setField(commissionCalculator, "tier3Fee", new BigDecimal("900"));
     ReflectionTestUtils.setField(commissionCalculator, "tier4Fee", new BigDecimal("1000"));
-    ReflectionTestUtils.setField(commissionCalculator, "mixedRoomMarketplaceFee", new BigDecimal("450"));
+    ReflectionTestUtils.setField(
+        commissionCalculator, "mixedRoomMarketplaceFee", new BigDecimal("450"));
 
     mapper = new RoomMapper();
     ReflectionTestUtils.setField(mapper, "commissionCalculator", commissionCalculator);

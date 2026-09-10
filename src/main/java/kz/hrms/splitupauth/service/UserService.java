@@ -6,11 +6,11 @@ import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.dto.SlugAvailabilityDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
-import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.DisputeStatus;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
+import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
@@ -202,7 +202,8 @@ public class UserService {
       throw deletionConflict("pending refund");
     }
     if (payoutRepository.countByUserAndStatusIn(
-            user, List.of("PENDING", "PENDING_METHOD", "PROCESSING", "ON_HOLD", "CLAWBACK_REQUIRED"))
+            user,
+            List.of("PENDING", "PENDING_METHOD", "PROCESSING", "ON_HOLD", "CLAWBACK_REQUIRED"))
         > 0) {
       throw deletionConflict("pending payout");
     }

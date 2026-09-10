@@ -11,7 +11,9 @@ import lombok.NoArgsConstructor;
 @Table(
     name = "payment_reservations",
     indexes = {
-      @Index(name = "idx_payment_reservations_room_status_expires", columnList = "room_id,status,expires_at"),
+      @Index(
+          name = "idx_payment_reservations_room_status_expires",
+          columnList = "room_id,status,expires_at"),
       @Index(name = "idx_payment_reservations_member_status", columnList = "room_member_id,status")
     },
     uniqueConstraints = {

@@ -41,10 +41,7 @@ public class FreedomWebhookInboxTransactions {
       return OptionalInt.empty();
     }
     int attempts =
-        inboxRepository
-            .findById(inboxId)
-            .map(FreedomWebhookInbox::getAttemptCount)
-            .orElse(1);
+        inboxRepository.findById(inboxId).map(FreedomWebhookInbox::getAttemptCount).orElse(1);
     return OptionalInt.of(attempts);
   }
 

@@ -195,8 +195,11 @@ public class FreedomPayGateway implements PaymentGateway {
     Map<String, String> params = baseParams("reg2reg");
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_card_token_to", request.getDestinationCardToken());
-    params.put("pg_order_id", request.getProviderOrderId() == null
-        ? String.valueOf(request.getPayoutId()) : request.getProviderOrderId());
+    params.put(
+        "pg_order_id",
+        request.getProviderOrderId() == null
+            ? String.valueOf(request.getPayoutId())
+            : request.getProviderOrderId());
     params.put("pg_user_id", request.getDestinationUserId());
     params.put("pg_idempotency_key", request.getIdempotencyKey());
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay payout"));
@@ -271,8 +274,7 @@ public class FreedomPayGateway implements PaymentGateway {
   }
 
   @Override
-  public GatewayStatusResponse getPayoutStatus(
-      String externalPayoutId, String merchantOrderId) {
+  public GatewayStatusResponse getPayoutStatus(String externalPayoutId, String merchantOrderId) {
     Map<String, String> params = new LinkedHashMap<>();
     params.put("pg_merchant_id", properties.getMerchantId());
     params.put("pg_payment_id", externalPayoutId);
@@ -366,8 +368,7 @@ public class FreedomPayGateway implements PaymentGateway {
     boolean valid = verifyWebhookSignature(script, params);
 
     String paymentId = params.get("pg_payment_id");
-    boolean cardBinding =
-        params.getOrDefault("pg_order_id", "").startsWith("cardbind-");
+    boolean cardBinding = params.getOrDefault("pg_order_id", "").startsWith("cardbind-");
     String salt = params.get("pg_salt");
     String eventType =
         firstNonBlank(
@@ -377,7 +378,12 @@ public class FreedomPayGateway implements PaymentGateway {
             params.get("pg_refund_id") == null ? null : "REFUND",
             "CHARGE");
     String providerReference =
-        firstNonBlank(paymentId, params.get("pg_refund_id"), params.get("pg_payout_id"), params.get("pg_order_id"), "missing");
+        firstNonBlank(
+            paymentId,
+            params.get("pg_refund_id"),
+            params.get("pg_payout_id"),
+            params.get("pg_order_id"),
+            "missing");
     String requestId =
         PROVIDER_NAME
             + ":"
@@ -549,9 +555,7 @@ public class FreedomPayGateway implements PaymentGateway {
       };
     }
     String paymentStatus =
-        nonNull(params.get("pg_payment_status"), params.get("pg_status"))
-            .trim()
-            .toLowerCase();
+        nonNull(params.get("pg_payment_status"), params.get("pg_status")).trim().toLowerCase();
     return switch (paymentStatus) {
       case "success", "ok" -> "SUCCESS";
       case "error", "failed", "incomplete" -> "FAILED";

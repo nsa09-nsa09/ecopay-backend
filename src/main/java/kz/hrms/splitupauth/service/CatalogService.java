@@ -136,8 +136,8 @@ public class CatalogService {
   /**
    * FIFO subscription matcher: returns the oldest still-OPEN room on this service that the caller
    * can join, falling back to "CREATE" when none fits. "Fits" means the room has at least one free
-   * EcoPay marketplace seat, the caller is not the owner, the
-   * start_date is still in the future, and the room isn't soft-deleted.
+   * EcoPay marketplace seat, the caller is not the owner, the start_date is still in the future,
+   * and the room isn't soft-deleted.
    *
    * <p>The repository pre-filters by {@code status=OPEN, deleted_at IS NULL, start_date > now};
    * this method does the seat math in-process. Volume of OPEN rooms per service stays small in

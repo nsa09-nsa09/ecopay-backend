@@ -34,23 +34,16 @@ class FreedomWebhookInboxProcessorTest {
   @BeforeEach
   void setUp() {
     processor =
-        new FreedomWebhookInboxProcessor(
-            repository, gateway, paymentService, cardBindingService);
+        new FreedomWebhookInboxProcessor(repository, gateway, paymentService, cardBindingService);
   }
 
   @Test
   void validCharge_isAppliedAndMarkedProcessed() {
-    Map<String, String> params =
-        Map.of("pg_order_id", "42", "pg_result", "1", "pg_sig", "valid");
+    Map<String, String> params = Map.of("pg_order_id", "42", "pg_result", "1", "pg_sig", "valid");
     FreedomWebhookInbox inbox = processingInbox(params);
     GatewayWebhookEvent event =
-        GatewayWebhookEvent.builder()
-            .kind("CHARGE")
-            .intentId(42L)
-            .resultStatus("SUCCESS")
-            .build();
-    when(repository.findClaimedWithLockById(1L, "worker-1"))
-        .thenReturn(Optional.of(inbox));
+        GatewayWebhookEvent.builder().kind("CHARGE").intentId(42L).resultStatus("SUCCESS").build();
+    when(repository.findClaimedWithLockById(1L, "worker-1")).thenReturn(Optional.of(inbox));
     when(gateway.verifyWebhookSignature("result", params)).thenReturn(true);
     when(gateway.verifyAndParseWebhook("result", params)).thenReturn(event);
     when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -67,8 +60,7 @@ class FreedomWebhookInboxProcessorTest {
   void invalidSignature_isNonRetryableAndDoesNotTouchMoney() {
     Map<String, String> params = Map.of("pg_order_id", "42", "pg_sig", "invalid");
     FreedomWebhookInbox inbox = processingInbox(params);
-    when(repository.findClaimedWithLockById(1L, "worker-1"))
-        .thenReturn(Optional.of(inbox));
+    when(repository.findClaimedWithLockById(1L, "worker-1")).thenReturn(Optional.of(inbox));
     when(gateway.verifyWebhookSignature("result", params)).thenReturn(false);
 
     FreedomWebhookProcessingException error =
@@ -99,16 +91,14 @@ class FreedomWebhookInboxProcessorTest {
             .cardToken("payout-token")
             .cardPanMask("411111******1111")
             .build();
-    when(repository.findClaimedWithLockById(1L, "worker-1"))
-        .thenReturn(Optional.of(inbox));
+    when(repository.findClaimedWithLockById(1L, "worker-1")).thenReturn(Optional.of(inbox));
     when(gateway.verifyWebhookSignature("card-storage-result", params)).thenReturn(true);
     when(gateway.verifyAndParseWebhook("card-storage-result", params)).thenReturn(event);
     when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
     processor.processClaimed(1L, "worker-1");
 
-    verify(cardBindingService)
-        .applyBindingWebhook(17L, true, "payout-token", "411111******1111");
+    verify(cardBindingService).applyBindingWebhook(17L, true, "payout-token", "411111******1111");
     verify(paymentService, never()).applyWebhookEvent(any());
     assertEquals("PROCESSED", inbox.getProcessingStatus());
   }
