@@ -301,6 +301,10 @@ public class AdminFinanceService {
         .providerName(method != null ? method.getProviderName() : null)
         .providerPayoutId(p.getProviderPayoutId())
         .failureReason(p.getFailureReason())
+        .payoutBatchId(p.getPayoutBatch() == null ? null : p.getPayoutBatch().getId())
+        .submittedAmount(p.getSubmittedAmount())
+        .clawbackRequired(p.getClawbackRequired())
+        .clawbackAmount(p.getClawbackAmount())
         .retryCount(p.getRetryCount())
         .build();
   }

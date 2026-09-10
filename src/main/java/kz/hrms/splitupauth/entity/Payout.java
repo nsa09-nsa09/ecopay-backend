@@ -41,6 +41,21 @@ public class Payout {
   @JoinColumn(name = "payout_batch_id")
   private PayoutBatch payoutBatch;
 
+  /** Immutable amount committed for provider submission; refunds must never rewrite it. */
+  @Column(name = "submitted_amount", precision = 12, scale = 2)
+  private BigDecimal submittedAmount;
+
+  @Column(name = "provider_order_id", length = 50)
+  private String providerOrderId;
+
+  @Column(name = "clawback_required", nullable = false)
+  @Builder.Default
+  private Boolean clawbackRequired = false;
+
+  @Column(name = "clawback_amount", nullable = false, precision = 12, scale = 2)
+  @Builder.Default
+  private BigDecimal clawbackAmount = BigDecimal.ZERO;
+
   @Column(nullable = false, precision = 12, scale = 2)
   private BigDecimal amount;
 

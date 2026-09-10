@@ -20,6 +20,11 @@ public interface PaymentGateway {
 
   GatewayPayoutResponse payout(GatewayPayoutRequest request);
 
+  /** True only when the provider guarantees deduplication of a replayed payout request. */
+  default boolean supportsIdempotentPayoutReplay() {
+    return false;
+  }
+
   GatewayStatusResponse getStatus(String externalPaymentId);
 
   /**

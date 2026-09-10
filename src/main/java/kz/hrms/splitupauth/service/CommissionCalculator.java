@@ -48,8 +48,8 @@ public class CommissionCalculator {
   @Value("${app.commission.tier4-fee:1000}")
   private BigDecimal tier4Fee;
 
-  @Value("${app.commission.mixed-room-surcharge:300}")
-  private BigDecimal mixedRoomSurcharge;
+  @Value("${app.commission.mixed-room-marketplace-fee:450}")
+  private BigDecimal mixedRoomMarketplaceFee;
 
   /**
    * EcoPay commission for a given per-member tariff share. A non-positive or null share yields a
@@ -74,14 +74,19 @@ public class CommissionCalculator {
 
   /**
    * Room-aware commission. Mixed rooms (owner already has offline members in the subscription)
-   * charge marketplace participants a fixed surcharge on top of the normal tier.
+   * charge marketplace participants the configured fixed fee instead of the normal tier.
    */
   public BigDecimal commissionFor(BigDecimal share, int existingMembersCount) {
     BigDecimal base = commissionFor(share);
     if (share == null || share.signum() <= 0 || existingMembersCount <= 1) {
       return base;
     }
-    BigDecimal surcharge = mixedRoomSurcharge == null ? BigDecimal.ZERO : mixedRoomSurcharge;
-    return base.add(surcharge).setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+    if (existingMembersCount != 2) {
+      throw new IllegalArgumentException("existingMembersCount must be 1 or 2");
+    }
+    if (mixedRoomMarketplaceFee == null || mixedRoomMarketplaceFee.signum() < 0) {
+      throw new IllegalStateException("Mixed room marketplace fee must be non-negative");
+    }
+    return mixedRoomMarketplaceFee.setScale(MONEY_SCALE, RoundingMode.UNNECESSARY);
   }
 }

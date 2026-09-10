@@ -84,6 +84,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * manual sandbox runs against a deployed environment.
  */
 @Import(PaymentToPayoutE2EIntegrationTest.ClockTestConfig.class)
+@org.springframework.test.context.TestPropertySource(properties = "app.payout.batch-coalesce-hours=0")
 class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
 
   private static final Instant BASE_INSTANT = Instant.parse("2026-01-01T00:00:00Z");

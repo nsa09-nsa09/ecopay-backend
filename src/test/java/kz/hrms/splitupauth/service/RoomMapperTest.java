@@ -34,7 +34,7 @@ class RoomMapperTest {
     ReflectionTestUtils.setField(commissionCalculator, "tier2Fee", new BigDecimal("700"));
     ReflectionTestUtils.setField(commissionCalculator, "tier3Fee", new BigDecimal("900"));
     ReflectionTestUtils.setField(commissionCalculator, "tier4Fee", new BigDecimal("1000"));
-    ReflectionTestUtils.setField(commissionCalculator, "mixedRoomSurcharge", new BigDecimal("300"));
+    ReflectionTestUtils.setField(commissionCalculator, "mixedRoomMarketplaceFee", new BigDecimal("450"));
 
     mapper = new RoomMapper();
     ReflectionTestUtils.setField(mapper, "commissionCalculator", commissionCalculator);
@@ -73,7 +73,7 @@ class RoomMapperTest {
   }
 
   @Test
-  void toResponseAddsMixedRoomSurchargeAndCapacityFields() {
+  void toResponseUsesMixedRoomFixedFeeAndCapacityFields() {
     Room room =
         Room.builder()
             .id(1191541224531623938L)
@@ -83,13 +83,13 @@ class RoomMapperTest {
             .verificationMode(VerificationMode.RISK_BASED)
             .status(RoomStatus.OPEN)
             .title("Beeline Mixed Family")
-            .maxMembers(6)
-            .existingMembersCount(3)
-            .priceTotal(new BigDecimal("9000.00"))
+            .maxMembers(5)
+            .existingMembersCount(2)
+            .priceTotal(new BigDecimal("7500.00"))
             .pricePerMember(new BigDecimal("1500.00"))
             .currency("KZT")
             .fxRateToKzt(new BigDecimal("1.000000"))
-            .priceTotalKzt(new BigDecimal("9000.00"))
+            .priceTotalKzt(new BigDecimal("7500.00"))
             .pricePerMemberKzt(new BigDecimal("1500.00"))
             .periodType(PeriodType.MONTHLY)
             .startDate(LocalDateTime.now().plusDays(1))
@@ -99,11 +99,11 @@ class RoomMapperTest {
 
     RoomResponse response = mapper.toResponse(room);
 
-    assertEquals(3, response.getExistingMembersCount());
+    assertEquals(2, response.getExistingMembersCount());
     assertEquals(3, response.getMarketplaceCapacity());
     assertEquals(0, new BigDecimal("1500.00").compareTo(response.getShareKzt()));
-    assertEquals(0, new BigDecimal("800.00").compareTo(response.getCommissionKzt()));
-    assertEquals(0, new BigDecimal("2300.00").compareTo(response.getPayableTotalKzt()));
+    assertEquals(0, new BigDecimal("450.00").compareTo(response.getCommissionKzt()));
+    assertEquals(0, new BigDecimal("1950.00").compareTo(response.getPayableTotalKzt()));
   }
 
   private User user() {

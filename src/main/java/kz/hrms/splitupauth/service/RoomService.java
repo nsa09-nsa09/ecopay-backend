@@ -18,6 +18,7 @@ import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.RoomFilter;
 import kz.hrms.splitupauth.dto.RoomInviteLinkDto;
+import kz.hrms.splitupauth.dto.RoomPricingPreviewResponse;
 import kz.hrms.splitupauth.dto.RoomResponse;
 import kz.hrms.splitupauth.dto.RoomSummaryDto;
 import kz.hrms.splitupauth.dto.UpdateRoomRequest;
@@ -81,10 +82,46 @@ public class RoomService {
   private final ReviewRepository reviewRepository;
   private final RoomMemberRepository roomMemberRepository;
   private final ExchangeRateService exchangeRateService;
+  private final CommissionCalculator commissionCalculator;
   private final ReputationService reputationService;
   private final PayoutMethodRepository payoutMethodRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RefundService refundService;
+
+  @Transactional(readOnly = true)
+  public RoomPricingPreviewResponse previewPricing(Long tariffPlanId, Integer existingMembersCount) {
+    TariffPlan tariff =
+        tariffPlanRepository.findById(tariffPlanId)
+            .filter(plan -> Boolean.TRUE.equals(plan.getIsActive()))
+            .orElseThrow(() -> new ResourceNotFoundException("Tariff plan not found"));
+    Integer maxMembers = tariff.getMaxMembers();
+    validateExistingMembersCount(existingMembersCount, maxMembers);
+
+    BigDecimal originalPrice = tariff.getBasePriceTotal();
+    String originalCurrency = Currency.normalize(tariff.getCurrency()).name();
+    BigDecimal fxRate = exchangeRateService.rateOf(originalCurrency);
+    BigDecimal shareOriginal = originalPrice.divide(BigDecimal.valueOf(maxMembers), 2, java.math.RoundingMode.HALF_UP);
+    BigDecimal shareKzt = exchangeRateService.toKzt(shareOriginal, originalCurrency);
+    BigDecimal commissionKzt = commissionCalculator.commissionFor(shareKzt, existingMembersCount);
+    int capacity = maxMembers - existingMembersCount;
+
+    return RoomPricingPreviewResponse.builder()
+        .maxMembers(maxMembers)
+        .existingMembersCount(existingMembersCount)
+        .marketplaceCapacity(capacity)
+        .shareKzt(shareKzt)
+        .commissionKzt(commissionKzt)
+        .payableTotalKzt(shareKzt.add(commissionKzt))
+        .potentialOwnerPayoutKzt(shareKzt.multiply(BigDecimal.valueOf(capacity)))
+        .potentialEcoPayCommissionKzt(commissionKzt.multiply(BigDecimal.valueOf(capacity)))
+        .potentialMemberPaymentsTotalKzt(
+            shareKzt.add(commissionKzt).multiply(BigDecimal.valueOf(capacity)))
+        .originalTariffPrice(originalPrice)
+        .originalTariffCurrency(originalCurrency)
+        .fxRateSnapshot(fxRate)
+        .settlementCurrency("KZT")
+        .build();
+  }
 
   /** Member statuses that occupy a seat (see CLAUDE.md). */
   private static final List<MemberStatus> OCCUPYING_STATUSES =
@@ -802,6 +839,9 @@ public class RoomService {
     }
     if (existingMembersCount >= maxMembers) {
       throw new InvalidRequestException("existingMembersCount must be less than maxMembers");
+    }
+    if (existingMembersCount > 2) {
+      throw new InvalidRequestException("existingMembersCount must be 1 or 2");
     }
   }
 

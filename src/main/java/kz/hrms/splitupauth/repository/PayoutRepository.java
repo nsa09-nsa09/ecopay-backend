@@ -79,4 +79,8 @@ public interface PayoutRepository
   List<Payout> findWithLockByIdIn(@Param("ids") List<Long> ids);
 
   List<Payout> findByPayoutBatch_IdOrderByIdAsc(Long payoutBatchId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.payoutBatch.id = :id order by p.id asc")
+  List<Payout> findWithLockByPayoutBatchId(@Param("id") Long payoutBatchId);
 }

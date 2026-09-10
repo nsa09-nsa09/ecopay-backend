@@ -216,7 +216,7 @@ public class PayoutService {
         PaymentGateway gateway = gatewayRegistry.defaultGateway();
         GatewayStatusResponse providerStatus =
             gateway.getPayoutStatus(
-                payout.getProviderPayoutId(), String.valueOf(payout.getId()));
+                payout.getProviderPayoutId(), payoutProviderOrderId(payout));
         tx().executeWithoutResult(
             status -> completePayoutReconciliation(payout.getId(), providerStatus));
       } catch (Exception ex) {
@@ -234,7 +234,7 @@ public class PayoutService {
       try {
         PaymentGateway gateway = gatewayRegistry.defaultGateway();
         GatewayStatusResponse providerStatus =
-            gateway.getPayoutStatus(batch.getProviderPayoutId(), String.valueOf(batch.getId()));
+            gateway.getPayoutStatus(batch.getProviderPayoutId(), batch.getProviderOrderId());
         tx().executeWithoutResult(
             status -> completeBatchReconciliation(batch.getId(), providerStatus));
       } catch (Exception ex) {
@@ -259,6 +259,7 @@ public class PayoutService {
           gateway.payout(
               GatewayPayoutRequest.builder()
                   .payoutId(claim.payoutId())
+                  .providerOrderId(claim.providerOrderId())
                   .idempotencyKey(claim.idempotencyKey())
                   .destinationUserId(claim.destinationUserId())
                   .destinationCardToken(claim.destinationCardToken())
@@ -366,6 +367,7 @@ public class PayoutService {
           gateway.payout(
               GatewayPayoutRequest.builder()
                   .payoutId(claim.batchId())
+                  .providerOrderId(claim.providerOrderId())
                   .idempotencyKey(claim.idempotencyKey())
                   .destinationUserId(claim.destinationUserId())
                   .destinationCardToken(claim.destinationCardToken())
@@ -422,6 +424,7 @@ public class PayoutService {
         return null;
       }
       total = total.add(payoutPayableAmount(payout));
+      if (payoutPayableAmount(payout).signum() <= 0) return null;
     }
     total = total.setScale(2, RoundingMode.HALF_UP);
     if (total.signum() <= 0) {
@@ -436,14 +439,19 @@ public class PayoutService {
                 .amount(total)
                 .status("PROCESSING")
                 .idempotencyKey(batchIdempotencyKey(ids))
+                .destinationCardToken(method.getProviderCardToken())
+                .providerName(gatewayRegistry.defaultGateway().providerName())
+                .submissionStartedAt(now)
                 .leaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES))
                 .build());
+    batch.setProviderOrderId("ecopay-batch-" + batch.getId());
     for (Payout payout : payouts) {
       payout.setPayoutBatch(batch);
       payout.setPayoutMethod(method);
       payout.setStatus("PROCESSING");
       payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
       payout.setAmount(payoutPayableAmount(payout));
+      payout.setSubmittedAmount(payoutPayableAmount(payout));
     }
     payoutRepository.saveAll(payouts);
     return new BatchDispatchClaim(
@@ -452,7 +460,8 @@ public class PayoutService {
         String.valueOf(first.getUser().getId()),
         method.getProviderCardToken(),
         total,
-        first.getCurrency());
+        first.getCurrency(),
+        batch.getProviderOrderId());
   }
 
   private BatchDispatchClaim claimExistingPayoutBatchForDispatch(Long batchId) {
@@ -473,20 +482,30 @@ public class PayoutService {
       markBatchChildrenTerminal(batch.getId(), "FAILED", "Max retries exceeded");
       return null;
     }
+    PaymentGateway gateway = gatewayRegistry.defaultGateway();
+    if (!gateway.supportsIdempotentPayoutReplay()
+        || !gateway.providerName().equals(batch.getProviderName())) {
+      batch.setStatus("REQUIRES_REVIEW");
+      batch.setFailureReason("Submission may have succeeded; automatic replay is not safe");
+      markBatchChildrenTerminal(batchId, "REQUIRES_REVIEW", batch.getFailureReason());
+      return null;
+    }
+    verifyBatchSnapshot(batch);
     batch.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
     payoutBatchRepository.save(batch);
     return new BatchDispatchClaim(
         batch.getId(),
         batch.getIdempotencyKey(),
         String.valueOf(batch.getOwner().getId()),
-        batch.getPayoutMethod().getProviderCardToken(),
+        batch.getDestinationCardToken(),
         batch.getAmount(),
-        batch.getCurrency());
+        batch.getCurrency(),
+        batch.getProviderOrderId());
   }
 
   private DispatchClaim claimPayoutForDispatch(Long payoutId) {
     Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
-    if (payout == null) return null;
+    if (payout == null || payout.getPayoutBatch() != null) return null;
     LocalDateTime now = LocalDateTime.now(clock);
     boolean staleProcessing =
         "PROCESSING".equals(payout.getStatus())
@@ -496,6 +515,13 @@ public class PayoutService {
     if (!staleProcessing
         && !"PENDING".equals(payout.getStatus())
         && !"PENDING_METHOD".equals(payout.getStatus())) {
+      return null;
+    }
+    if (payout.getSubmittedAmount() != null) {
+      // Legacy individual dispatches have no complete persisted retry payload.
+      payout.setStatus("REQUIRES_REVIEW");
+      payout.setFailureReason("Prior submission requires reconciliation before any new transfer");
+      payoutRepository.save(payout);
       return null;
     }
     if (!staleProcessing
@@ -541,6 +567,11 @@ public class PayoutService {
     payout.setStatus("PROCESSING");
     payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
     payout.setPayoutMethod(method);
+    payout.setSubmittedAmount(payoutPayableAmount(payout));
+    payout.setAmount(payout.getSubmittedAmount());
+    if (payout.getProviderOrderId() == null) {
+      payout.setProviderOrderId("ecopay-payout-" + payout.getId());
+    }
     payout = payoutRepository.save(payout);
     return new DispatchClaim(
         payout.getId(),
@@ -548,7 +579,8 @@ public class PayoutService {
         String.valueOf(payout.getUser().getId()),
         method.getProviderCardToken(),
         payout.getAmount(),
-        payout.getCurrency());
+        payout.getCurrency(),
+        payout.getProviderOrderId());
   }
 
   private void completePayoutDispatch(
@@ -670,6 +702,15 @@ public class PayoutService {
     if (batch == null || !"PROCESSING".equals(batch.getStatus())) {
       return;
     }
+    if (!gatewayRegistry.defaultGateway().supportsIdempotentPayoutReplay()) {
+      batch.setStatus("REQUIRES_REVIEW");
+      batch.setFailureReason("Ambiguous provider submission: " + ex.getMessage());
+      batch.setLeaseUntil(null);
+      batch.setNextRetryAt(null);
+      markBatchChildrenTerminal(batchId, "REQUIRES_REVIEW", batch.getFailureReason());
+      payoutBatchRepository.save(batch);
+      return;
+    }
     int retryCount = (batch.getRetryCount() == null ? 0 : batch.getRetryCount()) + 1;
     batch.setRetryCount(retryCount);
     batch.setFailureReason(ex.getMessage());
@@ -686,7 +727,7 @@ public class PayoutService {
   }
 
   private void completeBatchChildren(PayoutBatch batch) {
-    for (Payout payout : payoutRepository.findByPayoutBatch_IdOrderByIdAsc(batch.getId())) {
+    for (Payout payout : verifyBatchSnapshot(batch)) {
       if ("SUCCESS".equals(payout.getStatus())) {
         appendPayoutSuccessLedger(payout);
         continue;
@@ -696,14 +737,14 @@ public class PayoutService {
       payout.setProcessedAt(LocalDateTime.now(clock));
       payout.setLeaseUntil(null);
       payout.setNextRetryAt(null);
-      payout.setAmount(payoutPayableAmount(payout));
+      payout.setAmount(payout.getSubmittedAmount());
       payoutRepository.save(payout);
       appendPayoutSuccessLedger(payout);
     }
   }
 
   private void markBatchChildrenTerminal(Long batchId, String status, String failureReason) {
-    for (Payout payout : payoutRepository.findByPayoutBatch_IdOrderByIdAsc(batchId)) {
+    for (Payout payout : payoutRepository.findWithLockByPayoutBatchId(batchId)) {
       if ("SUCCESS".equals(payout.getStatus())) {
         continue;
       }
@@ -873,7 +914,8 @@ public class PayoutService {
   }
 
   private void appendPayoutSuccessLedger(Payout payout) {
-    BigDecimal amount = payoutPayableAmount(payout);
+    BigDecimal amount = payout.getSubmittedAmount() == null
+        ? payout.getAmount() : payout.getSubmittedAmount();
     moneyLedgerService.append(
         "HOLD_RELEASE",
         amount,
@@ -971,21 +1013,8 @@ public class PayoutService {
 
     String status = payout.getStatus();
     boolean notYetDispatched =
-        "PENDING".equals(status) || "PENDING_METHOD".equals(status) || "FROZEN".equals(status);
-    if (!notYetDispatched) {
-      eventLogger.log(
-          "PAYOUT",
-          payout.getId(),
-          "CLAWBACK_REQUIRED",
-          status,
-          status,
-          null,
-          null,
-          payout.getIdempotencyKey(),
-          java.util.Map.of("successfulRefundTotal", successfulRefundTotal.toPlainString()));
-      return;
-    }
-
+        payout.getPayoutBatch() == null && payout.getSubmittedAmount() == null
+            && ("PENDING".equals(status) || "PENDING_METHOD".equals(status) || "FROZEN".equals(status));
     BigDecimal totalCharged = triggeringIntent.getAmount();
     BigDecimal commission =
         triggeringIntent.getCommissionAmount() == null
@@ -1008,6 +1037,18 @@ public class PayoutService {
     payout.setOriginalAmount(originalShare.setScale(2));
     payout.setRefundedShareAmount(refundedShare.setScale(2));
     payout.setPayableAmount(payable);
+    if (!notYetDispatched) {
+      BigDecimal submitted = payout.getSubmittedAmount() == null ? payout.getAmount() : payout.getSubmittedAmount();
+      BigDecimal exposure = submitted.subtract(payable).max(BigDecimal.ZERO).setScale(2);
+      payout.setClawbackAmount(exposure);
+      payout.setClawbackRequired(exposure.signum() > 0);
+      payoutRepository.save(payout);
+      eventLogger.log("PAYOUT", payout.getId(), "CLAWBACK_REQUIRED", status, status,
+          null, null, payout.getIdempotencyKey(), java.util.Map.of(
+              "successfulRefundTotal", successfulRefundTotal.toPlainString(),
+              "clawbackAmount", exposure.toPlainString()));
+      return;
+    }
     payout.setAmount(payable);
     if (payable.signum() == 0) {
       payout.setStatus("REVERSED");
@@ -1185,6 +1226,25 @@ public class PayoutService {
     return "payout-batch-" + id;
   }
 
+  private String payoutProviderOrderId(Payout payout) {
+    return payout.getProviderOrderId() == null ? String.valueOf(payout.getId()) : payout.getProviderOrderId();
+  }
+
+  private List<Payout> verifyBatchSnapshot(PayoutBatch batch) {
+    List<Payout> children = payoutRepository.findWithLockByPayoutBatchId(batch.getId());
+    BigDecimal total = BigDecimal.ZERO;
+    for (Payout child : children) {
+      if (child.getSubmittedAmount() == null || child.getSubmittedAmount().signum() <= 0) {
+        throw new IllegalStateException("Missing frozen payout amount in batch " + batch.getId());
+      }
+      total = total.add(child.getSubmittedAmount());
+    }
+    if (total.compareTo(batch.getAmount()) != 0) {
+      throw new IllegalStateException("Batch amount differs from frozen children: " + batch.getId());
+    }
+    return children;
+  }
+
   private record BatchGroupKey(Long ownerId, Long payoutMethodId, String currency) {}
 
   private record BatchCandidate(Long payoutId, BatchGroupKey groupKey) {}
@@ -1195,7 +1255,8 @@ public class PayoutService {
       String destinationUserId,
       String destinationCardToken,
       BigDecimal amount,
-      String currency) {}
+      String currency,
+      String providerOrderId) {}
 
   private record BatchDispatchClaim(
       Long batchId,
@@ -1203,5 +1264,6 @@ public class PayoutService {
       String destinationUserId,
       String destinationCardToken,
       BigDecimal amount,
-      String currency) {}
+      String currency,
+      String providerOrderId) {}
 }

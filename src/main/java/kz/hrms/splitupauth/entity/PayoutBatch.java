@@ -54,6 +54,19 @@ public class PayoutBatch {
   @Column(name = "idempotency_key", nullable = false, length = 100)
   private String idempotencyKey;
 
+  @Column(name = "provider_order_id", length = 50)
+  private String providerOrderId;
+
+  @Column(name = "destination_card_token", length = 255)
+  private String destinationCardToken;
+
+  @Column(name = "provider_name", length = 50)
+  private String providerName;
+
+  /** Committed before network I/O: from this point the outcome can be ambiguous. */
+  @Column(name = "submission_started_at")
+  private LocalDateTime submissionStartedAt;
+
   @Column(name = "retry_count", nullable = false)
   @Builder.Default
   private Integer retryCount = 0;

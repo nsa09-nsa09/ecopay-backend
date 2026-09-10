@@ -195,7 +195,8 @@ public class FreedomPayGateway implements PaymentGateway {
     Map<String, String> params = baseParams("reg2reg");
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_card_token_to", request.getDestinationCardToken());
-    params.put("pg_order_id", String.valueOf(request.getPayoutId()));
+    params.put("pg_order_id", request.getProviderOrderId() == null
+        ? String.valueOf(request.getPayoutId()) : request.getProviderOrderId());
     params.put("pg_user_id", request.getDestinationUserId());
     params.put("pg_idempotency_key", request.getIdempotencyKey());
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay payout"));

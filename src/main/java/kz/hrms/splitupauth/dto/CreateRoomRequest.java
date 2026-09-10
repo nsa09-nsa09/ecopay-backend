@@ -30,6 +30,8 @@ public class CreateRoomRequest {
 
   private String description;
 
+  @Min(1)
+  @Max(2)
   private Integer existingMembersCount;
 
   private LocalDateTime startDate;

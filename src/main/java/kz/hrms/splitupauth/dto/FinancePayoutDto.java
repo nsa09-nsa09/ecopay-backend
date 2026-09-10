@@ -35,4 +35,8 @@ public class FinancePayoutDto {
   private String providerPayoutId;
   private String failureReason;
   private Integer retryCount;
+  private Long payoutBatchId;
+  private BigDecimal submittedAmount;
+  private Boolean clawbackRequired;
+  private BigDecimal clawbackAmount;
 }

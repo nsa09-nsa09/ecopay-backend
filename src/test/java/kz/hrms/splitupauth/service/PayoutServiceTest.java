@@ -352,7 +352,7 @@ class PayoutServiceTest {
             });
     when(payoutBatchRepository.findWithLockById(900L))
         .thenAnswer(invocation -> Optional.of(savedBatch.get()));
-    when(payoutRepository.findByPayoutBatch_IdOrderByIdAsc(900L)).thenReturn(List.of(p1, p2, p3));
+    when(payoutRepository.findWithLockByPayoutBatchId(900L)).thenReturn(List.of(p1, p2, p3));
     when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
     when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
     when(paymentGateway.payout(any()))

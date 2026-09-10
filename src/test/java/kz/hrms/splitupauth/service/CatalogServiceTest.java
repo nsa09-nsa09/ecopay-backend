@@ -214,8 +214,8 @@ class CatalogServiceTest {
             .owner(owner)
             .service(netflix)
             .status(RoomStatus.OPEN)
-            .maxMembers(6)
-            .existingMembersCount(3)
+            .maxMembers(5)
+            .existingMembersCount(2)
             .startDate(java.time.LocalDateTime.now().plusDays(1))
             .build();
     when(serviceRepository.existsById(1L)).thenReturn(true);

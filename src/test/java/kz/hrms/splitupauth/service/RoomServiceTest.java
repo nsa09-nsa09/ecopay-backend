@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
 import kz.hrms.splitupauth.dto.RoomResponse;
+import kz.hrms.splitupauth.dto.RoomPricingPreviewResponse;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.ProviderType;
 import kz.hrms.splitupauth.entity.PayoutMethod;
@@ -62,6 +63,7 @@ class RoomServiceTest {
   @Mock private PayoutMethodRepository payoutMethodRepository;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private RefundService refundService;
+  @Mock private CommissionCalculator commissionCalculator;
 
   private RoomService roomService;
 
@@ -79,6 +81,7 @@ class RoomServiceTest {
             reviewRepository,
             roomMemberRepository,
             new ExchangeRateService(new ObjectMapper()),
+            commissionCalculator,
             reputationService,
             payoutMethodRepository,
             paymentTransactionRepository,
@@ -161,10 +164,10 @@ class RoomServiceTest {
   @Test
   void getRoomUsesExistingMembersCountInSeatMath() {
     Room room = room(31L, LocalDateTime.now().plusDays(1));
-    room.setMaxMembers(6);
-    room.setExistingMembersCount(3);
+    room.setMaxMembers(5);
+    room.setExistingMembersCount(2);
     RoomResponse response =
-        RoomResponse.builder().maxMembers(6).existingMembersCount(3).marketplaceCapacity(3).build();
+        RoomResponse.builder().maxMembers(5).existingMembersCount(2).marketplaceCapacity(3).build();
 
     when(roomRepository.findByIdAndDeletedAtIsNull(31L)).thenReturn(Optional.of(room));
     when(roomMapper.toResponse(room)).thenReturn(response);
@@ -175,9 +178,9 @@ class RoomServiceTest {
 
     RoomResponse result = roomService.getRoom(31L);
 
-    assertEquals(3, result.getExistingMembersCount());
+    assertEquals(2, result.getExistingMembersCount());
     assertEquals(3, result.getMarketplaceCapacity());
-    assertEquals(5, result.getFilledSeats());
+    assertEquals(4, result.getFilledSeats());
     assertEquals(1, result.getFreeSeats());
   }
 
@@ -221,6 +224,12 @@ class RoomServiceTest {
     CreateRoomRequest full = createRoomRequest(service, tariff);
     full.setExistingMembersCount(6);
     assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class, () -> roomService.createRoom(owner, full));
+    for (int count : List.of(3, 4, 5)) {
+      CreateRoomRequest invalid = createRoomRequest(service, tariff);
+      invalid.setExistingMembersCount(count);
+      assertThrows(kz.hrms.splitupauth.exception.InvalidRequestException.class,
+          () -> roomService.createRoom(owner, invalid));
+    }
   }
 
   private Room room(Long roomId, LocalDateTime startDate) {
@@ -258,6 +267,24 @@ class RoomServiceTest {
     request.setTariffPlanId(tariff.getId());
     request.setTitle("Mixed room");
     return request;
+  }
+
+  @Test
+  void previewPricing_returnsExactMixedRoomEconomics() {
+    TariffPlan tariff = tariff(service(), 5);
+    tariff.setBasePriceTotal(new BigDecimal("7500.00"));
+    when(tariffPlanRepository.findById(200L)).thenReturn(Optional.of(tariff));
+    when(commissionCalculator.commissionFor(new BigDecimal("1500.00"), 2))
+        .thenReturn(new BigDecimal("450.00"));
+
+    RoomPricingPreviewResponse preview = roomService.previewPricing(200L, 2);
+
+    assertEquals(3, preview.getMarketplaceCapacity());
+    assertEquals(new BigDecimal("1500.00"), preview.getShareKzt());
+    assertEquals(new BigDecimal("1950.00"), preview.getPayableTotalKzt());
+    assertEquals(new BigDecimal("5850.00"), preview.getPotentialMemberPaymentsTotalKzt());
+    assertEquals(new BigDecimal("4500.00"), preview.getPotentialOwnerPayoutKzt());
+    assertEquals(new BigDecimal("1350.00"), preview.getPotentialEcoPayCommissionKzt());
   }
 
   private ServiceEntity service() {

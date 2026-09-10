@@ -32,6 +32,9 @@ jobs:
           fi
           docker info
 
+      - name: Check Java formatting
+        run: ./mvnw -B spotless:check
+
       - name: Build and test
         run: ./mvnw -B verify
 

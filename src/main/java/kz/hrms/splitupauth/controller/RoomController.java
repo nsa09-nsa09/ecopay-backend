@@ -38,6 +38,13 @@ public class RoomController {
   @Value("${app.rate-limit.room-create.daily-window-seconds:86400}")
   private long createDailyWindowSeconds;
 
+  @PostMapping("/pricing-preview")
+  public ResponseEntity<RoomPricingPreviewResponse> previewPricing(
+      @Valid @RequestBody RoomPricingPreviewRequest request) {
+    return ResponseEntity.ok(
+        roomService.previewPricing(request.getTariffPlanId(), request.getExistingMembersCount()));
+  }
+
   @PostMapping
   public ResponseEntity<RoomResponse> createRoom(
       @AuthenticationPrincipal User user, @Valid @RequestBody CreateRoomRequest request) {
