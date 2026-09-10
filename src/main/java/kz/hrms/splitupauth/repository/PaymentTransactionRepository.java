@@ -20,6 +20,11 @@ public interface PaymentTransactionRepository
   Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeAndStatus(
       PaymentIntent paymentIntent, PaymentTransactionType type, PaymentTransactionStatus status);
 
+  Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeAndStatusIn(
+      PaymentIntent paymentIntent,
+      PaymentTransactionType type,
+      List<PaymentTransactionStatus> statuses);
+
   Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeOrderByCreatedAtDesc(
       PaymentIntent paymentIntent, PaymentTransactionType type);
 

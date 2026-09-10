@@ -58,13 +58,17 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     provider = mock(PaymentGateway.class);
     when(registry.defaultGateway()).thenReturn(provider);
     when(provider.providerName()).thenReturn("test-provider");
-    when(provider.payout(any()))
-        .thenAnswer(
+    doAnswer(
             call -> {
               GatewayPayoutRequest request = call.getArgument(0);
+              if (request == null) {
+                return null;
+              }
               sent.add(request);
               return success(request);
-            });
+            })
+        .when(provider)
+        .payout(any());
   }
 
   @AfterEach
@@ -161,16 +165,20 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     User owner = owner();
     Payout a = due(owner, "KZT");
     due(owner, "KZT");
-    when(provider.payout(any()))
-        .thenAnswer(
+    doAnswer(
             call -> {
+              GatewayPayoutRequest request = call.getArgument(0);
+              if (request == null) {
+                return null;
+              }
               // Claim has committed, but no definitive submission response exists yet.
               assertNotNull(batch(a).getSubmissionStartedAt());
               refund(a, "1950.00");
-              GatewayPayoutRequest request = call.getArgument(0);
               sent.add(request);
               return success(request);
-            });
+            })
+        .when(provider)
+        .payout(any());
     service.processPendingPayouts();
     assertTrue(reload(a).getClawbackRequired());
     assertEquals(new BigDecimal("1500.00"), reload(a).getSubmittedAmount());
@@ -210,14 +218,18 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     Payout a = due(owner, "KZT");
     due(owner, "KZT");
     when(provider.supportsIdempotentPayoutReplay()).thenReturn(true);
-    when(provider.payout(any()))
-        .thenAnswer(
+    doAnswer(
             call -> {
               GatewayPayoutRequest request = call.getArgument(0);
+              if (request == null) {
+                return null;
+              }
               sent.add(request);
               if (sent.size() == 1) throw new IllegalStateException("connection reset after send");
               return success(request);
-            });
+            })
+        .when(provider)
+        .payout(any());
     service.processPendingPayouts();
     Long batchId = batch(a).getId();
     refund(a, "975.00");
@@ -240,7 +252,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     User owner = owner();
     Payout a = due(owner, "KZT");
     due(owner, "KZT");
-    when(provider.payout(any())).thenThrow(new IllegalStateException("timeout"));
+    doThrow(new IllegalStateException("timeout")).when(provider).payout(any());
     service.processPendingPayouts();
     clock.advance(Duration.ofDays(1));
     service.processPendingPayouts();
@@ -305,18 +317,26 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
   }
 
   private void pending() {
-    when(provider.payout(any()))
-        .thenAnswer(
+    doAnswer(
             call -> {
-              sent.add(call.getArgument(0));
+              GatewayPayoutRequest request = call.getArgument(0);
+              if (request == null) {
+                return null;
+              }
+              sent.add(request);
               return GatewayPayoutResponse.builder()
                   .pending(true)
                   .externalPayoutId(pendingId)
                   .build();
-            });
+            })
+        .when(provider)
+        .payout(any());
   }
 
   private GatewayPayoutResponse success(GatewayPayoutRequest request) {
+    if (request == null) {
+      return GatewayPayoutResponse.builder().success(true).build();
+    }
     return GatewayPayoutResponse.builder()
         .success(true)
         .externalPayoutId("provider-" + request.getIdempotencyKey())

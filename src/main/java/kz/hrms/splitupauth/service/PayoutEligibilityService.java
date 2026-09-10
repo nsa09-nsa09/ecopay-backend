@@ -52,8 +52,10 @@ public class PayoutEligibilityService {
       return Decision.blocked("PAYMENT_REQUIRES_REVIEW");
     }
     if (paymentTransactionRepository
-        .findFirstByPaymentIntentAndTypeAndStatus(
-            intent, PaymentTransactionType.CHARGE, PaymentTransactionStatus.SUCCESS)
+        .findFirstByPaymentIntentAndTypeAndStatusIn(
+            intent,
+            PaymentTransactionType.CHARGE,
+            List.of(PaymentTransactionStatus.SUCCESS, PaymentTransactionStatus.REFUNDED_PARTIAL))
         .isEmpty()) {
       return Decision.blocked("CAPTURE_TRANSACTION_MISSING");
     }
