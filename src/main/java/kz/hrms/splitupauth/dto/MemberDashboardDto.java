@@ -46,5 +46,4 @@ public class MemberDashboardDto {
   private Integer reputationScore;
   private long reviewsReceived;
   private long disputesAsMember;
-
 }
