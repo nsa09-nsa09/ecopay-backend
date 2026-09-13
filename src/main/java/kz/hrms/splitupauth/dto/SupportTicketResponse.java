@@ -11,6 +11,7 @@ public class SupportTicketResponse {
   private Long id;
   private Long userId;
   private Long roomId;
+  private String roomTitle;
   private Long roomMemberId;
   private String subject;
   private String topic;

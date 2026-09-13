@@ -492,6 +492,7 @@ public class SupportTicketService {
         .id(ticket.getId())
         .userId(ticket.getUser().getId())
         .roomId(ticket.getRoom() != null ? ticket.getRoom().getId() : null)
+        .roomTitle(ticket.getRoom() != null ? ticket.getRoom().getTitle() : null)
         .roomMemberId(ticket.getRoomMember() != null ? ticket.getRoomMember().getId() : null)
         .subject(ticket.getSubject())
         .topic(ticket.getTopic())

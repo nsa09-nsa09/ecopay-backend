@@ -9,6 +9,7 @@ import java.util.List;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.service.MailLocale;
 import kz.hrms.splitupauth.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -54,6 +55,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (user != null
             && user.getStatus() == UserStatus.ACTIVE
             && jwtUtil.validateToken(jwt, subject)) {
+
+          // The web client sends the language selected inside the product on every request.
+          // Persist only actual changes so future async notifications use that same language.
+          String acceptLanguage = request.getHeader("Accept-Language");
+          if (acceptLanguage != null && !acceptLanguage.isBlank()) {
+            String selectedLocale = MailLocale.from(acceptLanguage).tag();
+            if (!selectedLocale.equals(user.getLocale())) {
+              user.setLocale(selectedLocale);
+              user = userRepository.save(user);
+            }
+          }
 
           UsernamePasswordAuthenticationToken authToken =
               new UsernamePasswordAuthenticationToken(

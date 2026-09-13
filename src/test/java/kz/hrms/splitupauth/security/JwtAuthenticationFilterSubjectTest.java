@@ -79,6 +79,21 @@ class JwtAuthenticationFilterSubjectTest {
   }
 
   @Test
+  void selectedProductLanguage_isPersistedForFutureNotifications() throws Exception {
+    when(jwtUtil.extractUsername("jwt")).thenReturn("pubAbc123XYZ0");
+    when(userRepository.findByPublicId("pubAbc123XYZ0")).thenReturn(Optional.of(user));
+    when(jwtUtil.validateToken("jwt", "pubAbc123XYZ0")).thenReturn(true);
+    when(userRepository.save(user)).thenReturn(user);
+    MockHttpServletRequest request = bearer();
+    request.addHeader("Accept-Language", "kz");
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertEquals("kk", user.getLocale());
+    verify(userRepository).save(user);
+  }
+
+  @Test
   void unknownSubject_leavesContextEmpty() throws Exception {
     when(jwtUtil.extractUsername("jwt")).thenReturn("pubUnknown000");
     when(userRepository.findByPublicId("pubUnknown000")).thenReturn(Optional.empty());

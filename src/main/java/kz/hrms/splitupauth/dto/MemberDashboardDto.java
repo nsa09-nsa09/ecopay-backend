@@ -2,7 +2,6 @@ package kz.hrms.splitupauth.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -48,6 +47,4 @@ public class MemberDashboardDto {
   private long reviewsReceived;
   private long disputesAsMember;
 
-  /** Most recent 5 RoomEventLog rows where this user was the actor. */
-  private List<RoomEventLogDto> recentEvents;
 }

@@ -73,6 +73,10 @@ public class NotificationService {
       return;
     }
     try {
+      NotificationMessages.Copy localized =
+          NotificationMessages.forRecipient(type, recipient.getLocale());
+      title = localized.title();
+      body = localized.body();
       NotificationPreferenceService.Channels channels =
           preferenceService.channelsFor(recipient, type);
       if (!channels.inApp() && !channels.email()) {

@@ -25,14 +25,12 @@ import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
-import kz.hrms.splitupauth.repository.RoomEventLogRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 class MemberDashboardServiceTest {
@@ -41,7 +39,6 @@ class MemberDashboardServiceTest {
   @Mock private RoomMemberRepository roomMemberRepository;
   @Mock private ReviewRepository reviewRepository;
   @Mock private DisputeRepository disputeRepository;
-  @Mock private RoomEventLogRepository roomEventLogRepository;
   @Mock private TypedQuery<BigDecimal> bigDecimalQuery;
 
   private MemberDashboardService service;
@@ -49,8 +46,7 @@ class MemberDashboardServiceTest {
   @BeforeEach
   void setUp() {
     service =
-        new MemberDashboardService(
-            em, roomMemberRepository, reviewRepository, disputeRepository, roomEventLogRepository);
+        new MemberDashboardService(em, roomMemberRepository, reviewRepository, disputeRepository);
     lenient().when(em.createQuery(anyString(), eq(BigDecimal.class))).thenReturn(bigDecimalQuery);
     lenient().when(bigDecimalQuery.setParameter(anyInt(), any())).thenReturn(bigDecimalQuery);
     lenient().when(bigDecimalQuery.getSingleResult()).thenReturn(new BigDecimal("12345.67"));
@@ -80,9 +76,6 @@ class MemberDashboardServiceTest {
         .thenReturn(List.of(activeMember, completedMember));
     when(reviewRepository.countByRecipientAndHiddenByAdminFalse(user)).thenReturn(2L);
     when(disputeRepository.countByOpenedByUser(user)).thenReturn(1L);
-    when(roomEventLogRepository.findByActorUserOrderByCreatedAtDesc(eq(user), any(Pageable.class)))
-        .thenReturn(Collections.emptyList());
-
     MemberDashboardDto dto = service.getMyDashboard(user);
 
     assertEquals(2, dto.getTotalRoomsJoined());
@@ -101,7 +94,6 @@ class MemberDashboardServiceTest {
     assertTrue(
         dto.getNextPaymentDate().isAfter(LocalDateTime.now().minusSeconds(1)),
         "next payment must roll forward into the future");
-    assertNotNull(dto.getRecentEvents());
   }
 
   @Test
@@ -111,9 +103,6 @@ class MemberDashboardServiceTest {
         .thenReturn(Collections.emptyList());
     when(reviewRepository.countByRecipientAndHiddenByAdminFalse(user)).thenReturn(0L);
     when(disputeRepository.countByOpenedByUser(user)).thenReturn(0L);
-    when(roomEventLogRepository.findByActorUserOrderByCreatedAtDesc(eq(user), any(Pageable.class)))
-        .thenReturn(Collections.emptyList());
-
     MemberDashboardDto dto = service.getMyDashboard(user);
 
     assertEquals(0, dto.getTotalRoomsJoined());

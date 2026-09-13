@@ -6,7 +6,6 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import kz.hrms.splitupauth.dto.MemberDashboardDto;
-import kz.hrms.splitupauth.dto.RoomEventLogDto;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionType;
@@ -17,10 +16,8 @@ import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
-import kz.hrms.splitupauth.repository.RoomEventLogRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,9 +35,6 @@ public class MemberDashboardService {
   private final RoomMemberRepository roomMemberRepository;
   private final ReviewRepository reviewRepository;
   private final DisputeRepository disputeRepository;
-  private final RoomEventLogRepository roomEventLogRepository;
-
-  private static final int RECENT_EVENT_LIMIT = 5;
 
   @Transactional(readOnly = true)
   public MemberDashboardDto getMyDashboard(User user) {
@@ -95,29 +89,6 @@ public class MemberDashboardService {
     long reviewsReceived = reviewRepository.countByRecipientAndHiddenByAdminFalse(user);
     long disputesAsMember = disputeRepository.countByOpenedByUser(user);
 
-    List<RoomEventLogDto> recentEvents =
-        roomEventLogRepository
-            .findByActorUserOrderByCreatedAtDesc(user, PageRequest.of(0, RECENT_EVENT_LIMIT))
-            .stream()
-            .map(
-                log ->
-                    RoomEventLogDto.builder()
-                        .id(log.getId())
-                        .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
-                        .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
-                        .actorRole(log.getActorRole())
-                        .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
-                        .roomMemberId(
-                            log.getRoomMember() != null ? log.getRoomMember().getId() : null)
-                        .eventType(log.getEventType())
-                        .oldState(log.getOldState())
-                        .newState(log.getNewState())
-                        // ipAddress + userAgent are intentionally omitted on the self surface
-                        // (user's own request, no admin context, less to leak in screenshots).
-                        .createdAt(log.getCreatedAt())
-                        .build())
-            .toList();
-
     return MemberDashboardDto.builder()
         .joinedRoomsActive(joinedRoomsActive)
         .joinedRoomsCompleted(joinedRoomsCompleted)
@@ -130,7 +101,6 @@ public class MemberDashboardService {
         .reputationScore(user.getReputation())
         .reviewsReceived(reviewsReceived)
         .disputesAsMember(disputesAsMember)
-        .recentEvents(recentEvents)
         .build();
   }
 
