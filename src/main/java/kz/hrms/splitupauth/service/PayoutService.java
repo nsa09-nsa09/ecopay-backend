@@ -523,7 +523,15 @@ public class PayoutService {
     if (payout.getSubmittedAmount() != null) {
       // Legacy individual dispatches have no complete persisted retry payload.
       payout.setStatus("REQUIRES_REVIEW");
-      payout.setFailureReason("Prior submission requires reconciliation before any new transfer");
+      String prevReason = payout.getFailureReason();
+      if (prevReason != null && !prevReason.isBlank() && !prevReason.contains("Prior submission")) {
+        payout.setFailureReason(
+            "Prior submission requires reconciliation before any new transfer ("
+                + prevReason
+                + ")");
+      } else {
+        payout.setFailureReason("Prior submission requires reconciliation before any new transfer");
+      }
       payoutRepository.save(payout);
       return null;
     }
@@ -614,6 +622,11 @@ public class PayoutService {
           payout.getRetryCount() >= MAX_RETRY
               ? null
               : LocalDateTime.now(clock).plusSeconds(retryBackoffSeconds(payout.getRetryCount())));
+      log.warn(
+          "Payout {} provider dispatch failed: code={} message={}",
+          payoutId,
+          resp.getFailureCode(),
+          resp.getFailureMessage());
     }
     payoutRepository.save(payout);
   }

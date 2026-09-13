@@ -216,6 +216,12 @@ public class FreedomPayGateway implements PaymentGateway {
     Map<String, String> response = client.postForm("/api/reg2reg", params);
     String status = response.getOrDefault("pg_status", "");
     boolean ok = "ok".equalsIgnoreCase(status);
+    log.info(
+        "FreedomPay reg2reg response: status={} code={} desc={} paymentId={}",
+        status,
+        response.get("pg_error_code"),
+        response.get("pg_error_description"),
+        response.get("pg_payment_id"));
     return GatewayPayoutResponse.builder()
         .success(ok)
         .externalPayoutId(response.get("pg_payment_id"))
