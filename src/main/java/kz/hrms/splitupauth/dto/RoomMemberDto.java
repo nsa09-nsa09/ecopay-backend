@@ -17,6 +17,8 @@ public class RoomMemberDto {
   private Long userId;
   private String userDisplayName;
   private String userEmail;
+  private String userPublicId;
+  private String userSlug;
   private Integer userReputation;
   private String userReputationLevel;
   private MemberStatus status;

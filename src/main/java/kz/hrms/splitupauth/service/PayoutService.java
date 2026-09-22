@@ -44,8 +44,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class PayoutService {
 
   private static final int MAX_RETRY = 3;
-  private static final String PAYOUT_CURRENCY = "KZT";
-  private static final List<String> HELD_STATUSES = List.of("PENDING", "PENDING_METHOD", "FROZEN");
   private static final int DISPATCH_LEASE_MINUTES = 5;
   private static final int PROVIDER_RECONCILIATION_DELAY_MINUTES = 5;
 
@@ -1112,11 +1110,11 @@ public class PayoutService {
     LocalDateTime calculatedAt = LocalDateTime.now(clock);
     List<Payout> held =
         payoutRepository.findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
-            user, PAYOUT_CURRENCY, HELD_STATUSES, calculatedAt);
+            user, PayoutHoldPolicy.CURRENCY, PayoutHoldPolicy.HELD_STATUSES, calculatedAt);
 
     BigDecimal heldAmount =
         held.stream()
-            .map(Payout::getAmount)
+            .map(Payout::getPayableAmount)
             .filter(java.util.Objects::nonNull)
             .reduce(BigDecimal.ZERO, BigDecimal::add)
             .setScale(2, RoundingMode.HALF_UP);
@@ -1129,7 +1127,7 @@ public class PayoutService {
 
     return PayoutBalanceDto.builder()
         .heldAmount(heldAmount)
-        .currency(PAYOUT_CURRENCY)
+        .currency(PayoutHoldPolicy.CURRENCY)
         .heldPayoutCount(held.size())
         .nextReleaseAt(nextReleaseAt)
         .calculatedAt(calculatedAt)

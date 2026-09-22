@@ -7,6 +7,7 @@ import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.DisputeService;
 import kz.hrms.splitupauth.service.InMemoryRateLimiter;
+import kz.hrms.splitupauth.service.MemberHoldService;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 public class RoomMemberController {
 
   private final RoomMemberService roomMemberService;
+  private final MemberHoldService memberHoldService;
   private final DisputeService disputeService;
   private final InMemoryRateLimiter rateLimiter;
 
@@ -64,6 +66,12 @@ public class RoomMemberController {
   public ResponseEntity<MyRoomMembershipDto> getMyMembership(
       @PathVariable Long id, @AuthenticationPrincipal User user) {
     return ResponseEntity.ok(roomMemberService.getMyMembership(id, user));
+  }
+
+  @GetMapping("/{id}/members/me/hold")
+  public ResponseEntity<MemberHoldDto> getMyHold(
+      @PathVariable Long id, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(memberHoldService.getMyHold(id, user));
   }
 
   @PatchMapping("/{roomId}/members/{memberId}/owner-access")

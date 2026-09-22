@@ -257,8 +257,16 @@ class PayoutServiceTest {
             any(), any(), any(), any()))
         .thenReturn(
             List.of(
-                Payout.builder().amount(new BigDecimal("1500.25")).releaseAt(laterRelease).build(),
-                Payout.builder().amount(new BigDecimal("499.75")).releaseAt(nextRelease).build()));
+                Payout.builder()
+                    .amount(new BigDecimal("9999.00"))
+                    .payableAmount(new BigDecimal("1500.25"))
+                    .releaseAt(laterRelease)
+                    .build(),
+                Payout.builder()
+                    .amount(new BigDecimal("9999.00"))
+                    .payableAmount(new BigDecimal("499.75"))
+                    .releaseAt(nextRelease)
+                    .build()));
 
     PayoutBalanceDto balance = payoutService.getHeldBalance(owner);
 

@@ -87,6 +87,7 @@ public class RoomService {
   private final PayoutMethodRepository payoutMethodRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RefundService refundService;
+  private final RoomSettingsService roomSettingsService;
 
   @Transactional(readOnly = true)
   public RoomPricingPreviewResponse previewPricing(
@@ -97,6 +98,7 @@ public class RoomService {
             .filter(plan -> Boolean.TRUE.equals(plan.getIsActive()))
             .orElseThrow(() -> new ResourceNotFoundException("Tariff plan not found"));
     Integer maxMembers = tariff.getMaxMembers();
+    validateMinimumRoomMembers(maxMembers);
     validateExistingMembersCount(existingMembersCount, maxMembers);
 
     BigDecimal originalPrice = tariff.getBasePriceTotal();
@@ -185,6 +187,14 @@ public class RoomService {
     return java.util.Arrays.asList(env.getActiveProfiles()).contains("dev");
   }
 
+  private void validateMinimumRoomMembers(Integer maxMembers) {
+    int minimumRoomMembers = roomSettingsService.getMinimumRoomMembers();
+    if (maxMembers == null || maxMembers < minimumRoomMembers) {
+      throw new InvalidRequestException(
+          "New rooms must have at least " + minimumRoomMembers + " total members");
+    }
+  }
+
   private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
     boolean allowed =
         (currentStatus == RoomStatus.OPEN && targetStatus == RoomStatus.IN_VERIFICATION)
@@ -251,6 +261,8 @@ public class RoomService {
     if (!tariffPlan.getService().getId().equals(service.getId())) {
       throw new InvalidRequestException("Tariff plan does not belong to the selected service");
     }
+
+    validateMinimumRoomMembers(tariffPlan.getMaxMembers());
 
     // Тип комнаты определяется каталогом сервиса, а не клиентом.
     RoomType derivedType =

@@ -38,6 +38,16 @@ public interface PayoutRepository
   List<Payout> findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
       User user, String currency, List<String> statuses, LocalDateTime releaseAt);
 
+  @Query(
+      "select p from Payout p where p.triggeringPaymentIntent.roomMember = :roomMember "
+          + "and p.currency = :currency and p.status in :statuses and p.releaseAt > :now "
+          + "order by p.releaseAt asc")
+  List<Payout> findHeldByRoomMember(
+      @Param("roomMember") RoomMember roomMember,
+      @Param("currency") String currency,
+      @Param("statuses") List<String> statuses,
+      @Param("now") LocalDateTime now);
+
   /** Payouts in a dispatchable status whose hold window has elapsed (due now). */
   @Query(
       "SELECT p FROM Payout p WHERE ("

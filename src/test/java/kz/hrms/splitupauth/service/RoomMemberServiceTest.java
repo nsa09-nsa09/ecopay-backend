@@ -290,6 +290,27 @@ class RoomMemberServiceTest {
   }
 
   @Test
+  void joinRoomAllowsLegacyFourMemberRoom() {
+    User member = user(219L, Role.USER);
+    Room room = room(121L);
+    room.setMaxMembers(4);
+    room.setExistingMembersCount(1);
+    room.setService(service(ServiceAccessType.EMAIL));
+    JoinRoomRequest request = joinRequest(IdentifierType.EMAIL, "legacy-member@example.com");
+
+    stubMemberPersistence();
+    when(roomRepository.findByIdForUpdate(room.getId())).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.empty());
+    when(fieldEncryptionService.encrypt("legacy-member@example.com")).thenReturn("enc:legacy");
+
+    RoomMemberDto result = roomMemberService.joinRoom(room.getId(), member, request);
+
+    assertNotNull(result);
+    verify(roomMemberRepository).save(any(RoomMember.class));
+  }
+
+  @Test
   void joinRoom_phoneServiceNormalizesLocalFormat() {
     User member = user(207L, Role.USER);
     Room room = room(107L);

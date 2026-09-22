@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.service;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -64,6 +65,7 @@ class RoomServiceTest {
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private RefundService refundService;
   @Mock private CommissionCalculator commissionCalculator;
+  @Mock private RoomSettingsService roomSettingsService;
 
   private RoomService roomService;
 
@@ -85,7 +87,10 @@ class RoomServiceTest {
             reputationService,
             payoutMethodRepository,
             paymentTransactionRepository,
-            refundService);
+            refundService,
+            roomSettingsService);
+
+    lenient().when(roomSettingsService.getMinimumRoomMembers()).thenReturn(5);
 
     lenient()
         .when(roomRepository.saveAll(any()))
@@ -235,6 +240,46 @@ class RoomServiceTest {
           kz.hrms.splitupauth.exception.InvalidRequestException.class,
           () -> roomService.createRoom(owner, invalid));
     }
+  }
+
+  @Test
+  void createRoomRejectsTariffBelowConfiguredMinimum() {
+    User owner = user(9L);
+    owner.setPhoneVerifiedAt(LocalDateTime.now());
+    ServiceEntity service = service();
+    TariffPlan tariff = tariff(service, 4);
+    stubCreateRoomDependencies(owner, service, tariff);
+
+    var exception =
+        assertThrows(
+            kz.hrms.splitupauth.exception.InvalidRequestException.class,
+            () -> roomService.createRoom(owner, createRoomRequest(service, tariff)));
+
+    assertEquals("New rooms must have at least 5 total members", exception.getMessage());
+    verify(roomRepository, never()).save(any(Room.class));
+  }
+
+  @Test
+  void createRoomAllowsTariffAtConfiguredMinimum() {
+    User owner = user(10L);
+    owner.setPhoneVerifiedAt(LocalDateTime.now());
+    ServiceEntity service = service();
+    TariffPlan tariff = tariff(service, 5);
+    stubCreateRoomDependencies(owner, service, tariff);
+    when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    when(roomMapper.toResponse(any(Room.class))).thenReturn(RoomResponse.builder().build());
+
+    assertDoesNotThrow(() -> roomService.createRoom(owner, createRoomRequest(service, tariff)));
+  }
+
+  @Test
+  void previewPricingRejectsTariffBelowConfiguredMinimum() {
+    TariffPlan tariff = tariff(service(), 4);
+    when(tariffPlanRepository.findById(200L)).thenReturn(Optional.of(tariff));
+
+    assertThrows(
+        kz.hrms.splitupauth.exception.InvalidRequestException.class,
+        () -> roomService.previewPricing(200L, 1));
   }
 
   private Room room(Long roomId, LocalDateTime startDate) {

@@ -17,6 +17,8 @@ public class RoomMemberMapper {
         .userId(roomMember.getUser().getId())
         .userDisplayName(roomMember.getUser().getDisplayName())
         .userEmail(roomMember.getUser().getEmail())
+        .userPublicId(roomMember.getUser().getPublicId())
+        .userSlug(roomMember.getUser().getSlug())
         .userReputation(roomMember.getUser().getReputation())
         .userReputationLevel(ReputationLevel.fromScore(roomMember.getUser().getReputation()).name())
         .status(roomMember.getStatus())
