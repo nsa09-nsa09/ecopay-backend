@@ -46,6 +46,7 @@ import kz.hrms.splitupauth.repository.PayoutRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -112,6 +113,12 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
   void resetClockAndGatewayCounters() {
     mutableClock.set(BASE_INSTANT);
     mockGateway.resetCounters();
+    jdbcTemplate.update("UPDATE room_settings SET minimum_room_members = 4 WHERE id = 1");
+  }
+
+  @AfterEach
+  void restoreRoomMinimum() {
+    jdbcTemplate.update("UPDATE room_settings SET minimum_room_members = 5 WHERE id = 1");
   }
 
   private User registerVerified(String name) {
