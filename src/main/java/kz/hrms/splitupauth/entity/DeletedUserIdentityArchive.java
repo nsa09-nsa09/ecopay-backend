@@ -36,6 +36,9 @@ public class DeletedUserIdentityArchive {
   @Column(length = 255)
   private String displayNameAtDeletion;
 
+  @Column(nullable = false)
   private LocalDateTime deletedAt;
+
+  @Column(nullable = false)
   private LocalDateTime archivedAt;
 }

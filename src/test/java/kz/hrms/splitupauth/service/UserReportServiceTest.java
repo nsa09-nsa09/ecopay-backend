@@ -12,6 +12,7 @@ import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.UserReportRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
@@ -58,7 +59,7 @@ class UserReportServiceTest {
   @Test
   void createsReportFromHandleAndRejectsDuplicate() {
     when(users.findBySlug("target-slug")).thenReturn(Optional.of(target));
-    when(users.findByIdForUpdate(2L)).thenReturn(Optional.of(target));
+    when(users.findByIdForUpdate(1L)).thenReturn(Optional.of(reporter));
     when(reports.save(any()))
         .thenAnswer(
             inv -> {
@@ -85,7 +86,7 @@ class UserReportServiceTest {
   @Test
   void rejectsSelfReportAndDeletedTarget() {
     when(users.findBySlug("target-slug")).thenReturn(Optional.of(target));
-    when(users.findByIdForUpdate(2L)).thenReturn(Optional.of(target));
+    when(users.findByIdForUpdate(1L)).thenReturn(Optional.of(reporter));
     var body =
         new CreateUserReportRequest(
             UserReportCategory.ABUSE, "A description with enough characters");
@@ -94,10 +95,37 @@ class UserReportServiceTest {
         ResourceNotFoundException.class, () -> service.create(reporter, "target-slug", body));
     target.setStatus(UserStatus.ACTIVE);
     target.setId(1L);
-    when(users.findByIdForUpdate(1L)).thenReturn(Optional.of(target));
     assertThrows(
         InvalidRequestException.class, () -> service.create(reporter, "target-slug", body));
     verify(reports, never()).save(any());
+  }
+
+  @Test
+  void limitsReportsAcrossTargetsWithinOneDay() {
+    when(users.findByIdForUpdate(1L)).thenReturn(Optional.of(reporter));
+    when(users.findBySlug("target-slug")).thenReturn(Optional.of(target));
+    when(reports.countByReporter_IdAndCreatedAtAfter(eq(1L), any())).thenReturn(10L);
+
+    var body =
+        new CreateUserReportRequest(
+            UserReportCategory.ABUSE, "A description with enough characters");
+    assertThrows(
+        TooManyRequestsException.class, () -> service.create(reporter, "target-slug", body));
+    verify(reports, never()).save(any());
+  }
+
+  @Test
+  void stripsMarkupFromReportTextBeforeSaving() {
+    when(users.findByIdForUpdate(1L)).thenReturn(Optional.of(reporter));
+    when(users.findBySlug("target-slug")).thenReturn(Optional.of(target));
+    when(reports.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    var body =
+        new CreateUserReportRequest(
+            UserReportCategory.ABUSE, "<b>Repeated abusive messages from this account</b>");
+
+    var created = service.create(reporter, "target-slug", body);
+
+    assertEquals("Repeated abusive messages from this account", created.description());
   }
 
   @Test

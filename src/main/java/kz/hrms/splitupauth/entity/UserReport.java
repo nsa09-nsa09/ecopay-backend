@@ -38,8 +38,12 @@ public class UserReport {
   @Column(columnDefinition = "TEXT")
   private String resolutionNote;
 
+  @Column(nullable = false)
   private LocalDateTime createdAt;
+
+  @Column(nullable = false)
   private LocalDateTime updatedAt;
+
   private LocalDateTime resolvedAt;
 
   @PrePersist

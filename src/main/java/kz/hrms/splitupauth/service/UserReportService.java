@@ -12,9 +12,11 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.UserReportRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -25,13 +27,23 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class UserReportService {
+  private static final int MAX_REPORTS_PER_DAY = 10;
+
   private final UserReportRepository reportRepository;
   private final UserRepository userRepository;
   private final AdminActionLogRepository auditRepository;
 
   @Transactional
   public UserReportDto create(User reporter, String handle, CreateUserReportRequest request) {
-    if (reporter == null || reporter.getStatus() != UserStatus.ACTIVE) {
+    if (reporter == null) {
+      throw new ForbiddenOperationException("Active account required");
+    }
+    // Serialize submissions by this reporter, including reports against different users.
+    reporter =
+        userRepository
+            .findByIdForUpdate(reporter.getId())
+            .orElseThrow(() -> new ForbiddenOperationException("Active account required"));
+    if (reporter.getStatus() != UserStatus.ACTIVE) {
       throw new ForbiddenOperationException("Active account required");
     }
     User found =
@@ -39,14 +51,15 @@ public class UserReportService {
             .findBySlug(handle)
             .or(() -> userRepository.findByPublicId(handle))
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-    User target = userRepository.findByIdForUpdate(found.getId()).orElseThrow();
+    User target = found;
     if (target.getStatus() == UserStatus.DELETED) {
       throw new ResourceNotFoundException("User not found");
     }
     if (target.getId().equals(reporter.getId())) {
       throw new InvalidRequestException("Cannot report yourself");
     }
-    if (request.description().trim().length() < 20) {
+    String description = TextSanitizer.sanitize(request.description());
+    if (description.length() < 20) {
       throw new InvalidRequestException("Report description must contain at least 20 characters");
     }
     if (reportRepository.existsByReporter_IdAndTargetUser_IdAndCategoryAndStatusIn(
@@ -56,11 +69,16 @@ public class UserReportService {
         List.of(UserReportStatus.OPEN, UserReportStatus.IN_REVIEW))) {
       throw new ResourceConflictException("USER_REPORT_ALREADY_OPEN", "Report already open");
     }
+    if (reportRepository.countByReporter_IdAndCreatedAtAfter(
+            reporter.getId(), LocalDateTime.now().minusDays(1))
+        >= MAX_REPORTS_PER_DAY) {
+      throw new TooManyRequestsException("Too many user reports. Try again later.");
+    }
     UserReport report = new UserReport();
     report.setReporter(reporter);
     report.setTargetUser(target);
     report.setCategory(request.category());
-    report.setDescription(request.description().trim());
+    report.setDescription(description);
     report.setStatus(UserReportStatus.OPEN);
     return UserReportDto.from(reportRepository.save(report), true);
   }
@@ -118,12 +136,13 @@ public class UserReportService {
   @Transactional
   public UserReportDto changeStatus(
       Long id, UserReportStatusRequest change, User actor, HttpServletRequest request) {
+    String resolutionNote = TextSanitizer.sanitize(change.resolutionNote());
     if (change.status() == UserReportStatus.OPEN) {
       throw new InvalidRequestException("Invalid status transition");
     }
     if ((change.status() == UserReportStatus.RESOLVED
             || change.status() == UserReportStatus.DISMISSED)
-        && (change.resolutionNote() == null || change.resolutionNote().isBlank())) {
+        && (resolutionNote == null || resolutionNote.isBlank())) {
       throw new InvalidRequestException("Resolution note required");
     }
     UserReport report = find(id);
@@ -132,14 +151,10 @@ public class UserReportService {
       throw new ResourceConflictException("USER_REPORT_CLOSED", "Report already closed");
     }
     report.setStatus(change.status());
-    report.setResolutionNote(change.resolutionNote());
+    report.setResolutionNote(resolutionNote);
     if (change.status() != UserReportStatus.IN_REVIEW) report.setResolvedAt(LocalDateTime.now());
     audit(
-        actor,
-        AdminActionType.USER_REPORT_STATUS_CHANGED,
-        report.getId(),
-        change.resolutionNote(),
-        request);
+        actor, AdminActionType.USER_REPORT_STATUS_CHANGED, report.getId(), resolutionNote, request);
     return UserReportDto.from(reportRepository.save(report), true);
   }
 

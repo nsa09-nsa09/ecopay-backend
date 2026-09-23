@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.repository;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import kz.hrms.splitupauth.entity.UserReport;
@@ -23,6 +24,8 @@ public interface UserReportRepository
       Long targetId,
       UserReportCategory category,
       Collection<UserReportStatus> statuses);
+
+  long countByReporter_IdAndCreatedAtAfter(Long reporterId, LocalDateTime since);
 
   @EntityGraph(attributePaths = {"reporter", "targetUser", "assignedAdmin"})
   List<UserReport> findByTargetUser_IdOrderByCreatedAtDesc(Long targetId, Pageable pageable);

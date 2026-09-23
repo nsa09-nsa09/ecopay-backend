@@ -45,7 +45,7 @@ public class AdminActionLog {
   // (enum.name()), and the append-only CHECK constraint catches anything
   // that slips through.
   @Convert(converter = AdminActionTypeConverter.class)
-  @Column(name = "action_type", nullable = false)
+  @Column(name = "action_type", nullable = false, length = 50)
   private AdminActionType actionType;
 
   @Column(name = "entity_type", nullable = false, length = 30)
