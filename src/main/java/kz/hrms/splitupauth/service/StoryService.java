@@ -6,6 +6,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Stream;
 import kz.hrms.splitupauth.dto.CreateStoryRequest;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.StoryDto;
@@ -121,9 +123,8 @@ public class StoryService {
   public void delete(Long id, User admin, HttpServletRequest http) {
     Story story = find(id);
     ObjectNode oldState = snapshot(story);
-    String imageKey = story.getImageKey();
     storyRepository.delete(story);
-    imageStorage.deleteIfManaged(imageKey);
+    imageKeys(story).distinct().forEach(imageStorage::deleteIfManaged);
     auditWriter.writeOrSwallow(admin, AdminActionType.STORY_DELETED, id, oldState, null, http);
   }
 
@@ -134,7 +135,7 @@ public class StoryService {
     String newKey = imageStorage.store(file);
     story.setImageKey(newKey);
     story = storyRepository.save(story);
-    imageStorage.deleteIfManaged(oldKey);
+    deleteIfUnreferenced(oldKey, story);
 
     ObjectNode oldState = objectMapper.createObjectNode();
     oldState.put("imageKey", oldKey);
@@ -154,7 +155,7 @@ public class StoryService {
     }
     story.setImageKey(null);
     story = storyRepository.save(story);
-    imageStorage.deleteIfManaged(oldKey);
+    deleteIfUnreferenced(oldKey, story);
 
     ObjectNode oldState = objectMapper.createObjectNode();
     oldState.put("imageKey", oldKey);
@@ -163,6 +164,84 @@ public class StoryService {
     auditWriter.writeOrSwallow(
         admin, AdminActionType.STORY_UPDATED, story.getId(), oldState, newState, http);
     return toDto(story);
+  }
+
+  @Transactional
+  public StoryDto uploadImage(
+      Long id, String locale, User admin, MultipartFile file, HttpServletRequest http) {
+    String field = imageField(locale);
+    Story story = find(id);
+    String oldKey = localizedKey(story, locale);
+    String newKey = imageStorage.store(file);
+    setLocalizedKey(story, locale, newKey);
+    story = storyRepository.save(story);
+    deleteIfUnreferenced(oldKey, story);
+    auditImageChange(admin, story.getId(), field, oldKey, newKey, http);
+    return toDto(story);
+  }
+
+  @Transactional
+  public StoryDto deleteImage(Long id, String locale, User admin, HttpServletRequest http) {
+    String field = imageField(locale);
+    Story story = find(id);
+    String oldKey = localizedKey(story, locale);
+    if (oldKey == null || oldKey.isBlank()) {
+      return toDto(story);
+    }
+    setLocalizedKey(story, locale, null);
+    story = storyRepository.save(story);
+    deleteIfUnreferenced(oldKey, story);
+    auditImageChange(admin, story.getId(), field, oldKey, null, http);
+    return toDto(story);
+  }
+
+  private String imageField(String locale) {
+    if ("kz".equals(locale)) return "imageKeyKz";
+    if ("ru".equals(locale)) return "imageKeyRu";
+    if ("en".equals(locale)) return "imageKeyEn";
+    throw new InvalidRequestException("Unsupported image locale");
+  }
+
+  private String localizedKey(Story story, String locale) {
+    return switch (locale) {
+      case "kz" -> story.getImageKeyKz();
+      case "ru" -> story.getImageKeyRu();
+      case "en" -> story.getImageKeyEn();
+      default -> throw new InvalidRequestException("Unsupported image locale");
+    };
+  }
+
+  private void setLocalizedKey(Story story, String locale, String key) {
+    switch (locale) {
+      case "kz" -> story.setImageKeyKz(key);
+      case "ru" -> story.setImageKeyRu(key);
+      case "en" -> story.setImageKeyEn(key);
+      default -> throw new InvalidRequestException("Unsupported image locale");
+    }
+  }
+
+  private Stream<String> imageKeys(Story story) {
+    return Stream.of(
+            story.getImageKey(),
+            story.getImageKeyKz(),
+            story.getImageKeyRu(),
+            story.getImageKeyEn())
+        .filter(Objects::nonNull);
+  }
+
+  private void deleteIfUnreferenced(String key, Story story) {
+    if (key != null && imageKeys(story).noneMatch(key::equals)) {
+      imageStorage.deleteIfManaged(key);
+    }
+  }
+
+  private void auditImageChange(
+      User admin, Long id, String field, String oldKey, String newKey, HttpServletRequest http) {
+    ObjectNode oldState = objectMapper.createObjectNode();
+    oldState.put(field, oldKey);
+    ObjectNode newState = objectMapper.createObjectNode();
+    newState.put(field, newKey);
+    auditWriter.writeOrSwallow(admin, AdminActionType.STORY_UPDATED, id, oldState, newState, http);
   }
 
   private Story find(Long id) {
@@ -229,7 +308,20 @@ public class StoryService {
         .ctaUrl(story.getCtaUrl())
         .emoji(story.getEmoji())
         .gradient(story.getGradient())
-        .imageUrl(imageStorage.publicUrl(story.getImageKey()))
+        .imageUrl(
+            imageStorage.publicUrl(
+                Stream.of(
+                        story.getImageKey(),
+                        story.getImageKeyRu(),
+                        story.getImageKeyKz(),
+                        story.getImageKeyEn())
+                    .filter(Objects::nonNull)
+                    .filter(key -> !key.isBlank())
+                    .findFirst()
+                    .orElse(null)))
+        .imageUrlKz(imageStorage.publicUrl(story.getImageKeyKz()))
+        .imageUrlRu(imageStorage.publicUrl(story.getImageKeyRu()))
+        .imageUrlEn(imageStorage.publicUrl(story.getImageKeyEn()))
         .status(story.getStatus())
         .publishedAt(story.getPublishedAt())
         .sortOrder(story.getSortOrder())
@@ -251,6 +343,9 @@ public class StoryService {
     node.put("bodyEn", story.getBodyEn());
     node.put("ctaUrl", story.getCtaUrl());
     node.put("imageKey", story.getImageKey());
+    node.put("imageKeyKz", story.getImageKeyKz());
+    node.put("imageKeyRu", story.getImageKeyRu());
+    node.put("imageKeyEn", story.getImageKeyEn());
     node.put("status", story.getStatus() != null ? story.getStatus().name() : null);
     node.put("sortOrder", story.getSortOrder());
     return node;

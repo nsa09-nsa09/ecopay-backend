@@ -103,4 +103,25 @@ public class AdminStoryController {
       @PathVariable Long id, @AuthenticationPrincipal User admin, HttpServletRequest http) {
     return ResponseEntity.ok(storyService.deleteImage(id, admin, http));
   }
+
+  @PostMapping("/{id}/image/{locale}")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<StoryDto> uploadImage(
+      @PathVariable Long id,
+      @PathVariable String locale,
+      @AuthenticationPrincipal User admin,
+      @RequestPart("file") MultipartFile file,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(storyService.uploadImage(id, locale, admin, file, http));
+  }
+
+  @DeleteMapping("/{id}/image/{locale}")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<StoryDto> deleteImage(
+      @PathVariable Long id,
+      @PathVariable String locale,
+      @AuthenticationPrincipal User admin,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(storyService.deleteImage(id, locale, admin, http));
+  }
 }

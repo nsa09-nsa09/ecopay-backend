@@ -6,6 +6,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Stream;
 import kz.hrms.splitupauth.dto.CreateNewsRequest;
 import kz.hrms.splitupauth.dto.NewsDto;
 import kz.hrms.splitupauth.dto.PagedResponse;
@@ -170,13 +172,12 @@ public class NewsService {
 
     ObjectNode oldState = snapshot(news);
 
-    String imageKey = news.getImageKey();
     newsRepository.delete(news);
     // S3 delete after the JPA delete commits — best-effort; if it fails the
     // logged warn is enough to track. Doing it inside the same tx keeps
     // the call simple at the cost of a tiny window where a rolled-back
     // tx could leave an orphaned key (which is fine: harmless and rare).
-    imageStorage.deleteIfManaged(imageKey);
+    imageKeys(news).distinct().forEach(imageStorage::deleteIfManaged);
 
     auditWriter.writeOrSwallow(admin, AdminActionType.NEWS_DELETED, id, oldState, null, http);
   }
@@ -195,9 +196,7 @@ public class NewsService {
 
     // Replace = remove the previous object so the bucket doesn't accumulate
     // orphans. Best-effort; failure is logged inside the storage service.
-    if (oldKey != null && !oldKey.equals(newKey)) {
-      imageStorage.deleteIfManaged(oldKey);
-    }
+    deleteIfUnreferenced(oldKey, news);
 
     ObjectNode oldState = objectMapper.createObjectNode();
     oldState.put("imageKey", oldKey);
@@ -207,6 +206,104 @@ public class NewsService {
         admin, AdminActionType.NEWS_UPDATED, news.getId(), oldState, newState, http);
 
     return toDto(news);
+  }
+
+  @Transactional
+  public NewsDto deleteImage(Long id, User admin, HttpServletRequest http) {
+    News news =
+        newsRepository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("News not found"));
+    String oldKey = news.getImageKey();
+    if (oldKey == null || oldKey.isBlank()) {
+      return toDto(news);
+    }
+    news.setImageKey(null);
+    news = newsRepository.save(news);
+    deleteIfUnreferenced(oldKey, news);
+    auditImageChange(admin, news.getId(), "imageKey", oldKey, null, http);
+    return toDto(news);
+  }
+
+  @Transactional
+  public NewsDto uploadImage(
+      Long id, String locale, User admin, MultipartFile file, HttpServletRequest http) {
+    String field = imageField(locale);
+    News news =
+        newsRepository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("News not found"));
+    String oldKey = localizedKey(news, locale);
+    String newKey = imageStorage.store(file);
+    setLocalizedKey(news, locale, newKey);
+    news = newsRepository.save(news);
+    deleteIfUnreferenced(oldKey, news);
+    auditImageChange(admin, news.getId(), field, oldKey, newKey, http);
+    return toDto(news);
+  }
+
+  @Transactional
+  public NewsDto deleteImage(Long id, String locale, User admin, HttpServletRequest http) {
+    String field = imageField(locale);
+    News news =
+        newsRepository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("News not found"));
+    String oldKey = localizedKey(news, locale);
+    if (oldKey == null || oldKey.isBlank()) {
+      return toDto(news);
+    }
+    setLocalizedKey(news, locale, null);
+    news = newsRepository.save(news);
+    deleteIfUnreferenced(oldKey, news);
+    auditImageChange(admin, news.getId(), field, oldKey, null, http);
+    return toDto(news);
+  }
+
+  private String imageField(String locale) {
+    if ("kz".equals(locale)) return "imageKeyKz";
+    if ("ru".equals(locale)) return "imageKeyRu";
+    if ("en".equals(locale)) return "imageKeyEn";
+    throw new InvalidRequestException("Unsupported image locale");
+  }
+
+  private String localizedKey(News news, String locale) {
+    return switch (locale) {
+      case "kz" -> news.getImageKeyKz();
+      case "ru" -> news.getImageKeyRu();
+      case "en" -> news.getImageKeyEn();
+      default -> throw new InvalidRequestException("Unsupported image locale");
+    };
+  }
+
+  private void setLocalizedKey(News news, String locale, String key) {
+    switch (locale) {
+      case "kz" -> news.setImageKeyKz(key);
+      case "ru" -> news.setImageKeyRu(key);
+      case "en" -> news.setImageKeyEn(key);
+      default -> throw new InvalidRequestException("Unsupported image locale");
+    }
+  }
+
+  private Stream<String> imageKeys(News news) {
+    return Stream.of(
+            news.getImageKey(), news.getImageKeyKz(), news.getImageKeyRu(), news.getImageKeyEn())
+        .filter(Objects::nonNull);
+  }
+
+  private void deleteIfUnreferenced(String key, News news) {
+    if (key != null && imageKeys(news).noneMatch(key::equals)) {
+      imageStorage.deleteIfManaged(key);
+    }
+  }
+
+  private void auditImageChange(
+      User admin, Long id, String field, String oldKey, String newKey, HttpServletRequest http) {
+    ObjectNode oldState = objectMapper.createObjectNode();
+    oldState.put(field, oldKey);
+    ObjectNode newState = objectMapper.createObjectNode();
+    newState.put(field, newKey);
+    auditWriter.writeOrSwallow(admin, AdminActionType.NEWS_UPDATED, id, oldState, newState, http);
   }
 
   // ===================== helpers =====================
@@ -239,7 +336,16 @@ public class NewsService {
         .bodyKz(n.getBodyKz())
         .bodyRu(n.getBodyRu())
         .bodyEn(n.getBodyEn())
-        .imageUrl(imageStorage.publicUrl(n.getImageKey()))
+        .imageUrl(
+            imageStorage.publicUrl(
+                Stream.of(n.getImageKey(), n.getImageKeyRu(), n.getImageKeyKz(), n.getImageKeyEn())
+                    .filter(Objects::nonNull)
+                    .filter(key -> !key.isBlank())
+                    .findFirst()
+                    .orElse(null)))
+        .imageUrlKz(imageStorage.publicUrl(n.getImageKeyKz()))
+        .imageUrlRu(imageStorage.publicUrl(n.getImageKeyRu()))
+        .imageUrlEn(imageStorage.publicUrl(n.getImageKeyEn()))
         .status(n.getStatus())
         .publishedAt(n.getPublishedAt())
         .sortOrder(n.getSortOrder())
@@ -257,6 +363,9 @@ public class NewsService {
     node.put("bodyRu", n.getBodyRu());
     node.put("bodyEn", n.getBodyEn());
     node.put("imageKey", n.getImageKey());
+    node.put("imageKeyKz", n.getImageKeyKz());
+    node.put("imageKeyRu", n.getImageKeyRu());
+    node.put("imageKeyEn", n.getImageKeyEn());
     node.put("status", n.getStatus() != null ? n.getStatus().name() : null);
     node.put("sortOrder", n.getSortOrder());
     return node;

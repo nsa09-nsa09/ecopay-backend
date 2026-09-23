@@ -34,6 +34,9 @@ public class StoryDto {
   private String emoji;
   private String gradient;
   private String imageUrl;
+  private String imageUrlKz;
+  private String imageUrlRu;
+  private String imageUrlEn;
 
   private StoryStatus status;
   private LocalDateTime publishedAt;

@@ -100,4 +100,32 @@ public class AdminNewsController {
       HttpServletRequest http) {
     return ResponseEntity.ok(newsService.uploadImage(id, admin, file, http));
   }
+
+  @DeleteMapping("/{id}/image")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<NewsDto> deleteImage(
+      @PathVariable Long id, @AuthenticationPrincipal User admin, HttpServletRequest http) {
+    return ResponseEntity.ok(newsService.deleteImage(id, admin, http));
+  }
+
+  @PostMapping("/{id}/image/{locale}")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<NewsDto> uploadImage(
+      @PathVariable Long id,
+      @PathVariable String locale,
+      @AuthenticationPrincipal User admin,
+      @RequestPart("file") MultipartFile file,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(newsService.uploadImage(id, locale, admin, file, http));
+  }
+
+  @DeleteMapping("/{id}/image/{locale}")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<NewsDto> deleteImage(
+      @PathVariable Long id,
+      @PathVariable String locale,
+      @AuthenticationPrincipal User admin,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(newsService.deleteImage(id, locale, admin, http));
+  }
 }

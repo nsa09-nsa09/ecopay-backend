@@ -67,6 +67,15 @@ public class News {
   @Column(name = "image_key", length = 255)
   private String imageKey;
 
+  @Column(name = "image_key_kz", length = 255)
+  private String imageKeyKz;
+
+  @Column(name = "image_key_ru", length = 255)
+  private String imageKeyRu;
+
+  @Column(name = "image_key_en", length = 255)
+  private String imageKeyEn;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 20)
   private NewsStatus status;

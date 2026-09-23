@@ -33,6 +33,10 @@ public class NewsDto {
   /** Backend-served URL, or {@code null} when no image attached. */
   private String imageUrl;
 
+  private String imageUrlKz;
+  private String imageUrlRu;
+  private String imageUrlEn;
+
   private NewsStatus status;
   private LocalDateTime publishedAt;
   private Integer sortOrder;
