@@ -30,6 +30,9 @@ public class ErrorResponse {
   /** When the action that caused this error occurred (e.g. ban timestamp). */
   private LocalDateTime occurredAt;
 
+  private LocalDateTime banStartsAt;
+  private LocalDateTime banUntil;
+
   public ErrorResponse(int status, String message) {
     this.status = status;
     this.message = message;

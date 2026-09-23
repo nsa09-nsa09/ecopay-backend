@@ -102,6 +102,12 @@ public class User {
   @Column(name = "banned_at")
   private LocalDateTime bannedAt;
 
+  @Column(name = "ban_starts_at")
+  private LocalDateTime banStartsAt;
+
+  @Column(name = "ban_until")
+  private LocalDateTime banUntil;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 

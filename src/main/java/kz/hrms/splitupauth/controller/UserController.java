@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.controller;
 
 import jakarta.validation.Valid;
+import kz.hrms.splitupauth.dto.CreateUserReportRequest;
 import kz.hrms.splitupauth.dto.EmailChangeConfirmRequest;
 import kz.hrms.splitupauth.dto.EmailChangeRequest;
 import kz.hrms.splitupauth.dto.MemberDashboardDto;
@@ -8,10 +9,12 @@ import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.dto.SlugAvailabilityDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
+import kz.hrms.splitupauth.dto.UserReportDto;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.EmailChangeService;
 import kz.hrms.splitupauth.service.MailLocale;
 import kz.hrms.splitupauth.service.MemberDashboardService;
+import kz.hrms.splitupauth.service.UserReportService;
 import kz.hrms.splitupauth.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -30,6 +33,7 @@ public class UserController {
   private final UserService userService;
   private final MemberDashboardService memberDashboardService;
   private final EmailChangeService emailChangeService;
+  private final UserReportService userReportService;
 
   @GetMapping("/me")
   public ResponseEntity<UserDto> getCurrentUser(@AuthenticationPrincipal User user) {
@@ -85,6 +89,14 @@ public class UserController {
   @GetMapping("/public/{handle}")
   public ResponseEntity<PublicProfileDto> getPublicProfile(@PathVariable String handle) {
     return ResponseEntity.ok(userService.getPublicProfile(handle));
+  }
+
+  @PostMapping("/public/{handle}/reports")
+  public ResponseEntity<UserReportDto> reportUser(
+      @PathVariable String handle,
+      @AuthenticationPrincipal User reporter,
+      @Valid @RequestBody CreateUserReportRequest request) {
+    return ResponseEntity.status(201).body(userReportService.create(reporter, handle, request));
   }
 
   /**

@@ -78,7 +78,8 @@ class AuthServiceSilentEndpointTest {
             legalDocumentService,
             slugService,
             emailChangeService,
-            emailValidationService);
+            emailValidationService,
+            new AccountRestrictionService());
   }
 
   private User verifiedUser() {

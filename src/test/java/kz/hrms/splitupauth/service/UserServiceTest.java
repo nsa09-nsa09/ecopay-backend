@@ -6,18 +6,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.dto.PublicProfileDto;
+import kz.hrms.splitupauth.entity.DeletedUserIdentityArchive;
 import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.ServiceReview;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.DeletedUserIdentityArchiveRepository;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
@@ -27,6 +30,7 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.security.FieldEncryptionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,6 +54,8 @@ class UserServiceTest {
   @Mock private RefundTransactionRepository refundTransactionRepository;
   @Mock private PayoutRepository payoutRepository;
   @Mock private DisputeRepository disputeRepository;
+  @Mock private DeletedUserIdentityArchiveRepository identityArchiveRepository;
+  @Mock private FieldEncryptionService fieldEncryptionService;
 
   private UserService service;
 
@@ -70,7 +76,9 @@ class UserServiceTest {
             paymentIntentRepository,
             refundTransactionRepository,
             payoutRepository,
-            disputeRepository);
+            disputeRepository,
+            identityArchiveRepository,
+            fieldEncryptionService);
     // Real impl never returns null; the mock would, so give it a sane default.
     lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.EXCELLENT);
     lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);
@@ -128,13 +136,24 @@ class UserServiceTest {
   @Test
   void deleteAccount_anonymizesPII_revokesTokens_andRemovesTestimonial() {
     User u = activeUser(42L);
+    when(userRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(u));
     ServiceReview testimonial =
         ServiceReview.builder().id(1L).author(u).text("x").rating(5).build();
     when(serviceReviewRepository.findByAuthor(u)).thenReturn(Optional.of(testimonial));
+    when(fieldEncryptionService.encrypt("u42@e.kz")).thenReturn("encrypted-email");
+    when(fieldEncryptionService.encrypt("+77001234567")).thenReturn("encrypted-phone");
 
     service.deleteAccount(u);
 
     verify(serviceReviewRepository).delete(testimonial);
+    ArgumentCaptor<DeletedUserIdentityArchive> archiveCap =
+        ArgumentCaptor.forClass(DeletedUserIdentityArchive.class);
+    verify(identityArchiveRepository).save(archiveCap.capture());
+    assertEquals("encrypted-email", archiveCap.getValue().getEmailEncrypted());
+    assertEquals("encrypted-phone", archiveCap.getValue().getPhoneEncrypted());
+    assertEquals("u*2@e.kz", archiveCap.getValue().getEmailMasked());
+    assertEquals("+7700*****67", archiveCap.getValue().getPhoneMasked());
+    assertEquals("Айдар К.", archiveCap.getValue().getDisplayNameAtDeletion());
 
     ArgumentCaptor<User> cap = ArgumentCaptor.forClass(User.class);
     verify(userRepository).save(cap.capture());
@@ -152,11 +171,29 @@ class UserServiceTest {
   @Test
   void deleteAccount_succeedsEvenWithoutTestimonial() {
     User u = activeUser(43L);
+    when(userRepository.findByIdForUpdate(43L)).thenReturn(Optional.of(u));
     when(serviceReviewRepository.findByAuthor(u)).thenReturn(Optional.empty());
 
     service.deleteAccount(u);
 
     verify(userRepository).save(any(User.class));
     verify(tokenRevocationService).revokeAllUserTokens(u);
+  }
+
+  @Test
+  void deleteAccount_keepsBlockersBeforeArchive() {
+    User u = activeUser(44L);
+    when(userRepository.findByIdForUpdate(44L)).thenReturn(Optional.of(u));
+    when(roomRepository.countByOwnerAndDeletedAtIsNullAndStatusIn(any(), any())).thenReturn(1L);
+    assertThrows(
+        kz.hrms.splitupauth.exception.ResourceConflictException.class,
+        () -> service.deleteAccount(u));
+    verify(identityArchiveRepository, never()).save(any());
+    verify(tokenRevocationService, never()).revokeAllUserTokens(any());
+  }
+
+  @Test
+  void archivePhoneMask_preservesPrefixAndLastTwo() {
+    assertEquals("+7705*****65", UserService.maskArchivedPhone("+77051234565"));
   }
 }

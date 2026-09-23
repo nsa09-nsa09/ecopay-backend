@@ -2,15 +2,19 @@ package kz.hrms.splitupauth.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.service.AccountRestrictionService;
 import kz.hrms.splitupauth.util.JwtUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +36,8 @@ class JwtAuthenticationFilterSubjectTest {
 
   @Mock JwtUtil jwtUtil;
   @Mock UserRepository userRepository;
+  @Mock AccountRestrictionService accountRestrictionService;
+  @Mock ObjectMapper objectMapper;
 
   @InjectMocks JwtAuthenticationFilter filter;
 
@@ -100,6 +106,20 @@ class JwtAuthenticationFilterSubjectTest {
 
     filter.doFilter(bearer(), new MockHttpServletResponse(), new MockFilterChain());
 
+    assertNull(SecurityContextHolder.getContext().getAuthentication());
+  }
+
+  @Test
+  void scheduledBanBlocksOldAccessTokenAtStart() throws Exception {
+    user.setBanStartsAt(LocalDateTime.now().minusSeconds(1));
+    user.setBanUntil(LocalDateTime.now().plusMinutes(5));
+    when(jwtUtil.extractUsername("jwt")).thenReturn("pubAbc123XYZ0");
+    when(userRepository.findByPublicId("pubAbc123XYZ0")).thenReturn(Optional.of(user));
+    when(jwtUtil.validateToken("jwt", "pubAbc123XYZ0")).thenReturn(true);
+    when(accountRestrictionService.isRestricted(any(), any())).thenReturn(true);
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    filter.doFilter(bearer(), response, new MockFilterChain());
+    assertEquals(403, response.getStatus());
     assertNull(SecurityContextHolder.getContext().getAuthentication());
   }
 }

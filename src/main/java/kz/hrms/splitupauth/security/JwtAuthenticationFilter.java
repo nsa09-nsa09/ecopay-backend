@@ -1,14 +1,18 @@
 package kz.hrms.splitupauth.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.List;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
+import kz.hrms.splitupauth.exception.ErrorResponse;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.service.AccountRestrictionService;
 import kz.hrms.splitupauth.service.MailLocale;
 import kz.hrms.splitupauth.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +29,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
   private final JwtUtil jwtUtil;
   private final UserRepository userRepository;
+  private final AccountRestrictionService accountRestrictionService;
+  private final ObjectMapper objectMapper;
 
   @Override
   protected void doFilterInternal(
@@ -53,7 +59,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 .orElse(null);
 
         if (user != null
-            && user.getStatus() == UserStatus.ACTIVE
+            && jwtUtil.validateToken(jwt, subject)
+            && accountRestrictionService.isRestricted(user, LocalDateTime.now())) {
+          ErrorResponse error = new ErrorResponse(403, "Your account has been banned");
+          error.setCode("ACCOUNT_BANNED");
+          error.setReason(user.getBanReason());
+          error.setOccurredAt(user.getBannedAt());
+          error.setBanStartsAt(user.getBanStartsAt());
+          error.setBanUntil(user.getBanUntil());
+          response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+          response.setContentType("application/json");
+          objectMapper.writeValue(response.getOutputStream(), error);
+          return;
+        }
+        if (user != null
+            && user.getStatus() != UserStatus.DELETED
             && jwtUtil.validateToken(jwt, subject)) {
 
           // The web client sends the language selected inside the product on every request.

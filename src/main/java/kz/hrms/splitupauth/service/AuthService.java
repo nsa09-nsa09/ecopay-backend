@@ -68,6 +68,7 @@ public class AuthService {
   private final SlugService slugService;
   private final EmailChangeService emailChangeService;
   private final EmailValidationService emailValidationService;
+  private final AccountRestrictionService accountRestrictionService;
 
   // Dev/test only: auto-verify email on registration so login works without SMTP.
   @Value("${app.dev.auto-verify-email:false}")
@@ -161,10 +162,7 @@ public class AuthService {
                   return new InvalidCredentialsException("Invalid credentials");
                 });
 
-    if (user.getStatus() == UserStatus.BANNED) {
-      throw new UserBannedException(
-          "Your account has been banned", user.getBanReason(), user.getBannedAt());
-    }
+    accountRestrictionService.requireAllowed(user);
 
     if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
       rateLimitService.recordLoginAttempt(identifier, false);
@@ -201,10 +199,7 @@ public class AuthService {
   public AuthResponse verifyStaffTwoFactor(TwoFactorVerifyRequest request) {
     User user = staffTwoFactorService.verifyChallenge(request.getChallengeId(), request.getCode());
 
-    if (user.getStatus() == UserStatus.BANNED) {
-      throw new UserBannedException(
-          "Your account has been banned", user.getBanReason(), user.getBannedAt());
-    }
+    accountRestrictionService.requireAllowed(user);
 
     return issueTokens(user);
   }
@@ -243,10 +238,7 @@ public class AuthService {
     RefreshToken refreshToken = refreshTokenService.validateRefreshToken(request.getRefreshToken());
     User user = refreshToken.getUser();
 
-    if (user.getStatus() == UserStatus.BANNED) {
-      throw new UserBannedException(
-          "Your account has been banned", user.getBanReason(), user.getBannedAt());
-    }
+    accountRestrictionService.requireAllowed(user);
 
     // Rotate: revoke the presented token first, then issue a fresh one.
     refreshTokenService.revokeRefreshToken(request.getRefreshToken());

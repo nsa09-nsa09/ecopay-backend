@@ -29,6 +29,10 @@ public class AdminUserDto {
   private Integer disputes;
   private LocalDateTime createdAt;
   private LocalDateTime lastLoginAt;
+  private String banReason;
+  private LocalDateTime bannedAt;
+  private LocalDateTime banStartsAt;
+  private LocalDateTime banUntil;
 
   /** Cheap variant: zero counters. Used by the paginated list endpoint to avoid N+1. */
   public static AdminUserDto from(User u) {
@@ -62,7 +66,11 @@ public class AdminUserDto {
         .reputation(u.getReputation())
         .riskScore(0)
         .createdAt(u.getCreatedAt())
-        .lastLoginAt(u.getLastLoginAt());
+        .lastLoginAt(u.getLastLoginAt())
+        .banReason(u.getBanReason())
+        .bannedAt(u.getBannedAt())
+        .banStartsAt(u.getBanStartsAt())
+        .banUntil(u.getBanUntil());
   }
 
   private static String maskEmail(String email) {

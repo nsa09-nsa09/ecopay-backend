@@ -75,7 +75,8 @@ class AuthServiceEmailAuthTest {
             legalDocumentService,
             slugService,
             emailChangeService,
-            emailValidationService);
+            emailValidationService,
+            new AccountRestrictionService());
   }
 
   @Test

@@ -13,14 +13,27 @@ public class UserBannedException extends RuntimeException {
 
   private final String reason;
   private final LocalDateTime bannedAt;
+  private final LocalDateTime banStartsAt;
+  private final LocalDateTime banUntil;
 
   public UserBannedException(String message) {
     this(message, null, null);
   }
 
   public UserBannedException(String message, String reason, LocalDateTime bannedAt) {
+    this(message, reason, bannedAt, null, null);
+  }
+
+  public UserBannedException(
+      String message,
+      String reason,
+      LocalDateTime bannedAt,
+      LocalDateTime banStartsAt,
+      LocalDateTime banUntil) {
     super(message);
     this.reason = reason;
     this.bannedAt = bannedAt;
+    this.banStartsAt = banStartsAt;
+    this.banUntil = banUntil;
   }
 }

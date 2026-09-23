@@ -81,7 +81,8 @@ class AuthServiceTokenTtlTest {
             legalDocumentService,
             slugService,
             emailChangeService,
-            emailValidationService);
+            emailValidationService,
+            new AccountRestrictionService());
   }
 
   /**

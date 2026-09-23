@@ -11,6 +11,7 @@ import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -28,6 +29,9 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
   Optional<RoomMember> findByRoomAndUserAndDeletedAtIsNull(Room room, User user);
 
   List<RoomMember> findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(User user);
+
+  @EntityGraph(attributePaths = "room")
+  List<RoomMember> findByUserOrderByCreatedAtDesc(User user, Pageable pageable);
 
   List<RoomMember> findByStatusAndDeletedAtIsNull(MemberStatus status);
 

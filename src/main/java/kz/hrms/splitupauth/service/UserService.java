@@ -6,6 +6,7 @@ import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.dto.SlugAvailabilityDto;
 import kz.hrms.splitupauth.dto.UpdateProfileRequest;
 import kz.hrms.splitupauth.dto.UserDto;
+import kz.hrms.splitupauth.entity.DeletedUserIdentityArchive;
 import kz.hrms.splitupauth.entity.DisputeStatus;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
@@ -16,6 +17,7 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.DeletedUserIdentityArchiveRepository;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
@@ -25,6 +27,8 @@ import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
+import kz.hrms.splitupauth.security.FieldEncryptionService;
+import kz.hrms.splitupauth.util.EmailNormalizer;
 import kz.hrms.splitupauth.util.SlugGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -49,6 +53,8 @@ public class UserService {
   private final RefundTransactionRepository refundTransactionRepository;
   private final PayoutRepository payoutRepository;
   private final DisputeRepository disputeRepository;
+  private final DeletedUserIdentityArchiveRepository identityArchiveRepository;
+  private final FieldEncryptionService fieldEncryptionService;
 
   @Transactional(readOnly = true)
   public UserDto getCurrentUser(User user) {
@@ -150,6 +156,13 @@ public class UserService {
    */
   @Transactional
   public void deleteAccount(User user) {
+    user =
+        userRepository
+            .findByIdForUpdate(user.getId())
+            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    if (user.getStatus() != UserStatus.ACTIVE) {
+      throw new ResourceConflictException("ACCOUNT_DELETION_BLOCKED", "Account is not active");
+    }
     ensureNoDeletionBlockers(user);
 
     // Remove their service-review (testimonial) so the carousel doesn't
@@ -160,8 +173,25 @@ public class UserService {
     avatarStorageService.deleteIfManaged(user.getAvatar());
 
     Long id = user.getId();
+    LocalDateTime deletedAt = LocalDateTime.now();
+    if (!identityArchiveRepository.existsByUser_Id(id)) {
+      DeletedUserIdentityArchive archive = new DeletedUserIdentityArchive();
+      archive.setUser(user);
+      archive.setEmailEncrypted(
+          user.getEmail() == null ? null : fieldEncryptionService.encrypt(user.getEmail()));
+      archive.setPhoneEncrypted(
+          user.getPhone() == null ? null : fieldEncryptionService.encrypt(user.getPhone()));
+      archive.setEmailMasked(
+          user.getEmail() == null ? null : EmailNormalizer.mask(user.getEmail()));
+      archive.setPhoneMasked(maskArchivedPhone(user.getPhone()));
+      archive.setSlugAtDeletion(user.getSlug());
+      archive.setDisplayNameAtDeletion(user.getDisplayName());
+      archive.setDeletedAt(deletedAt);
+      archive.setArchivedAt(deletedAt);
+      identityArchiveRepository.save(archive);
+    }
     user.setStatus(UserStatus.DELETED);
-    user.setDeletedAt(LocalDateTime.now());
+    user.setDeletedAt(deletedAt);
     user.setEmail("deleted-" + id + "@ecopay.local");
     user.setDisplayName("Удалённый пользователь");
     user.setPhone(null);
@@ -170,6 +200,15 @@ public class UserService {
     userRepository.save(user);
 
     tokenRevocationService.revokeAllUserTokens(user);
+  }
+
+  static String maskArchivedPhone(String phone) {
+    if (phone == null || phone.isBlank()) return null;
+    if (phone.length() <= 2) return "*".repeat(phone.length());
+    int prefix = phone.startsWith("+") && phone.length() > 6 ? 5 : Math.min(4, phone.length() - 2);
+    return phone.substring(0, prefix)
+        + "*".repeat(Math.max(1, phone.length() - prefix - 2))
+        + phone.substring(phone.length() - 2);
   }
 
   private void ensureNoDeletionBlockers(User user) {

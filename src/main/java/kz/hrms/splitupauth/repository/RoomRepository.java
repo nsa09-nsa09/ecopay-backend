@@ -55,6 +55,8 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
 
   List<Room> findByOwnerAndDeletedAtIsNullOrderByCreatedAtDesc(User owner);
 
+  List<Room> findByOwnerOrderByCreatedAtDesc(User owner, Pageable pageable);
+
   /** Count of an owner's live rooms in the given statuses — backs the per-user active-room cap. */
   long countByOwnerAndDeletedAtIsNullAndStatusIn(
       User owner, java.util.Collection<RoomStatus> statuses);

@@ -16,6 +16,7 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.*;
+import kz.hrms.splitupauth.websocket.AccountRealtimeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +34,8 @@ public class ModerationService {
   private final SupportTicketRepository supportTicketRepository;
   private final DisputeRepository disputeRepository;
   private final NotificationService notificationService;
+  private final TokenRevocationService tokenRevocationService;
+  private final AccountRealtimeService accountRealtimeService;
 
   @Transactional(readOnly = true)
   public List<ModerationQueueItemDto> getOpenQueue(User currentUser) {
@@ -313,8 +316,29 @@ public class ModerationService {
             .findById(userId)
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
+    if (target.getStatus() == UserStatus.DELETED
+        || target.getRole() == Role.ADMIN
+        || target.getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("User cannot be restricted");
+    }
+
+    LocalDateTime now = LocalDateTime.now();
     target.setStatus(UserStatus.BANNED);
+    target.setBanReason(request.getReason());
+    target.setBannedAt(now);
+    target.setBanStartsAt(now);
+    target.setBanUntil(null);
     userRepository.save(target);
+
+    tokenRevocationService.revokeAllUserTokens(target);
+    accountRealtimeService.publishBanned(target.getId(), target.getBanReason(), now);
+    notificationService.notify(
+        target,
+        NotificationType.ACCOUNT_BANNED,
+        "Аккаунт заблокирован",
+        "Ваш аккаунт был заблокирован. Причина: " + request.getReason(),
+        null,
+        null);
 
     adminActionLogRepository.save(
         AdminActionLog.builder()

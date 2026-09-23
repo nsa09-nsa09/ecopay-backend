@@ -16,8 +16,10 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import kz.hrms.splitupauth.dto.AuthResponse;
 import kz.hrms.splitupauth.dto.LoginRequest;
+import kz.hrms.splitupauth.dto.RefreshTokenRequest;
 import kz.hrms.splitupauth.dto.TwoFactorVerifyRequest;
 import kz.hrms.splitupauth.dto.UserDto;
+import kz.hrms.splitupauth.entity.RefreshToken;
 import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.StaffTwoFactorChallenge;
 import kz.hrms.splitupauth.entity.StaffTwoFactorChallengeStatus;
@@ -90,7 +92,8 @@ class AuthServiceTest {
             legalDocumentService,
             slugService,
             emailChangeService,
-            emailValidationService);
+            emailValidationService,
+            new AccountRestrictionService());
   }
 
   @Test
@@ -190,6 +193,40 @@ class AuthServiceTest {
 
     assertThrows(UserBannedException.class, () -> authService.verifyStaffTwoFactor(req));
     verify(jwtUtil, never()).generateAccessToken(anyString());
+  }
+
+  @Test
+  void scheduledBanBlocksLoginAsSoonAsItStarts() {
+    User user = user(Role.USER);
+    user.setBanStartsAt(LocalDateTime.now().minusSeconds(1));
+    user.setBanUntil(LocalDateTime.now().plusDays(1));
+    user.setBanReason("Investigation");
+    when(userRepository.findByEmail(user.getEmail())).thenReturn(Optional.of(user));
+    UserBannedException error =
+        assertThrows(
+            UserBannedException.class, () -> authService.login(loginRequest(user.getEmail())));
+    assertEquals("Investigation", error.getReason());
+    assertEquals(user.getBanUntil(), error.getBanUntil());
+    verify(jwtUtil, never()).generateAccessToken(anyString());
+  }
+
+  @Test
+  void scheduledBanBlocksStaffVerificationAndRefresh() {
+    User user = user(Role.ADMIN);
+    user.setBanStartsAt(LocalDateTime.now().minusSeconds(1));
+    user.setBanUntil(LocalDateTime.now().plusDays(1));
+    when(staffTwoFactorService.verifyChallenge("c-1", "123456")).thenReturn(user);
+    TwoFactorVerifyRequest twoFactor = new TwoFactorVerifyRequest();
+    twoFactor.setChallengeId("c-1");
+    twoFactor.setCode("123456");
+    assertThrows(UserBannedException.class, () -> authService.verifyStaffTwoFactor(twoFactor));
+
+    RefreshTokenRequest refresh = new RefreshTokenRequest();
+    refresh.setRefreshToken("old-token");
+    when(refreshTokenService.validateRefreshToken("old-token"))
+        .thenReturn(RefreshToken.builder().user(user).build());
+    assertThrows(UserBannedException.class, () -> authService.refreshToken(refresh));
+    verify(refreshTokenService, never()).revokeRefreshToken("old-token");
   }
 
   private void stubSuccessfulCredentials(User user) {

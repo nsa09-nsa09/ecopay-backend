@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.Map;
 import java.util.UUID;
+import kz.hrms.splitupauth.dto.AccountRestrictionRequest;
 import kz.hrms.splitupauth.dto.AdminCreateUserRequest;
 import kz.hrms.splitupauth.dto.AdminDecisionRequest;
 import kz.hrms.splitupauth.dto.AdminUserDto;
@@ -270,11 +271,14 @@ public class AdminUserController {
         userRepository
             .findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    ensureRestrictable(u, admin);
     UserStatus prev = u.getStatus();
     java.time.LocalDateTime bannedAt = java.time.LocalDateTime.now();
     u.setStatus(UserStatus.BANNED);
     u.setBanReason(request.getReason());
     u.setBannedAt(bannedAt);
+    u.setBanStartsAt(bannedAt);
+    u.setBanUntil(null);
     userRepository.save(u);
 
     writeAuditLog(
@@ -316,10 +320,15 @@ public class AdminUserController {
         userRepository
             .findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    if (u.getStatus() == UserStatus.DELETED) {
+      throw new ForbiddenOperationException("Deleted user cannot be unbanned");
+    }
     UserStatus prev = u.getStatus();
     u.setStatus(UserStatus.ACTIVE);
     u.setBanReason(null);
     u.setBannedAt(null);
+    u.setBanStartsAt(null);
+    u.setBanUntil(null);
     userRepository.save(u);
 
     writeAuditLog(
@@ -331,16 +340,82 @@ public class AdminUserController {
         UserStatus.ACTIVE,
         httpRequest);
 
-    accountRealtimeService.publishUnbanned(u.getId());
-    notificationService.notify(
-        u,
-        kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_UNBANNED,
-        "Аккаунт разблокирован",
-        "Ваш аккаунт снова активен. Добро пожаловать обратно!",
-        null,
-        null);
+    if (prev == UserStatus.BANNED) {
+      accountRealtimeService.publishUnbanned(u.getId());
+      notificationService.notify(
+          u,
+          kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_UNBANNED,
+          "Аккаунт разблокирован",
+          "Ваш аккаунт снова активен. Добро пожаловать обратно!",
+          null,
+          null);
+    }
 
     return ResponseEntity.ok(buildDetailDto(u));
+  }
+
+  @PutMapping("/{id}/restriction")
+  @Transactional
+  public ResponseEntity<AdminUserDto> restrict(
+      @PathVariable Long id,
+      @AuthenticationPrincipal User admin,
+      @Valid @RequestBody AccountRestrictionRequest request,
+      HttpServletRequest httpRequest) {
+    User u =
+        userRepository
+            .findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    ensureRestrictable(u, admin);
+    java.time.LocalDateTime now = java.time.LocalDateTime.now();
+    java.time.LocalDateTime start = request.startsAt() == null ? now : request.startsAt();
+    if (!request.endsAt().isAfter(start) || !request.endsAt().isAfter(now)) {
+      throw new kz.hrms.splitupauth.exception.InvalidRequestException(
+          "Restriction end must be after start and now");
+    }
+    UserStatus prev = u.getStatus();
+    boolean scheduled = start.isAfter(now);
+    if (scheduled && prev == UserStatus.BANNED) {
+      throw new kz.hrms.splitupauth.exception.InvalidRequestException(
+          "Cancel the active restriction before scheduling a new one");
+    }
+    u.setBanReason(request.reason());
+    u.setBanStartsAt(start);
+    u.setBanUntil(request.endsAt());
+    u.setStatus(scheduled ? UserStatus.ACTIVE : UserStatus.BANNED);
+    u.setBannedAt(scheduled ? null : now);
+    userRepository.save(u);
+    writeAuditLog(
+        admin,
+        scheduled ? AdminActionType.USER_RESTRICTION_SCHEDULED : AdminActionType.USER_BANNED,
+        id,
+        request.reason(),
+        prev,
+        u.getStatus(),
+        httpRequest);
+    if (!scheduled) {
+      tokenRevocationService.revokeAllUserTokens(u);
+      accountRealtimeService.publishBanned(id, u.getBanReason(), u.getBannedAt());
+      notificationService.notify(
+          u,
+          kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_BANNED,
+          "Аккаунт заблокирован",
+          "Ваш аккаунт был заблокирован. Причина: " + request.reason(),
+          null,
+          null);
+    }
+    return ResponseEntity.ok(buildDetailDto(u));
+  }
+
+  private void ensureRestrictable(User target, User admin) {
+    if (target.getStatus() == UserStatus.DELETED) {
+      throw new ForbiddenOperationException("Deleted user cannot be restricted");
+    }
+    if (admin != null && admin.getId().equals(target.getId())) {
+      throw new ForbiddenOperationException("Admin cannot restrict their own account");
+    }
+    if (target.getRole() == Role.ADMIN) {
+      throw new ForbiddenOperationException("Admin account cannot be restricted");
+    }
   }
 
   @PatchMapping("/{id}/owner-verified")
