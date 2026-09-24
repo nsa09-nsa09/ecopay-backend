@@ -1,6 +1,8 @@
 package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.UUID;
@@ -37,69 +39,72 @@ class AdminLogServiceUnknownActionTypeTest extends AbstractIntegrationTest {
 
   @Test
   void getAdminActionLogsPaged_doesNotThrowOnUnknownActionType() {
+    String originalConstraintDefinition =
+        jdbc.queryForObject(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                + "WHERE c.conname = 'chk_admin_action_log_action_type' "
+                + "AND c.conrelid = 'admin_action_log'::regclass",
+            String.class);
+    assertNotNull(originalConstraintDefinition);
     User admin = saveAdmin();
-
-    // CHECK constraint chk_admin_action_log_action_type would normally
-    // reject anything outside the known enum set. Temporarily relax it so
-    // we can simulate the production scenario (a row whose action_type the
-    // current build doesn't know about). The constraint is re-added with
-    // NOT VALID so this single stray row stays in place but future writes
-    // remain strict — sibling tests keep their guarantees.
-    jdbc.execute(
-        "ALTER TABLE admin_action_log DROP CONSTRAINT IF EXISTS chk_admin_action_log_action_type");
-
     UUID eventId = UUID.randomUUID();
-    jdbc.update(
-        "INSERT INTO admin_action_log "
-            + "(event_id, admin_user_id, action_type, entity_type, entity_id, created_at) "
-            + "VALUES (?, ?, 'SOME_FUTURE_ACTION', 'user', ?, NOW())",
-        eventId,
-        admin.getId(),
-        admin.getId());
+    try {
+      jdbc.execute("ALTER TABLE admin_action_log DROP CONSTRAINT chk_admin_action_log_action_type");
+      jdbc.update(
+          "INSERT INTO admin_action_log "
+              + "(event_id, admin_user_id, action_type, entity_type, entity_id, created_at) "
+              + "VALUES (?, ?, 'SOME_FUTURE_ACTION', 'user', ?, NOW())",
+          eventId,
+          admin.getId(),
+          admin.getId());
+      // Keep the unknown row while enforcing the actual migrated rule for new writes.
+      jdbc.execute(
+          "ALTER TABLE admin_action_log ADD CONSTRAINT chk_admin_action_log_action_type "
+              + originalConstraintDefinition
+              + " NOT VALID");
 
-    // Re-add the same constraint but only for *new* writes — the stray row
-    // skips validation thanks to NOT VALID. Mirrors what a real schema
-    // would look like mid-migration.
-    //
-    // CRITICAL: this list must stay in sync with the FULL set of
-    // AdminActionType values (i.e. the latest migration to redefine the
-    // constraint — currently V42). Test classes share a singleton
-    // testcontainer and this raw DDL auto-commits (it is NOT rolled back
-    // with the test transaction), so an outdated/narrower list here
-    // permanently overwrites the migrated constraint and bricks any
-    // downstream test that legitimately writes a newer action type
-    // (e.g. LEGAL_DOCUMENT_UPDATED — the omission that caused CI to fail).
-    jdbc.execute(
-        "ALTER TABLE admin_action_log "
-            + "ADD CONSTRAINT chk_admin_action_log_action_type "
-            + "CHECK (action_type IN ("
-            + "'ACCESS_CONFIRMED','ACCESS_REJECTED','ROOM_BLOCKED',"
-            + "'USER_BANNED','USER_UNBANNED','USER_CREATED','USER_ROLE_CHANGED',"
-            + "'REFUND_INITIATED','REFUND_APPROVED','REFUND_REJECTED',"
-            + "'DISPUTE_RESOLVED','BATCH_CONFIRM','OWNER_VERIFICATION_CHANGED',"
-            + "'CATEGORY_CREATED','CATEGORY_UPDATED','CATEGORY_DELETED',"
-            + "'SERVICE_CREATED','SERVICE_UPDATED','SERVICE_DELETED',"
-            + "'TARIFF_CREATED','TARIFF_UPDATED','TARIFF_DELETED',"
-            + "'TESTIMONIAL_FEATURED','TESTIMONIAL_UNFEATURED','TESTIMONIAL_EDITED',"
-            + "'TESTIMONIAL_DELETED','SITE_CONTENT_UPDATED',"
-            + "'FEEDBACK_STATUS_CHANGED','FEEDBACK_NOTE_UPDATED',"
-            + "'NEWS_CREATED','NEWS_UPDATED','NEWS_DELETED',"
-            + "'LEGAL_DOCUMENT_UPDATED'"
-            + ")) NOT VALID");
+      AdminActionLogFilterRequest filter = new AdminActionLogFilterRequest();
+      PageResponse<AdminActionLogDto> page =
+          assertDoesNotThrow(() -> adminLogService.getAdminActionLogsPaged(admin, filter, 0, 200));
+      boolean sawUnknownSentinel =
+          page.getItems().stream().anyMatch(dto -> "UNKNOWN".equals(dto.getActionType()));
+      assertTrue(
+          sawUnknownSentinel,
+          "the stray SOME_FUTURE_ACTION row must surface as the UNKNOWN sentinel "
+              + "in the DTO instead of crashing the hydration");
+    } finally {
+      try {
+        // The audit table is append-only; lift only its DELETE guard for this cleanup.
+        jdbc.execute("ALTER TABLE admin_action_log DISABLE TRIGGER trg_block_aal_delete");
+        try {
+          jdbc.update("DELETE FROM admin_action_log WHERE event_id = ?", eventId);
+        } finally {
+          jdbc.execute("ALTER TABLE admin_action_log ENABLE TRIGGER trg_block_aal_delete");
+        }
+      } finally {
+        jdbc.execute(
+            "ALTER TABLE admin_action_log DROP CONSTRAINT IF EXISTS chk_admin_action_log_action_type");
+        jdbc.execute(
+            "ALTER TABLE admin_action_log ADD CONSTRAINT chk_admin_action_log_action_type "
+                + originalConstraintDefinition);
+        userRepository.deleteById(admin.getId());
+      }
+    }
 
-    // The actual assertion: hydrating that row must not blow up the
-    // endpoint. Before the converter fix Hibernate threw and the entire
-    // admin-logs page 500-ed.
-    AdminActionLogFilterRequest filter = new AdminActionLogFilterRequest();
-    PageResponse<AdminActionLogDto> page =
-        assertDoesNotThrow(() -> adminLogService.getAdminActionLogsPaged(admin, filter, 0, 200));
-
-    boolean sawUnknownSentinel =
-        page.getItems().stream().anyMatch(dto -> "UNKNOWN".equals(dto.getActionType()));
+    assertEquals(
+        originalConstraintDefinition,
+        jdbc.queryForObject(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                + "WHERE c.conname = 'chk_admin_action_log_action_type' "
+                + "AND c.conrelid = 'admin_action_log'::regclass",
+            String.class));
     assertTrue(
-        sawUnknownSentinel,
-        "the stray SOME_FUTURE_ACTION row must surface as the UNKNOWN sentinel "
-            + "in the DTO instead of crashing the hydration");
+        Boolean.TRUE.equals(
+            jdbc.queryForObject(
+                "SELECT c.convalidated FROM pg_constraint c "
+                    + "WHERE c.conname = 'chk_admin_action_log_action_type' "
+                    + "AND c.conrelid = 'admin_action_log'::regclass",
+                Boolean.class)));
   }
 
   private User saveAdmin() {
