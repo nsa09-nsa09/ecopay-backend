@@ -77,7 +77,7 @@ jobs:
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
     concurrency:
       group: ecopay-deploy-${{ github.ref_name }}
@@ -129,7 +129,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             set -euo pipefail
             cd /opt/ecopay
@@ -138,6 +138,8 @@ jobs:
             IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
             FRONTEND_PUBLIC_URL="${{ vars.FRONTEND_PUBLIC_URL }}"
             ARCHIVE="/tmp/ecopay-backend-${{ github.sha }}/ecopay-backend-image.tar.gz"
+            READINESS_ATTEMPTS=120
+            READINESS_INTERVAL_SECONDS=5
             OVERRIDE="$(mktemp)"
             trap 'rm -f "$OVERRIDE"; rm -rf "/tmp/ecopay-backend-${{ github.sha }}"' EXIT
 
@@ -213,15 +215,22 @@ jobs:
               exit 1
             fi
 
-            for i in $(seq 1 30); do
+            for i in $(seq 1 "$READINESS_ATTEMPTS"); do
               if docker exec "$CID" \
                    curl -fsS http://127.0.0.1:8080/actuator/health/readiness >/dev/null; then
                 echo "Backend readiness OK"
                 docker image prune -f
                 exit 0
               fi
-              echo "Readiness $i/30"
-              sleep 5
+
+              CONTAINER_STATE="$(docker inspect -f '{{.State.Status}}' "$CID" 2>/dev/null || true)"
+              if [ "$CONTAINER_STATE" != "running" ]; then
+                echo "Backend container stopped during startup (state: ${CONTAINER_STATE:-missing})" >&2
+                break
+              fi
+
+              echo "Readiness $i/$READINESS_ATTEMPTS"
+              sleep "$READINESS_INTERVAL_SECONDS"
             done
             if [ -n "${CID:-}" ]; then
               docker ps -a --filter "id=$CID" || true
