@@ -2,6 +2,8 @@ package kz.hrms.splitupauth.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -90,6 +92,21 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResourceConflictException.class)
     public ResponseEntity<ErrorResponse> handleResourceConflict(ResourceConflictException ex) {
         ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
+     * A concurrent request won a race that a DB constraint or row version
+     * arbitrates (unique index, capacity/refund-cap trigger, optimistic lock).
+     * The losing request gets a deterministic, retryable 409 instead of a 500.
+     * SQL details are logged, never returned.
+     */
+    @ExceptionHandler({DataIntegrityViolationException.class, OptimisticLockingFailureException.class})
+    public ResponseEntity<ErrorResponse> handleConcurrentConflict(RuntimeException ex) {
+        log.warn("Concurrent modification rejected by the database: {}", ex.getMessage());
+        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(),
+                "The request conflicts with a concurrent change. Refresh and try again.");
+        error.setCode("CONCURRENT_MODIFICATION");
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
     }
 

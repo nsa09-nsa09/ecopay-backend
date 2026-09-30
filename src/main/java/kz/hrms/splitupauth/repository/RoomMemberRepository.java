@@ -1,10 +1,12 @@
 package kz.hrms.splitupauth.repository;
 
+import jakarta.persistence.LockModeType;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -26,6 +28,14 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
     long countByRoomAndStatusInAndDeletedAtIsNull(Room room, List<MemberStatus> statuses);
     long countByUserAndDeletedAtIsNull(User user);
     Optional<RoomMember> findByRoomAndUserAndStatusIn(Room room, User user, List<MemberStatus> statuses);
+
+    /** Room of a membership, read without loading the entity (so a later locked read is fresh). */
+    @Query("select m.room.id from RoomMember m where m.id = :id")
+    Optional<Long> findRoomIdById(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select m from RoomMember m where m.id = :id")
+    Optional<RoomMember> findWithLockById(@Param("id") Long id);
 
     /** Batch occupied-seat counts for a set of rooms (avoids N+1 in listings). */
     @Query("""

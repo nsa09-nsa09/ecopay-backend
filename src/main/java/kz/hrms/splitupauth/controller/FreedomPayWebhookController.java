@@ -1,13 +1,11 @@
 package kz.hrms.splitupauth.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import kz.hrms.splitupauth.entity.FreedomWebhookInbox;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
-import kz.hrms.splitupauth.repository.FreedomWebhookInboxRepository;
-import kz.hrms.splitupauth.service.PaymentService;
+import kz.hrms.splitupauth.service.WebhookInboxService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,7 +13,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -26,9 +23,7 @@ import java.util.Map;
 public class FreedomPayWebhookController {
 
     private final FreedomPayGateway gateway;
-    private final FreedomWebhookInboxRepository inboxRepository;
-    private final PaymentService paymentService;
-    private final ObjectMapper objectMapper;
+    private final WebhookInboxService inboxService;
 
     @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
     public ResponseEntity<String> result(@RequestParam Map<String, String> params) {
@@ -46,43 +41,25 @@ public class FreedomPayWebhookController {
         GatewayWebhookEvent event = gateway.verifyAndParseWebhook(script, safe);
 
         boolean signatureValid = gateway.verifyWebhookSignature(script, safe);
-        String requestId = event.getProviderRequestId();
 
-        // Inbox dedup — UNIQUE(provider_request_id) guarantees once-only.
+        // Inbox: UNIQUE(provider_request_id) dedups deliveries; processing + PROCESSED
+        // mark are one transaction, and unprocessed rows are retried (see WebhookInboxService).
+        WebhookInboxService.Outcome outcome;
         try {
-            FreedomWebhookInbox existing = inboxRepository
-                    .findByProviderRequestId(requestId).orElse(null);
-            if (existing != null) {
-                log.info("Duplicate Freedom Pay webhook for {}, replying ok", requestId);
-                return okResponse(script);
-            }
-            FreedomWebhookInbox inbox = FreedomWebhookInbox.builder()
-                    .providerRequestId(requestId)
-                    .rawBody(objectMapper.valueToTree(safe))
-                    .signatureValid(signatureValid)
-                    .processingStatus("PENDING")
-                    .build();
-            inboxRepository.save(inbox);
-
-            if (!signatureValid) {
-                inbox.setProcessingStatus("INVALID_SIGNATURE");
-                inbox.setProcessedAt(LocalDateTime.now());
-                inboxRepository.save(inbox);
-                log.warn("Freedom Pay webhook signature invalid for {}", requestId);
-                return errorResponse(script, "invalid signature");
-            }
-
-            paymentService.applyWebhookEvent(event);
-
-            inbox.setProcessingStatus("PROCESSED");
-            inbox.setProcessedAt(LocalDateTime.now());
-            inboxRepository.save(inbox);
-            return okResponse(script);
+            outcome = inboxService.receive(script, safe, event, signatureValid);
         } catch (Exception ex) {
-            log.error("Freedom Pay webhook handler failed: {}", ex.getMessage(), ex);
-            // Reply ok to avoid endless retries; inbox row remains PENDING for offline retry.
-            return okResponse(script);
+            // The callback could not even be persisted: make the provider redeliver it
+            // instead of acknowledging an event we have no record of.
+            log.error("Freedom Pay webhook could not be recorded: {}", ex.getMessage(), ex);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
+
+        if (outcome == WebhookInboxService.Outcome.INVALID_SIGNATURE) {
+            log.warn("Freedom Pay webhook signature invalid for {}", event.getProviderRequestId());
+            return errorResponse(script, "invalid signature");
+        }
+        // PROCESSED, DUPLICATE, or DEFERRED (recorded; the inbox retry job will finish it).
+        return okResponse(script);
     }
 
     // Freedom Pay requires the merchant reply to be signed (pg_salt + pg_sig).

@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -26,12 +25,7 @@ public class RateLimitService {
     @Transactional
     public void checkLoginAttempts(String email) {
         LocalDateTime thresholdTime = LocalDateTime.now().minusMinutes(durationMinutes);
-        List<LoginAttempt> recentAttempts = loginAttemptRepository
-                .findByEmailAndAttemptTimeAfter(email, thresholdTime);
-
-        long failedAttempts = recentAttempts.stream()
-                .filter(attempt -> !attempt.getSuccessful())
-                .count();
+        long failedAttempts = loginAttemptRepository.countFailedSince(email, thresholdTime);
 
         if (failedAttempts >= maxAttempts) {
             throw new TooManyLoginAttemptsException(
@@ -52,6 +46,6 @@ public class RateLimitService {
     @Transactional
     public void cleanupOldAttempts() {
         LocalDateTime thresholdTime = LocalDateTime.now().minusDays(1);
-        loginAttemptRepository.deleteByAttemptTimeBefore(thresholdTime);
+        loginAttemptRepository.deleteOlderThan(thresholdTime);
     }
 }

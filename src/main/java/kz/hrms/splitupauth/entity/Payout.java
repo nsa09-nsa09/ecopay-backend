@@ -43,7 +43,12 @@ public class Payout {
     @Builder.Default
     private String currency = "KZT";
 
-    /** PENDING | PROCESSING | SUCCESS | FAILED | PENDING_METHOD | CANCELED */
+    /**
+     * PENDING | PENDING_METHOD | PROCESSING | UNKNOWN | SUCCESS | FAILED | REVERSED | CANCELED.
+     * UNKNOWN = the provider may have accepted the payout but we never got its
+     * answer; it is settled by the provider callback or an operator, never by
+     * re-sending the payout.
+     */
     @Column(nullable = false, length = 20)
     @Builder.Default
     private String status = "PENDING";
@@ -64,6 +69,10 @@ public class Payout {
     @Column(name = "retry_count", nullable = false)
     @Builder.Default
     private Integer retryCount = 0;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

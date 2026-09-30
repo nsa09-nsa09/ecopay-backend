@@ -75,6 +75,24 @@ public class PaymentIntent {
     @Column(name = "failure_message", columnDefinition = "TEXT")
     private String failureMessage;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private PaymentPurpose purpose = PaymentPurpose.INITIAL;
+
+    /**
+     * Set when money was captured but could not be credited to a seat (room
+     * full, duplicate capture, membership no longer payable). Such a capture
+     * creates no owner payable and must be refunded / resolved by an operator.
+     */
+    @Column(name = "manual_review_reason", length = 50)
+    private String manualReviewReason;
+
+    /** Optimistic lock: a stale full-row update can never overwrite a newer state. */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -89,6 +107,9 @@ public class PaymentIntent {
         }
         if (saveCardRequested == null) {
             saveCardRequested = false;
+        }
+        if (purpose == null) {
+            purpose = PaymentPurpose.INITIAL;
         }
     }
 

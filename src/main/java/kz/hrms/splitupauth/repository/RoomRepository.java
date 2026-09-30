@@ -49,6 +49,13 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
          and r.deletedAt is null
        """)
     Optional<Room> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * Takes the same row lock as {@link #findByIdForUpdate} without loading the
+     * entity. Every seat-consuming decision (join, reserve, capture) runs under it.
+     */
+    @Query(value = "select id from rooms where id = :id for update", nativeQuery = true)
+    Long lockRoomRow(@Param("id") Long id);
     List<Room> findByOwnerAndDeletedAtIsNullOrderByCreatedAtDesc(User owner);
     List<Room> findByStatusAndDeletedAtIsNullOrderByCreatedAtDesc(RoomStatus status);
     List<Room> findByStatusAndDeletedAtIsNullAndStartDateLessThanEqual(RoomStatus status, LocalDateTime startDate);

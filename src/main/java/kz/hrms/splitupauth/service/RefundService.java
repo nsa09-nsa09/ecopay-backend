@@ -6,6 +6,7 @@ import kz.hrms.splitupauth.dto.UpdateRefundStatusRequest;
 import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
+import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayRefundRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayRefundResponse;
@@ -16,14 +17,26 @@ import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Refunds of captured charges.
+ *
+ * <p>Every path that creates or settles a refund first locks the parent
+ * charge row, so the "refunds never exceed the capture" check and the parent
+ * status update are race-free (the DB trigger {@code trg_refund_transactions_cap}
+ * enforces the same cap as a backstop). Only SUCCESS refunds count as money
+ * returned to the payer; PENDING ones merely reserve refundable amount.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -37,19 +50,43 @@ public class RefundService {
     private final PaymentEventLogger eventLogger;
     private final PayoutService payoutService;
 
+    private TransactionTemplate txTemplate;
+
+    @Autowired
+    void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.txTemplate = new TransactionTemplate(transactionManager);
+    }
+
+    /** Phase-1 result: either a replayed refund or the provider request to send. */
+    private record RefundReservation(RefundTransactionResponse existing, Long refundId, GatewayRefundRequest request) {}
+
     /**
      * User-initiated refund request — owner of the original payment can request
-     * a (partial) refund. Calls the gateway synchronously.
+     * a (partial) refund. The PENDING refund row is committed BEFORE the
+     * provider is called, so a provider-side success followed by a crash leaves
+     * a visible PENDING refund to reconcile instead of an invisible refund
+     * that a retry could repeat.
      */
-    @Transactional
     public RefundTransactionResponse requestRefund(User currentUser, CreateRefundRequest request) {
-        RefundTransaction existing = refundTransactionRepository
-                .findByIdempotencyKey(request.getIdempotencyKey()).orElse(null);
-        if (existing != null) {
-            return map(existing);
+        RefundReservation reservation = txTemplate.execute(s -> reserveUserRefund(currentUser, request));
+        if (reservation.existing() != null) {
+            return reservation.existing();
         }
 
-        PaymentTransaction tx = paymentTransactionRepository.findById(request.getPaymentTransactionId())
+        GatewayRefundResponse resp = null;
+        try {
+            resp = gatewayRegistry.defaultGateway().refund(reservation.request());
+        } catch (Exception ex) {
+            log.error("Refund call failed for {}: {}", reservation.refundId(), ex.getMessage());
+            // Leave PENDING — admin can retry / reconcile.
+        }
+
+        final GatewayRefundResponse response = resp;
+        return txTemplate.execute(s -> recordProviderRefundResult(reservation.refundId(), response));
+    }
+
+    private RefundReservation reserveUserRefund(User currentUser, CreateRefundRequest request) {
+        PaymentTransaction tx = paymentTransactionRepository.findWithLockById(request.getPaymentTransactionId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
 
         // IDOR check: only the original payer can request a refund.
@@ -58,16 +95,13 @@ public class RefundService {
             throw new ForbiddenOperationException("Not your payment");
         }
 
-        if (tx.getType() != PaymentTransactionType.CHARGE
-                || tx.getStatus() != PaymentTransactionStatus.SUCCESS) {
-            throw new InvalidRequestException("Only successful CHARGE can be refunded");
+        RefundTransaction existing = findReplay(request, tx);
+        if (existing != null) {
+            return new RefundReservation(map(existing), null, null);
         }
 
-        BigDecimal already = refundTransactionRepository.sumActiveRefundAmounts(tx);
-        BigDecimal remaining = tx.getAmount().subtract(already);
-        if (request.getAmount().compareTo(remaining) > 0) {
-            throw new InvalidRequestException("REFUND_AMOUNT_EXCEEDED: " + remaining + " available");
-        }
+        ensureRefundable(tx);
+        ensureWithinRemaining(tx, request.getAmount(), "REFUND_AMOUNT_EXCEEDED");
 
         RefundTransaction refund = RefundTransaction.builder()
                 .paymentTransaction(tx)
@@ -84,34 +118,35 @@ public class RefundService {
                 currentUser.getId(), null, refund.getIdempotencyKey(),
                 java.util.Map.of("amount", refund.getAmount().toPlainString()));
 
-        try {
-            GatewayRefundResponse resp = gatewayRegistry.defaultGateway().refund(
-                    GatewayRefundRequest.builder()
-                            .refundId(refund.getId())
-                            .idempotencyKey(refund.getIdempotencyKey())
-                            .externalPaymentId(tx.getExternalTransactionId())
-                            .amount(refund.getAmount())
-                            .currency(refund.getCurrency())
-                            .reason(refund.getReason())
-                            .build()
-            );
+        return new RefundReservation(null, refund.getId(), GatewayRefundRequest.builder()
+                .refundId(refund.getId())
+                .idempotencyKey(refund.getIdempotencyKey())
+                .externalPaymentId(tx.getExternalTransactionId())
+                .amount(refund.getAmount())
+                .currency(refund.getCurrency())
+                .reason(refund.getReason())
+                .build());
+    }
 
-            if (resp.isSuccess()) {
-                refund.setStatus(RefundStatus.SUCCESS);
-                refund.setProviderRefundId(resp.getExternalRefundId());
-                applyRefundToParentTransaction(refund);
-            } else if (resp.isPending()) {
-                refund.setProviderRefundId(resp.getExternalRefundId());
-                // Stays PENDING; webhook or admin will finalize.
-            } else {
-                refund.setStatus(RefundStatus.FAILED);
-            }
-            refundTransactionRepository.save(refund);
-        } catch (Exception ex) {
-            log.error("Refund call failed for {}: {}", refund.getId(), ex.getMessage());
-            // Leave PENDING — admin can retry.
+    private RefundTransactionResponse recordProviderRefundResult(Long refundId, GatewayRefundResponse resp) {
+        RefundTransaction refund = refundTransactionRepository.findWithLockById(refundId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
+        if (resp == null || refund.getStatus() != RefundStatus.PENDING) {
+            return map(refund);
         }
-
+        if (resp.isSuccess()) {
+            refund.setStatus(RefundStatus.SUCCESS);
+            refund.setProviderRefundId(resp.getExternalRefundId());
+            refundTransactionRepository.save(refund);
+            applyRefundToParentTransaction(refund);
+        } else if (resp.isPending()) {
+            refund.setProviderRefundId(resp.getExternalRefundId());
+            // Stays PENDING; webhook or admin will finalize.
+            refundTransactionRepository.save(refund);
+        } else {
+            refund.setStatus(RefundStatus.FAILED);
+            refundTransactionRepository.save(refund);
+        }
         return map(refund);
     }
 
@@ -138,11 +173,12 @@ public class RefundService {
         }
         if (success) {
             refund.setStatus(RefundStatus.SUCCESS);
+            refundTransactionRepository.save(refund);
             applyRefundToParentTransaction(refund);
         } else {
             refund.setStatus(RefundStatus.FAILED);
+            refundTransactionRepository.save(refund);
         }
-        refundTransactionRepository.save(refund);
         eventLogger.log("REFUND", refund.getId(),
                 success ? "WEBHOOK_SUCCESS" : "WEBHOOK_FAILED",
                 "PENDING", refund.getStatus().name(),
@@ -169,14 +205,20 @@ public class RefundService {
         return map(refund);
     }
 
+    /**
+     * Re-derives the parent charge status from SUCCESS refunds only and adjusts
+     * the owner payable to the money the platform still retains. Locks the
+     * parent row so concurrent settlements of sibling refunds serialize.
+     */
     private void applyRefundToParentTransaction(RefundTransaction refund) {
-        PaymentTransaction tx = refund.getPaymentTransaction();
-        BigDecimal totalRefunded = refundTransactionRepository.sumActiveRefundAmounts(tx);
-        boolean fullRefund = totalRefunded.compareTo(tx.getAmount()) >= 0;
+        PaymentTransaction tx = paymentTransactionRepository.findWithLockById(refund.getPaymentTransaction().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
+        BigDecimal refunded = refundTransactionRepository.sumSuccessfulRefundAmounts(tx);
+        boolean fullRefund = refunded.compareTo(tx.getAmount()) >= 0;
         tx.setStatus(fullRefund ? PaymentTransactionStatus.REFUNDED_FULL : PaymentTransactionStatus.REFUNDED_PARTIAL);
         paymentTransactionRepository.save(tx);
         // Clawback: don't pay the owner for money that's been refunded.
-        payoutService.reverseOwnerPayoutForRefund(tx.getPaymentIntent(), fullRefund);
+        payoutService.adjustOwnerPayoutForRefund(tx.getPaymentIntent(), tx.getAmount().subtract(refunded));
     }
 
     @Transactional
@@ -187,15 +229,13 @@ public class RefundService {
     ) {
         ensureAdmin(currentUser);
 
-        RefundTransaction existing = refundTransactionRepository.findByIdempotencyKey(request.getIdempotencyKey())
-                .orElse(null);
+        PaymentTransaction paymentTransaction = paymentTransactionRepository.findWithLockById(request.getPaymentTransactionId())
+                .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
 
+        RefundTransaction existing = findReplay(request, paymentTransaction);
         if (existing != null) {
             return map(existing);
         }
-
-        PaymentTransaction paymentTransaction = paymentTransactionRepository.findById(request.getPaymentTransactionId())
-                .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
 
         if (paymentTransaction.getType() != PaymentTransactionType.CHARGE) {
             throw new InvalidRequestException("Refund can only be created for CHARGE transaction");
@@ -204,6 +244,7 @@ public class RefundService {
         if (request.getAmount().compareTo(paymentTransaction.getAmount()) > 0) {
             throw new InvalidRequestException("Refund amount cannot exceed original payment amount");
         }
+        ensureWithinRemaining(paymentTransaction, request.getAmount(), "Refund amount exceeds the remaining refundable amount");
 
         Dispute dispute = null;
         if (request.getDisputeId() != null) {
@@ -262,7 +303,7 @@ public class RefundService {
     ) {
         ensureAdmin(currentUser);
 
-        RefundTransaction refund = refundTransactionRepository.findById(refundId)
+        RefundTransaction refund = refundTransactionRepository.findWithLockById(refundId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
 
         if (refund.getStatus() != RefundStatus.PENDING) {
@@ -302,7 +343,7 @@ public class RefundService {
     ) {
         ensureAdmin(currentUser);
 
-        RefundTransaction refund = refundTransactionRepository.findById(refundId)
+        RefundTransaction refund = refundTransactionRepository.findWithLockById(refundId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
 
         if (refund.getStatus() != RefundStatus.PENDING) {
@@ -327,6 +368,36 @@ public class RefundService {
         );
 
         return map(refund);
+    }
+
+    /**
+     * Same key → same refund. Called with the parent charge locked, so a
+     * concurrent retry waits and then sees the committed row. A key reused for
+     * a different charge is a conflict, never a disclosure of that refund.
+     */
+    private RefundTransaction findReplay(CreateRefundRequest request, PaymentTransaction lockedTx) {
+        RefundTransaction existing = refundTransactionRepository.findByIdempotencyKey(request.getIdempotencyKey())
+                .orElse(null);
+        if (existing != null && !existing.getPaymentTransaction().getId().equals(lockedTx.getId())) {
+            throw new ResourceConflictException("IDEMPOTENCY_KEY_REUSED: this idempotency key belongs to a different refund");
+        }
+        return existing;
+    }
+
+    private void ensureRefundable(PaymentTransaction tx) {
+        if (tx.getType() != PaymentTransactionType.CHARGE
+                || (tx.getStatus() != PaymentTransactionStatus.SUCCESS
+                    && tx.getStatus() != PaymentTransactionStatus.REFUNDED_PARTIAL)) {
+            throw new InvalidRequestException("Only successful CHARGE can be refunded");
+        }
+    }
+
+    /** Caller holds the parent row lock, so the remaining amount cannot change underneath. */
+    private void ensureWithinRemaining(PaymentTransaction tx, BigDecimal amount, String messagePrefix) {
+        BigDecimal remaining = tx.getAmount().subtract(refundTransactionRepository.sumActiveRefundAmounts(tx));
+        if (amount.compareTo(remaining) > 0) {
+            throw new InvalidRequestException(messagePrefix + ": " + remaining + " available");
+        }
     }
 
     private void ensureAdmin(User currentUser) {

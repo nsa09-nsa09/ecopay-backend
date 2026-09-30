@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import kz.hrms.splitupauth.entity.PaymentIntent;
+import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
@@ -10,6 +11,7 @@ import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,7 @@ class PaymentServiceTest {
     @Mock private PayoutService payoutService;
     @Mock private RefundService refundService;
     @Mock private RoomEventLogger roomEventLogger;
+    @Mock private RoomRepository roomRepository;
 
     private PaymentService paymentService;
 
@@ -57,14 +60,16 @@ class PaymentServiceTest {
                 eventLogger,
                 payoutService,
                 refundService,
-                roomEventLogger
+                roomEventLogger,
+                roomRepository
         );
     }
 
     private PaymentIntent pendingIntent(BigDecimal amount) {
         User user = User.builder().id(1L).email("m@test.kz").build();
-        Room room = Room.builder().id(2L).build();
-        RoomMember member = RoomMember.builder().id(3L).user(user).room(room).build();
+        Room room = Room.builder().id(2L).maxMembers(4).build();
+        // A membership awaiting its seat payment (the capture path now checks this state).
+        RoomMember member = RoomMember.builder().id(3L).user(user).room(room).status(MemberStatus.APPLIED).build();
         return PaymentIntent.builder()
                 .id(100L)
                 .idempotencyKey("k-100")
@@ -135,7 +140,7 @@ class PaymentServiceTest {
 
         paymentService.applyWebhookEvent(event);
 
-        verify(payoutService, times(1)).applyPayoutWebhook("MOCK-OUT-9", true);
+        verify(payoutService, times(1)).applyPayoutWebhook("MOCK-OUT-9", null, true);
         // Not a charge — no intent lookup / membership / charge-payout side effects.
         verify(roomMemberService, never()).markMembershipAsPaid(any());
         verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
@@ -160,9 +165,11 @@ class PaymentServiceTest {
     void expireStalePendingIntents_marksThemFailed() {
         PaymentIntent stale = pendingIntent(new BigDecimal("1822.50"));
         stale.setExpiresAt(java.time.LocalDateTime.now().minusMinutes(31));
-        when(paymentIntentRepository.findByStatusAndExpiresAtBefore(
+        when(paymentIntentRepository.findIdsByStatusAndExpiresAtBefore(
                 org.mockito.ArgumentMatchers.eq(PaymentIntentStatus.PENDING),
-                any())).thenReturn(java.util.List.of(stale));
+                any())).thenReturn(java.util.List.of(100L));
+        // Each candidate is re-read under its row lock before being expired.
+        when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(stale));
         when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         int expired = paymentService.expireStalePendingIntents();

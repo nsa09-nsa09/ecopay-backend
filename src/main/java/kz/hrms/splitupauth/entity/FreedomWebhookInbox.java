@@ -48,9 +48,18 @@ public class FreedomWebhookInbox {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    /** Callback endpoint (signature script) that received the row, for re-verification on retry. */
+    @Column(name = "endpoint", length = 50)
+    private String endpoint;
+
+    @Column(name = "attempts", nullable = false)
+    @Builder.Default
+    private Integer attempts = 0;
+
     @PrePersist
     protected void onCreate() {
         if (receivedAt == null) receivedAt = LocalDateTime.now();
         if (processingStatus == null) processingStatus = "PENDING";
+        if (attempts == null) attempts = 0;
     }
 }
