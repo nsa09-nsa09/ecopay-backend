@@ -1,9 +1,13 @@
 package kz.hrms.splitupauth.exception;
 
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -11,183 +15,236 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
-
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-    @ExceptionHandler(ForbiddenOperationException.class)
-    public ResponseEntity<ErrorResponse> handleForbidden(ForbiddenOperationException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+  @ExceptionHandler(ForbiddenOperationException.class)
+  public ResponseEntity<ErrorResponse> handleForbidden(ForbiddenOperationException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  }
+
+  @ExceptionHandler(UserAlreadyExistsException.class)
+  public ResponseEntity<ErrorResponse> handleUserAlreadyExists(UserAlreadyExistsException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+  }
+
+  @ExceptionHandler(InvalidCredentialsException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidCredentials(InvalidCredentialsException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+  }
+
+  @ExceptionHandler(ResourceNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleResourceNotFound(ResourceNotFoundException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+  }
+
+  @ExceptionHandler(InvalidRequestException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidRequest(InvalidRequestException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+  }
+
+  @ExceptionHandler(TokenExpiredException.class)
+  public ResponseEntity<ErrorResponse> handleTokenExpired(TokenExpiredException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+  }
+
+  @ExceptionHandler(TooManyLoginAttemptsException.class)
+  public ResponseEntity<ErrorResponse> handleTooManyAttempts(TooManyLoginAttemptsException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
+  }
+
+  // Generic anti-abuse breaches (room create/join, SMS flood, etc).
+  // Without these they fall through to the generic Exception handler and
+  // are served as a misleading HTTP 500.
+  @ExceptionHandler(TooManySmsAttemptsException.class)
+  public ResponseEntity<ErrorResponse> handleTooManySmsAttempts(TooManySmsAttemptsException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
+  }
+
+  @ExceptionHandler(TooManyRequestsException.class)
+  public ResponseEntity<ErrorResponse> handleTooManyRequests(TooManyRequestsException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
+  }
+
+  @ExceptionHandler(InvalidVerificationCodeException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidCode(InvalidVerificationCodeException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+  }
+
+  @ExceptionHandler(VerificationCodeExpiredException.class)
+  public ResponseEntity<ErrorResponse> handleCodeExpired(VerificationCodeExpiredException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.GONE.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.GONE).body(error);
+  }
+
+  @ExceptionHandler(PhoneAlreadyExistsException.class)
+  public ResponseEntity<ErrorResponse> handlePhoneAlreadyExists(PhoneAlreadyExistsException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+  }
+
+  @ExceptionHandler(ResourceConflictException.class)
+  public ResponseEntity<ErrorResponse> handleResourceConflict(ResourceConflictException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+    error.setCode(ex.getCode());
+    if (ex.getCode() != null) {
+      error.setErrors(Map.of("code", ex.getCode()));
     }
-    @ExceptionHandler(UserAlreadyExistsException.class)
-    public ResponseEntity<ErrorResponse> handleUserAlreadyExists(UserAlreadyExistsException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+  }
+
+  @ExceptionHandler(UserBannedException.class)
+  public ResponseEntity<ErrorResponse> handleUserBanned(UserBannedException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+    error.setCode("ACCOUNT_BANNED");
+    error.setReason(ex.getReason());
+    error.setOccurredAt(ex.getBannedAt());
+    error.setBanStartsAt(ex.getBanStartsAt());
+    error.setBanUntil(ex.getBanUntil());
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  }
+
+  @ExceptionHandler(EmailNotVerifiedException.class)
+  public ResponseEntity<ErrorResponse> handleEmailNotVerified(EmailNotVerifiedException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+    error.setCode("EMAIL_NOT_VERIFIED");
+    // Also expose the marker inside the errors map: the web client only parses
+    // `message` + `errors`, so this is how the login screen reliably detects
+    // "unverified" and switches to the code-entry step.
+    error.setErrors(Map.of("code", "EMAIL_NOT_VERIFIED"));
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  }
+
+  /**
+   * Pre-delivery email checks (format / MX). The reason code and the typo suggestion both travel in
+   * the errors map so the client can pick a specific message and offer a one-click correction —
+   * `message` alone is not enough to distinguish "bad format" from "domain doesn't exist".
+   */
+  @ExceptionHandler(InvalidEmailException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidEmail(InvalidEmailException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    error.setCode(ex.getReason().name());
+
+    Map<String, String> errors = new HashMap<>();
+    errors.put("code", ex.getReason().name());
+    errors.put("email", ex.getMessage());
+    if (ex.getSuggestion() != null) {
+      errors.put("suggestion", ex.getSuggestion());
+    }
+    error.setErrors(errors);
+
+    return ResponseEntity.badRequest().body(error);
+  }
+
+  /**
+   * SMTP was unreachable or kept failing after retries. This is our problem, not the user's, so it
+   * must read as "try again shortly" rather than a generic 500.
+   */
+  @ExceptionHandler(MailDeliveryException.class)
+  public ResponseEntity<ErrorResponse> handleMailDelivery(MailDeliveryException ex) {
+    // The cause chain can carry the SMTP transcript; log the summary only.
+    log.error("Email delivery failed: {}", ex.getMessage());
+    ErrorResponse error =
+        new ErrorResponse(HttpStatus.SERVICE_UNAVAILABLE.value(), ex.getMessage());
+    error.setCode("EMAIL_DELIVERY_FAILED");
+    error.setErrors(Map.of("code", "EMAIL_DELIVERY_FAILED"));
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+  }
+
+  @ExceptionHandler(TwoFactorChallengeException.class)
+  public ResponseEntity<ErrorResponse> handleTwoFactorChallenge(TwoFactorChallengeException ex) {
+    ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+  }
+
+  @ExceptionHandler(MethodArgumentNotValidException.class)
+  public ResponseEntity<ErrorResponse> handleValidationExceptions(
+      MethodArgumentNotValidException ex) {
+    Map<String, String> errors = new HashMap<>();
+    ex.getBindingResult()
+        .getAllErrors()
+        .forEach(
+            error -> {
+              String fieldName = ((FieldError) error).getField();
+              String errorMessage = error.getDefaultMessage();
+              errors.put(fieldName, errorMessage);
+            });
+
+    ErrorResponse errorResponse =
+        new ErrorResponse(
+            HttpStatus.BAD_REQUEST.value(), "Validation failed", LocalDateTime.now(), errors);
+    return ResponseEntity.badRequest().body(errorResponse);
+  }
+
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+    // A query/path parameter could not be parsed into the controller's
+    // declared type (e.g. "abc" sent for a Long, or "2026-06-14T00:00:00Z"
+    // sent for a LocalDate). Surface a clean 400 with the offending field
+    // instead of letting it bubble up as a generic 500.
+    String name = ex.getName();
+    String required =
+        ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "expected type";
+    Object value = ex.getValue();
+    String message =
+        String.format("Parameter '%s' has invalid value '%s'; expected %s", name, value, required);
+
+    Map<String, String> errors = new HashMap<>();
+    errors.put(name, message);
+
+    ErrorResponse error =
+        new ErrorResponse(HttpStatus.BAD_REQUEST.value(), message, LocalDateTime.now(), errors);
+    return ResponseEntity.badRequest().body(error);
+  }
+
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ResponseEntity<ErrorResponse> handleUnreadableRequest(HttpMessageNotReadableException ex) {
+    return ResponseEntity.badRequest()
+        .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Invalid request body"));
+  }
+
+  @ExceptionHandler(AccessDeniedException.class)
+  public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
+    ErrorResponse error =
+        new ErrorResponse(
+            HttpStatus.FORBIDDEN.value(), "You do not have permission to perform this action");
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  }
+
+  @ExceptionHandler(Exception.class)
+  public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
+    // Always log the full stack trace so operators can see what actually failed
+    // — the previous behaviour of swallowing this with `printStackTrace()`
+    // made admin endpoints opaque ("An unexpected error occurred").
+    log.error(
+        "Unhandled exception serving request: {}: {}",
+        ex.getClass().getSimpleName(),
+        ex.getMessage(),
+        ex);
+
+    // Surface the exception class + a short message in the response body. This
+    // is still safe (no stack trace, no SQL, no secrets) and gives the UI a
+    // hint instead of a generic 500. Validation/auth/known-error paths above
+    // already produce nicer, fully-translated messages.
+    String safeMessage = ex.getClass().getSimpleName();
+    String detail = ex.getMessage();
+    if (detail != null && !detail.isBlank() && detail.length() < 300) {
+      safeMessage = safeMessage + ": " + detail;
     }
 
-    @ExceptionHandler(InvalidCredentialsException.class)
-    public ResponseEntity<ErrorResponse> handleInvalidCredentials(InvalidCredentialsException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
-    }
-    @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleResourceNotFound(ResourceNotFoundException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
-    }
-    @ExceptionHandler(InvalidRequestException.class)
-    public ResponseEntity<ErrorResponse> handleInvalidRequest(InvalidRequestException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-    }
-    @ExceptionHandler(TokenExpiredException.class)
-    public ResponseEntity<ErrorResponse> handleTokenExpired(TokenExpiredException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
-    }
-
-    @ExceptionHandler(TooManyLoginAttemptsException.class)
-    public ResponseEntity<ErrorResponse> handleTooManyAttempts(TooManyLoginAttemptsException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
-    }
-
-    @ExceptionHandler(TooManySmsAttemptsException.class)
-    public ResponseEntity<ErrorResponse> handleTooManySmsAttempts(TooManySmsAttemptsException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
-    }
-
-    @ExceptionHandler(TooManyRequestsException.class)
-    public ResponseEntity<ErrorResponse> handleTooManyRequests(TooManyRequestsException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
-    }
-
-    @ExceptionHandler(InvalidVerificationCodeException.class)
-    public ResponseEntity<ErrorResponse> handleInvalidCode(InvalidVerificationCodeException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
-    }
-
-    @ExceptionHandler(VerificationCodeExpiredException.class)
-    public ResponseEntity<ErrorResponse> handleCodeExpired(VerificationCodeExpiredException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.GONE.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.GONE).body(error);
-    }
-
-    @ExceptionHandler(PhoneAlreadyExistsException.class)
-    public ResponseEntity<ErrorResponse> handlePhoneAlreadyExists(PhoneAlreadyExistsException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
-    }
-
-    @ExceptionHandler(ResourceConflictException.class)
-    public ResponseEntity<ErrorResponse> handleResourceConflict(ResourceConflictException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
-    }
-
-    @ExceptionHandler(UserBannedException.class)
-    public ResponseEntity<ErrorResponse> handleUserBanned(UserBannedException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
-        error.setCode("ACCOUNT_BANNED");
-        error.setReason(ex.getReason());
-        error.setOccurredAt(ex.getBannedAt());
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
-    }
-
-    @ExceptionHandler(EmailNotVerifiedException.class)
-    public ResponseEntity<ErrorResponse> handleEmailNotVerified(EmailNotVerifiedException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
-    }
-
-    @ExceptionHandler(TwoFactorChallengeException.class)
-    public ResponseEntity<ErrorResponse> handleTwoFactorChallenge(TwoFactorChallengeException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
-    }
-
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse> handleValidationExceptions(MethodArgumentNotValidException ex) {
-        Map<String, String> errors = new HashMap<>();
-        ex.getBindingResult().getAllErrors().forEach(error -> {
-            String fieldName = ((FieldError) error).getField();
-            String errorMessage = error.getDefaultMessage();
-            errors.put(fieldName, errorMessage);
-        });
-
-        ErrorResponse errorResponse = new ErrorResponse(
-            HttpStatus.BAD_REQUEST.value(),
-            "Validation failed",
-            LocalDateTime.now(),
-            errors
-        );
-        return ResponseEntity.badRequest().body(errorResponse);
-    }
-
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
-        // A query/path parameter could not be parsed into the controller's
-        // declared type (e.g. "abc" sent for a Long, or "2026-06-14T00:00:00Z"
-        // sent for a LocalDate). Surface a clean 400 with the offending field
-        // instead of letting it bubble up as a generic 500.
-        String name = ex.getName();
-        String required = ex.getRequiredType() != null
-                ? ex.getRequiredType().getSimpleName()
-                : "expected type";
-        Object value = ex.getValue();
-        String message = String.format(
-                "Parameter '%s' has invalid value '%s'; expected %s",
-                name, value, required);
-
-        Map<String, String> errors = new HashMap<>();
-        errors.put(name, message);
-
-        ErrorResponse error = new ErrorResponse(
-                HttpStatus.BAD_REQUEST.value(),
-                message,
-                LocalDateTime.now(),
-                errors
-        );
-        return ResponseEntity.badRequest().body(error);
-    }
-
-    @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
-        ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(),
-                "You do not have permission to perform this action");
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
-        // Always log the full stack trace so operators can see what actually failed
-        // — the previous behaviour of swallowing this with `printStackTrace()`
-        // made admin endpoints opaque ("An unexpected error occurred").
-        log.error("Unhandled exception serving request: {}: {}",
-                ex.getClass().getSimpleName(), ex.getMessage(), ex);
-
-        // Surface the exception class + a short message in the response body. This
-        // is still safe (no stack trace, no SQL, no secrets) and gives the UI a
-        // hint instead of a generic 500. Validation/auth/known-error paths above
-        // already produce nicer, fully-translated messages.
-        String safeMessage = ex.getClass().getSimpleName();
-        String detail = ex.getMessage();
-        if (detail != null && !detail.isBlank() && detail.length() < 300) {
-            safeMessage = safeMessage + ": " + detail;
-        }
-
-        ErrorResponse error = new ErrorResponse(
-                HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                safeMessage
-        );
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
-    }
+    ErrorResponse error = new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(), safeMessage);
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+  }
 }

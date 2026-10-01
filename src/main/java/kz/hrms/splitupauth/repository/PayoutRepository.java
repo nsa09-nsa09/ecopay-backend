@@ -1,21 +1,96 @@
 package kz.hrms.splitupauth.repository;
 
-import kz.hrms.splitupauth.entity.Payout;
-import kz.hrms.splitupauth.entity.PaymentIntent;
-import kz.hrms.splitupauth.entity.User;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
-
+import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import kz.hrms.splitupauth.entity.PaymentIntent;
+import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.RoomMember;
+import kz.hrms.splitupauth.entity.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
 
 @Repository
-public interface PayoutRepository extends JpaRepository<Payout, Long> {
-    List<Payout> findByUserOrderByCreatedAtDesc(User user);
+public interface PayoutRepository
+    extends JpaRepository<Payout, Long>, JpaSpecificationExecutor<Payout> {
+  List<Payout> findByUserOrderByCreatedAtDesc(User user);
 
-    List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
+  long countByUserAndStatusIn(User user, List<String> statuses);
 
-    Optional<Payout> findByProviderPayoutId(String providerPayoutId);
+  List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
 
-    Optional<Payout> findByTriggeringPaymentIntent(PaymentIntent triggeringPaymentIntent);
+  @Query(
+      "select p from Payout p where p.status = 'PENDING_PROVIDER' "
+          + "and p.providerPayoutId is not null "
+          + "and (p.nextRetryAt is null or p.nextRetryAt <= :now) "
+          + "order by p.createdAt asc")
+  List<Payout> findProviderPendingForReconciliation(@Param("now") LocalDateTime now);
+
+  /**
+   * Owner payouts that are still inside their hold window. Terminal, reversed, due, and already
+   * processing payouts are deliberately excluded by the status/release predicates.
+   */
+  List<Payout> findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
+      User user, String currency, List<String> statuses, LocalDateTime releaseAt);
+
+  @Query(
+      "select p from Payout p where p.triggeringPaymentIntent.roomMember = :roomMember "
+          + "and p.currency = :currency and p.status in :statuses and p.releaseAt > :now "
+          + "order by p.releaseAt asc")
+  List<Payout> findHeldByRoomMember(
+      @Param("roomMember") RoomMember roomMember,
+      @Param("currency") String currency,
+      @Param("statuses") List<String> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Payouts in a dispatchable status whose hold window has elapsed (due now). */
+  @Query(
+      "SELECT p FROM Payout p WHERE ("
+          + "p.status IN :statuses "
+          + "AND p.payoutBatch IS NULL "
+          + "AND (p.releaseAt IS NULL OR p.releaseAt <= :now) "
+          + "AND (p.nextRetryAt IS NULL OR p.nextRetryAt <= :now)) "
+          + "OR (p.status = 'PROCESSING' "
+          + "AND p.payoutBatch IS NULL "
+          + "AND p.providerPayoutId IS NULL "
+          + "AND p.leaseUntil IS NOT NULL "
+          + "AND p.leaseUntil <= :now) "
+          + "ORDER BY p.createdAt ASC")
+  List<Payout> findDispatchable(
+      @Param("statuses") List<String> statuses, @Param("now") LocalDateTime now);
+
+  Optional<Payout> findByProviderPayoutId(String providerPayoutId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.providerPayoutId = :providerPayoutId")
+  Optional<Payout> findWithLockByProviderPayoutId(
+      @Param("providerPayoutId") String providerPayoutId);
+
+  Optional<Payout> findByTriggeringPaymentIntent(PaymentIntent triggeringPaymentIntent);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select p from Payout p where p.triggeringPaymentIntent.roomMember = :roomMember "
+          + "and p.status in :statuses")
+  List<Payout> findWithLockByRoomMemberAndStatusIn(
+      @Param("roomMember") RoomMember roomMember, @Param("statuses") List<String> statuses);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.id = :id")
+  Optional<Payout> findWithLockById(@Param("id") Long id);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.id in :ids order by p.id asc")
+  List<Payout> findWithLockByIdIn(@Param("ids") List<Long> ids);
+
+  List<Payout> findByPayoutBatch_IdOrderByIdAsc(Long payoutBatchId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.payoutBatch.id = :id order by p.id asc")
+  List<Payout> findWithLockByPayoutBatchId(@Param("id") Long payoutBatchId);
 }

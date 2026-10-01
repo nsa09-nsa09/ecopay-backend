@@ -1,12 +1,17 @@
 package kz.hrms.splitupauth.security;
 
+import java.util.List;
 import kz.hrms.splitupauth.config.AvatarUploadProperties;
 import kz.hrms.splitupauth.config.CorsProperties;
+import kz.hrms.splitupauth.config.NewsImageUploadProperties;
+import kz.hrms.splitupauth.config.ServiceLogoUploadProperties;
 import kz.hrms.splitupauth.sms.SmsProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -18,106 +23,155 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import java.util.List;
-
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties({CorsProperties.class, SmsProperties.class, AvatarUploadProperties.class})
+@EnableConfigurationProperties({
+  CorsProperties.class,
+  SmsProperties.class,
+  AvatarUploadProperties.class,
+  NewsImageUploadProperties.class,
+  ServiceLogoUploadProperties.class
+})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
-    private final CorsProperties corsProperties;
+  private final JwtAuthenticationFilter jwtAuthenticationFilter;
+  private final SameOriginCookieEndpointFilter sameOriginCookieEndpointFilter;
+  private final CorsProperties corsProperties;
+  private final Environment environment;
 
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http
-                .csrf(AbstractHttpConfigurer::disable)
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .headers(headers -> headers
-                        // Browser security headers (DoD). nosniff + frameOptions DENY are also
-                        // Spring defaults; CSP/HSTS/Referrer-Policy are added explicitly.
-                        .contentSecurityPolicy(csp -> csp.policyDirectives(
-                                "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"))
-                        .frameOptions(frame -> frame.deny())
-                        .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER))
-                        .httpStrictTransportSecurity(hsts -> hsts
-                                .includeSubDomains(true)
-                                .maxAgeInSeconds(31_536_000))
-                )
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                "/api/v1/auth/register",
-                                "/api/v1/auth/login",
-                                "/api/v1/auth/login/2fa/verify",
-                                "/api/v1/auth/login/2fa/resend",
-                                "/api/v1/auth/refresh",
-                                "/api/v1/auth/logout",
-                                "/api/v1/auth/reset-password",
-                                "/api/v1/auth/reset-password/confirm",
-                                "/api/v1/auth/verify-email",
-                                "/api/v1/auth/resend-verification",
-                                "/api/v1/webhooks/**",
-                                "/v3/api-docs/**",
-                                "/swagger-ui/**",
-                                "/swagger-ui.html",
-                                "/actuator/health",
-                                "/actuator/health/**"
-                        ).permitAll()
-                        .requestMatchers("/ws", "/ws/**").permitAll()
-                        // Anonymous visit ping (deduped server-side via the "vid" cookie).
-                        .requestMatchers(HttpMethod.POST, "/api/v1/analytics/visit").permitAll()
-                        // Live FX rates for the public landing-page converter.
-                        .requestMatchers(HttpMethod.GET, "/api/v1/fx/rates").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/service-reviews/featured").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/site/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/users/public/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/users/avatars/**").permitAll()
-                        // Public room browsing only: the catalog list and a single room by id.
-                        // Everything deeper under a room (members, membership) requires auth,
-                        // and falls through to anyRequest().authenticated() below.
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/me").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/joined").authenticated()
-                        // Single room is public (catalog detail); deeper paths (e.g. /{id}/members)
-                        // fall through to authenticated() to avoid leaking member PII.
-                        .requestMatchers(HttpMethod.GET, "/api/v1/rooms/*").permitAll()
-                        .requestMatchers("/api/v1/staff/**").hasAnyAuthority("ADMIN", "SUPPORT")
-                        .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN")
-                        .anyRequest().authenticated()
-                )
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                )
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+  @Bean
+  public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    boolean devProfile = environment.acceptsProfiles(Profiles.of("dev"));
+    boolean prodProfile = environment.acceptsProfiles(Profiles.of("prod"));
 
-        return http.build();
-    }
+    http.csrf(AbstractHttpConfigurer::disable)
+        .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+        .headers(
+            headers ->
+                headers
+                    .contentTypeOptions(contentType -> {})
+                    .addHeaderWriter(
+                        new StaticHeadersWriter(
+                            "Permissions-Policy",
+                            "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"))
+                    .frameOptions(frame -> frame.deny())
+                    .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER))
+                    .httpStrictTransportSecurity(
+                        hsts -> {
+                          if (prodProfile) {
+                            hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000);
+                          } else {
+                            hsts.disable();
+                          }
+                        }))
+        .authorizeHttpRequests(
+            auth -> {
+              if (devProfile) {
+                auth.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
+                    .permitAll();
+              }
+              auth.requestMatchers(
+                      "/api/v1/auth/register",
+                      "/api/v1/auth/login",
+                      "/api/v1/auth/login/2fa/verify",
+                      "/api/v1/auth/login/2fa/resend",
+                      "/api/v1/auth/refresh",
+                      "/api/v1/auth/logout",
+                      "/api/v1/auth/reset-password",
+                      "/api/v1/auth/reset-password/confirm",
+                      "/api/v1/auth/verify-email",
+                      "/api/v1/auth/verify-email-code",
+                      "/api/v1/auth/resend-verification",
+                      "/api/v1/webhooks/**",
+                      "/actuator/health",
+                      "/actuator/health/**")
+                  .permitAll()
+                  .requestMatchers("/ws", "/ws/**")
+                  .permitAll()
+                  // Anonymous visit ping (deduped server-side via the "vid" cookie).
+                  .requestMatchers(HttpMethod.POST, "/api/v1/analytics/visit")
+                  .permitAll()
+                  // Live FX rates for the public landing-page converter.
+                  .requestMatchers(HttpMethod.GET, "/api/v1/fx/rates")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/public/home-stats")
+                  .permitAll()
+                  // FIFO room match needs the caller identity to exclude
+                  // their own rooms — must beat the catalog permitAll below.
+                  .requestMatchers(HttpMethod.GET, "/api/v1/catalog/services/*/match")
+                  .authenticated()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/reputation/**")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/service-reviews/featured")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/site/**")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/users/public/**")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/users/avatars/**")
+                  .permitAll()
+                  // Public editorial news feed + image proxy. Admin writes
+                  // live under /api/v1/admin/news (ADMIN-only via the
+                  // /api/v1/admin/** matcher further down).
+                  .requestMatchers(HttpMethod.GET, "/api/v1/news", "/api/v1/news/**")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/stories", "/api/v1/stories/**")
+                  .permitAll()
+                  // Public room browsing only: the catalog list and a single room by id.
+                  // Everything deeper under a room (members, membership) requires auth,
+                  // and falls through to anyRequest().authenticated() below.
+                  .requestMatchers(HttpMethod.GET, "/api/v1/rooms")
+                  .permitAll()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/rooms/me")
+                  .authenticated()
+                  .requestMatchers(HttpMethod.GET, "/api/v1/rooms/joined")
+                  .authenticated()
+                  // Single room is public (catalog detail); deeper paths (e.g. /{id}/members)
+                  // fall through to authenticated() to avoid leaking member PII.
+                  .requestMatchers(HttpMethod.GET, "/api/v1/rooms/*")
+                  .permitAll()
+                  .requestMatchers("/api/v1/staff/**")
+                  .hasAnyAuthority("ADMIN", "SUPPORT")
+                  .requestMatchers("/api/v1/admin/**")
+                  .hasAuthority("ADMIN")
+                  .anyRequest()
+                  .authenticated();
+            })
+        .sessionManagement(
+            session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .addFilterBefore(sameOriginCookieEndpointFilter, UsernamePasswordAuthenticationFilter.class)
+        .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(corsProperties.getAllowedOrigins());
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("*"));
-        config.setExposedHeaders(List.of("Authorization"));
-        config.setAllowCredentials(true);
-        config.setMaxAge(3600L);
+    return http.build();
+  }
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
-        return source;
-    }
+  @Bean
+  public CorsConfigurationSource corsConfigurationSource() {
+    CorsConfiguration config = new CorsConfiguration();
+    config.setAllowedOrigins(corsProperties.getAllowedOrigins());
+    config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+    config.setAllowedHeaders(
+        List.of("Authorization", "Content-Type", "Accept", "Accept-Language", "X-Requested-With"));
+    config.setExposedHeaders(List.of("Authorization"));
+    config.setAllowCredentials(true);
+    config.setMaxAge(3600L);
 
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+    UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+    source.registerCorsConfiguration("/**", config);
+    return source;
+  }
+
+  @Bean
+  public PasswordEncoder passwordEncoder() {
+    return new BCryptPasswordEncoder();
+  }
 }

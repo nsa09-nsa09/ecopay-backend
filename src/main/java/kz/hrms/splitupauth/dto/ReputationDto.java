@@ -6,10 +6,12 @@ import lombok.Data;
 @Data
 @Builder
 public class ReputationDto {
-    private Long userId;
-    private String displayName;
-    private Integer reputation;
-    private Double averageRating;
-    private Long reviewsCount;
-    private Long completedRoomsCount;
+  private Long userId;
+  private String displayName;
+  private String avatar;
+  private Integer reputation;
+  private String reputationLevel;
+  private Double averageRating;
+  private Long reviewsCount;
+  private Long completedRoomsCount;
 }

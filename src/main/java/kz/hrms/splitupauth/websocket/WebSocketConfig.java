@@ -14,30 +14,29 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
-    private final WebSocketAuthHandshakeInterceptor authHandshakeInterceptor;
-    private final WebSocketAuthChannelInterceptor authChannelInterceptor;
-    private final CorsProperties corsProperties;
+  private final WebSocketAuthHandshakeInterceptor authHandshakeInterceptor;
+  private final WebSocketAuthChannelInterceptor authChannelInterceptor;
+  private final CorsProperties corsProperties;
 
-    @Override
-    public void registerStompEndpoints(StompEndpointRegistry registry) {
-        var registration = registry.addEndpoint("/ws")
-                .addInterceptors(authHandshakeInterceptor);
+  @Override
+  public void registerStompEndpoints(StompEndpointRegistry registry) {
+    var registration = registry.addEndpoint("/ws").addInterceptors(authHandshakeInterceptor);
 
-        if (corsProperties.getAllowedOrigins().isEmpty()) {
-            registration.setAllowedOriginPatterns("*");
-        } else {
-            registration.setAllowedOrigins(corsProperties.getAllowedOrigins().toArray(String[]::new));
-        }
+    if (corsProperties.getAllowedOrigins().isEmpty()) {
+      registration.setAllowedOriginPatterns("*");
+    } else {
+      registration.setAllowedOrigins(corsProperties.getAllowedOrigins().toArray(String[]::new));
     }
+  }
 
-    @Override
-    public void configureMessageBroker(MessageBrokerRegistry registry) {
-        registry.enableSimpleBroker("/topic");
-        registry.setApplicationDestinationPrefixes("/app");
-    }
+  @Override
+  public void configureMessageBroker(MessageBrokerRegistry registry) {
+    registry.enableSimpleBroker("/topic");
+    registry.setApplicationDestinationPrefixes("/app");
+  }
 
-    @Override
-    public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(authChannelInterceptor);
-    }
+  @Override
+  public void configureClientInboundChannel(ChannelRegistration registration) {
+    registration.interceptors(authChannelInterceptor);
+  }
 }

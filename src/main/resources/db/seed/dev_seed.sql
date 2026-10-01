@@ -37,6 +37,7 @@ INSERT INTO users (
     email,
     password,
     display_name,
+    public_id,
     status,
     reputation,
     email_verified,
@@ -47,8 +48,9 @@ VALUES
         'askar@test.com',
         '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
         'Askar',
+        'pub_askar',
         'ACTIVE',
-        10,
+        50,
         TRUE,
         NOW()
     ),
@@ -56,8 +58,9 @@ VALUES
         'maria@test.com',
         '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
         'Maria',
+        'pub_maria',
         'ACTIVE',
-        5,
+        50,
         TRUE,
         NOW()
     ),
@@ -65,8 +68,9 @@ VALUES
         'timur@test.com',
         '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
         'Timur',
+        'pub_timur',
         'ACTIVE',
-        0,
+        50,
         TRUE,
         NOW()
     );
@@ -97,16 +101,17 @@ INSERT INTO services (
     name,
     slug,
     provider_type,
+    access_type,
     is_active,
     created_at
 )
 VALUES
-    (1,'Netflix','netflix','DIGITAL',TRUE,NOW()),
-    (1,'YouTube Premium','youtube-premium','DIGITAL',TRUE,NOW()),
-    (2,'Spotify','spotify','DIGITAL',TRUE,NOW()),
-    (3,'Microsoft 365','microsoft-365','DIGITAL',TRUE,NOW()),
-    (4,'Beeline Family','beeline-family','OPERATOR',TRUE,NOW()),
-    (4,'Activ Family','activ-family','OPERATOR',TRUE,NOW());
+    (1,'Netflix','netflix','DIGITAL','EMAIL',TRUE,NOW()),
+    (1,'YouTube Premium','youtube-premium','DIGITAL','EMAIL',TRUE,NOW()),
+    (2,'Spotify','spotify','DIGITAL','EMAIL',TRUE,NOW()),
+    (3,'Microsoft 365','microsoft-365','DIGITAL','EMAIL',TRUE,NOW()),
+    (4,'Beeline Family','beeline-family','OPERATOR','PHONE',TRUE,NOW()),
+    (4,'Activ Family','activ-family','OPERATOR','PHONE',TRUE,NOW());
 
 -- =========================================================
 -- TARIFF PLANS

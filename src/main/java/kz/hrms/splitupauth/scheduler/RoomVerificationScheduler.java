@@ -11,14 +11,14 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class RoomVerificationScheduler {
 
-    private final RoomService roomService;
+  private final RoomService roomService;
 
-    @Scheduled(fixedDelayString = "${app.scheduler.room-verification-delay-ms:60000}")
-    public void moveStartedRoomsToVerification() {
-        int movedRooms = roomService.moveStartedOpenRoomsToVerification();
+  @Scheduled(fixedDelayString = "${app.scheduler.room-verification-delay-ms:60000}")
+  public void moveStartedRoomsToVerification() {
+    int movedRooms = roomService.moveStartedOpenRoomsToVerification();
 
-        if (movedRooms > 0) {
-            log.info("Moved {} room(s) from OPEN to IN_VERIFICATION", movedRooms);
-        }
+    if (movedRooms > 0) {
+      log.info("Moved {} room(s) from OPEN to IN_VERIFICATION", movedRooms);
     }
+  }
 }
