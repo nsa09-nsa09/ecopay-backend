@@ -84,6 +84,18 @@ public class AdminDashboardService {
             PaymentTransactionStatus.SUCCESS,
             PaymentTransactionStatus.REFUNDED_PARTIAL,
             PaymentTransactionStatus.REFUNDED_FULL);
+    // Acquiring cost on the same successful charges. SUM ignores rows that reported no fee, so this
+    // is 0 historically and net revenue then equals platform revenue (additive, no behaviour change).
+    BigDecimal providerFeeTotal =
+        singleBigDecimal(
+            "SELECT COALESCE(SUM(t.providerFeeAmount), 0) FROM PaymentTransaction t "
+                + "WHERE t.type = ?1 AND t.status IN (?2, ?3, ?4)",
+            PaymentTransactionType.CHARGE,
+            PaymentTransactionStatus.SUCCESS,
+            PaymentTransactionStatus.REFUNDED_PARTIAL,
+            PaymentTransactionStatus.REFUNDED_FULL);
+    BigDecimal netRevenue = platformRevenue.subtract(providerFeeTotal);
+
     BigDecimal totalRefunds =
         singleBigDecimal(
             "SELECT COALESCE(SUM(r.amount), 0) FROM RefundTransaction r WHERE r.status = ?1",
@@ -186,6 +198,8 @@ public class AdminDashboardService {
         .blockedRooms(blockedRooms)
         .totalRevenue(totalRevenue)
         .platformRevenue(platformRevenue)
+        .providerFeeTotal(providerFeeTotal)
+        .netRevenue(netRevenue)
         .totalRefunds(totalRefunds)
         .openDisputes(openDisputes)
         .pendingModeration(pendingModeration)

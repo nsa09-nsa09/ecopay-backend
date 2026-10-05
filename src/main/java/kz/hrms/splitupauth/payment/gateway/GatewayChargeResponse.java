@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.payment.gateway;
 
+import java.math.BigDecimal;
 import lombok.Builder;
 import lombok.Data;
 
@@ -16,4 +17,10 @@ public class GatewayChargeResponse {
   private String providerStatusCode;
   private String failureCode;
   private String failureMessage;
+
+  /**
+   * Acquiring cost charged by the provider for this capture, when the provider reports it (Block
+   * 5d). Null when unknown. Carried onto the payment intent/transaction for net-revenue reporting.
+   */
+  private BigDecimal providerFeeAmount;
 }

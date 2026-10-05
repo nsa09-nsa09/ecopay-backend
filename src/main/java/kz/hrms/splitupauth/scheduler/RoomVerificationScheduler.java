@@ -12,13 +12,17 @@ import org.springframework.stereotype.Component;
 public class RoomVerificationScheduler {
 
   private final RoomService roomService;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.scheduler.room-verification-delay-ms:60000}")
   public void moveStartedRoomsToVerification() {
-    int movedRooms = roomService.moveStartedOpenRoomsToVerification();
-
-    if (movedRooms > 0) {
-      log.info("Moved {} room(s) from OPEN to IN_VERIFICATION", movedRooms);
-    }
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.ROOM_VERIFICATION,
+        () -> {
+          int movedRooms = roomService.moveStartedOpenRoomsToVerification();
+          if (movedRooms > 0) {
+            log.info("Moved {} room(s) from OPEN to IN_VERIFICATION", movedRooms);
+          }
+        });
   }
 }

@@ -290,8 +290,7 @@ public class DisputeService {
       notificationService.notify(
           dispute.getOpenedByUser(),
           NotificationType.DISPUTE_RESOLVED,
-          "Спор " + verdict,
-          "Ваш спор был " + verdict + ". Решение: " + dispute.getDecision(),
+          java.util.Map.of(),
           "/disputes-flows",
           java.util.Map.of("disputeId", dispute.getId(), "status", dispute.getStatus().name()));
     }

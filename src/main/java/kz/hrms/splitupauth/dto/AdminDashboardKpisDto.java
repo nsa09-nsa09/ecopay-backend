@@ -30,6 +30,18 @@ public class AdminDashboardKpisDto {
    */
   private BigDecimal platformRevenue;
 
+  /**
+   * Total acquiring cost paid to the payment provider on those same charges (Block 5d). Additive and
+   * optional: it only counts transactions that reported a fee, so historically it is 0.
+   */
+  private BigDecimal providerFeeTotal;
+
+  /**
+   * Net platform income = {@link #platformRevenue} − {@link #providerFeeTotal}. The honest margin
+   * once acquiring cost is accounted for. Equals platformRevenue when no fees are recorded.
+   */
+  private BigDecimal netRevenue;
+
   private BigDecimal totalRefunds;
   private long openDisputes;
   private long pendingModeration;

@@ -46,15 +46,19 @@ public class PriceWatchScheduler {
   /** Per-host semaphore so we never fire N parallel requests at the same site. */
   private final Map<String, Semaphore> perDomainLimit = new ConcurrentHashMap<>();
 
+  private final SchedulerLock schedulerLock;
+
   public PriceWatchScheduler(
       PriceWatchProviderRepository providerRepository,
       PriceWatchService priceWatchService,
+      SchedulerLock schedulerLock,
       @Value("${app.pricing.max-concurrency:3}") int maxConcurrency,
       @Value("${app.pricing.per-domain-concurrency:1}") int perDomainConcurrency,
       @Value("${app.pricing.enabled:true}") boolean enabled,
       @Value("${app.pricing.startup-refresh:false}") boolean startupRefresh) {
     this.providerRepository = providerRepository;
     this.priceWatchService = priceWatchService;
+    this.schedulerLock = schedulerLock;
     this.maxConcurrency = Math.max(1, maxConcurrency);
     this.perDomainConcurrency = Math.max(1, perDomainConcurrency);
     this.enabled = enabled;
@@ -97,6 +101,10 @@ public class PriceWatchScheduler {
       fixedRateString = "#{${app.pricing.tick-minutes:5} * 60 * 1000}",
       initialDelayString = "#{${app.pricing.tick-minutes:5} * 60 * 1000}")
   public void tick() {
+    schedulerLock.runExclusive(SchedulerLock.Key.PRICE_WATCH, this::tickDue);
+  }
+
+  private void tickDue() {
     if (!enabled) {
       return;
     }

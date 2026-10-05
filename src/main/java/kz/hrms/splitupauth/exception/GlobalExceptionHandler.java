@@ -23,42 +23,49 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(ForbiddenOperationException.class)
   public ResponseEntity<ErrorResponse> handleForbidden(ForbiddenOperationException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+    error.setCode(ex.getCode() != null ? ex.getCode() : "FORBIDDEN_OPERATION");
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
   }
 
   @ExceptionHandler(UserAlreadyExistsException.class)
   public ResponseEntity<ErrorResponse> handleUserAlreadyExists(UserAlreadyExistsException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+    error.setCode("USER_ALREADY_EXISTS");
     return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
   }
 
   @ExceptionHandler(InvalidCredentialsException.class)
   public ResponseEntity<ErrorResponse> handleInvalidCredentials(InvalidCredentialsException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+    error.setCode("INVALID_CREDENTIALS");
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
   }
 
   @ExceptionHandler(ResourceNotFoundException.class)
   public ResponseEntity<ErrorResponse> handleResourceNotFound(ResourceNotFoundException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+    error.setCode("RESOURCE_NOT_FOUND");
     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
   }
 
   @ExceptionHandler(InvalidRequestException.class)
   public ResponseEntity<ErrorResponse> handleInvalidRequest(InvalidRequestException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    error.setCode(ex.getCode() != null ? ex.getCode() : "INVALID_REQUEST");
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
   }
 
   @ExceptionHandler(TokenExpiredException.class)
   public ResponseEntity<ErrorResponse> handleTokenExpired(TokenExpiredException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+    error.setCode("TOKEN_EXPIRED");
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
   }
 
   @ExceptionHandler(TooManyLoginAttemptsException.class)
   public ResponseEntity<ErrorResponse> handleTooManyAttempts(TooManyLoginAttemptsException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+    error.setCode("LOGIN_RATE_LIMITED");
     return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
   }
 
@@ -68,30 +75,35 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(TooManySmsAttemptsException.class)
   public ResponseEntity<ErrorResponse> handleTooManySmsAttempts(TooManySmsAttemptsException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+    error.setCode("SMS_RATE_LIMITED");
     return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
   }
 
   @ExceptionHandler(TooManyRequestsException.class)
   public ResponseEntity<ErrorResponse> handleTooManyRequests(TooManyRequestsException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage());
+    error.setCode("RATE_LIMITED");
     return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
   }
 
   @ExceptionHandler(InvalidVerificationCodeException.class)
   public ResponseEntity<ErrorResponse> handleInvalidCode(InvalidVerificationCodeException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+    error.setCode("INVALID_VERIFICATION_CODE");
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
   }
 
   @ExceptionHandler(VerificationCodeExpiredException.class)
   public ResponseEntity<ErrorResponse> handleCodeExpired(VerificationCodeExpiredException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.GONE.value(), ex.getMessage());
+    error.setCode("VERIFICATION_CODE_EXPIRED");
     return ResponseEntity.status(HttpStatus.GONE).body(error);
   }
 
   @ExceptionHandler(PhoneAlreadyExistsException.class)
   public ResponseEntity<ErrorResponse> handlePhoneAlreadyExists(PhoneAlreadyExistsException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+    error.setCode("PHONE_ALREADY_EXISTS");
     return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
   }
 
@@ -166,6 +178,7 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(TwoFactorChallengeException.class)
   public ResponseEntity<ErrorResponse> handleTwoFactorChallenge(TwoFactorChallengeException ex) {
     ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+    error.setCode("TWO_FACTOR_REQUIRED");
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
   }
 
@@ -185,6 +198,7 @@ public class GlobalExceptionHandler {
     ErrorResponse errorResponse =
         new ErrorResponse(
             HttpStatus.BAD_REQUEST.value(), "Validation failed", LocalDateTime.now(), errors);
+    errorResponse.setCode("VALIDATION_FAILED");
     return ResponseEntity.badRequest().body(errorResponse);
   }
 
@@ -206,13 +220,15 @@ public class GlobalExceptionHandler {
 
     ErrorResponse error =
         new ErrorResponse(HttpStatus.BAD_REQUEST.value(), message, LocalDateTime.now(), errors);
+    error.setCode("INVALID_PARAMETER");
     return ResponseEntity.badRequest().body(error);
   }
 
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ResponseEntity<ErrorResponse> handleUnreadableRequest(HttpMessageNotReadableException ex) {
-    return ResponseEntity.badRequest()
-        .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Invalid request body"));
+    ErrorResponse error = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Invalid request body");
+    error.setCode("MALFORMED_REQUEST_BODY");
+    return ResponseEntity.badRequest().body(error);
   }
 
   @ExceptionHandler(AccessDeniedException.class)
@@ -220,6 +236,7 @@ public class GlobalExceptionHandler {
     ErrorResponse error =
         new ErrorResponse(
             HttpStatus.FORBIDDEN.value(), "You do not have permission to perform this action");
+    error.setCode("ACCESS_DENIED");
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
   }
 
@@ -245,6 +262,7 @@ public class GlobalExceptionHandler {
     }
 
     ErrorResponse error = new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(), safeMessage);
+    error.setCode("INTERNAL_ERROR");
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
   }
 }

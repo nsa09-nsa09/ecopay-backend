@@ -32,14 +32,14 @@ class PayoutBlockServiceTest {
   @Test
   void blockLocksPendingPayoutAndMakesItFrozen() {
     PaymentIntent intent = PaymentIntent.builder().id(1L).build();
-    Payout payout = Payout.builder().id(2L).status("PENDING").build();
+    Payout payout = Payout.builder().id(2L).status(PayoutStatus.PENDING).build();
     when(payoutRepository.findByTriggeringPaymentIntent(intent)).thenReturn(Optional.of(payout));
     when(payoutRepository.findWithLockById(2L)).thenReturn(Optional.of(payout));
 
     service.blockForPaymentIntent(
         intent, PayoutBlockSourceType.REFUND_REQUEST, 3L, "ACCESS_NOT_WORKING");
 
-    assertEquals("FROZEN", payout.getStatus());
+    assertEquals(PayoutStatus.FROZEN, payout.getStatus());
     verify(payoutBlockRepository).save(any(PayoutBlock.class));
     verify(payoutRepository).save(payout);
   }
@@ -47,14 +47,14 @@ class PayoutBlockServiceTest {
   @Test
   void processingPayoutCannotBeSilentlyReclassifiedAsFrozen() {
     PaymentIntent intent = PaymentIntent.builder().id(1L).build();
-    Payout payout = Payout.builder().id(2L).status("PROCESSING").build();
+    Payout payout = Payout.builder().id(2L).status(PayoutStatus.PROCESSING).build();
     when(payoutRepository.findByTriggeringPaymentIntent(intent)).thenReturn(Optional.of(payout));
     when(payoutRepository.findWithLockById(2L)).thenReturn(Optional.of(payout));
 
     service.blockForPaymentIntent(
         intent, PayoutBlockSourceType.REFUND_REQUEST, 3L, "ACCESS_NOT_WORKING");
 
-    assertEquals("PROCESSING", payout.getStatus());
+    assertEquals(PayoutStatus.PROCESSING, payout.getStatus());
     verify(payoutBlockRepository, never()).save(any());
   }
 
@@ -64,7 +64,7 @@ class PayoutBlockServiceTest {
     Payout payout =
         Payout.builder()
             .id(2L)
-            .status("FROZEN")
+            .status(PayoutStatus.FROZEN)
             .payoutMethod(PayoutMethod.builder().id(9L).build())
             .payableAmount(new BigDecimal("2500.00"))
             .failureReason("Blocked")
@@ -88,7 +88,7 @@ class PayoutBlockServiceTest {
     service.releaseForPaymentIntent(intent, PayoutBlockSourceType.REFUND_REQUEST, 4L);
 
     assertEquals(PayoutBlockStatus.RELEASED, block.getStatus());
-    assertEquals("PENDING", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING, payout.getStatus());
     assertEquals(null, payout.getFailureReason());
     verify(payoutBlockRepository).saveAndFlush(block);
     verify(payoutRepository).save(payout);

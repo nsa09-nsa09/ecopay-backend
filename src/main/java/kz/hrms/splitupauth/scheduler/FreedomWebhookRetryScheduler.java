@@ -12,13 +12,18 @@ import org.springframework.stereotype.Component;
 public class FreedomWebhookRetryScheduler {
 
   private final FreedomWebhookInboxCoordinator coordinator;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.webhooks.freedom.retry-delay-ms:60000}")
   public void retryDueWebhooks() {
-    try {
-      coordinator.retryDueWebhooks();
-    } catch (RuntimeException ex) {
-      log.error("Freedom webhook retry scan failed: {}", ex.toString(), ex);
-    }
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.FREEDOM_WEBHOOK_RETRY,
+        () -> {
+          try {
+            coordinator.retryDueWebhooks();
+          } catch (RuntimeException ex) {
+            log.error("Freedom webhook retry scan failed: {}", ex.toString(), ex);
+          }
+        });
   }
 }

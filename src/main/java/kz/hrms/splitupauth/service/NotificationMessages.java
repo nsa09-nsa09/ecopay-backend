@@ -1,44 +1,75 @@
 package kz.hrms.splitupauth.service;
 
+import java.util.Map;
 import kz.hrms.splitupauth.entity.NotificationType;
 
-/** Localized, customer-safe copy for in-app and email notifications. */
+/**
+ * Localized, customer-safe copy for in-app and email notifications. Entries are TEMPLATES: the
+ * contextual ones carry {@code {placeholders}} ({roomTitle}, {amount}, {currency}, {memberName})
+ * that {@link #forRecipient} fills from the caller's structured params, so each recipient gets a
+ * message about their specific room/amount instead of identical generic copy.
+ */
 final class NotificationMessages {
 
   record Copy(String title, String body) {}
 
   private NotificationMessages() {}
 
-  static Copy forRecipient(NotificationType type, String recipientLocale) {
+  static Copy forRecipient(
+      NotificationType type, String recipientLocale, Map<String, String> params) {
     MailLocale locale = MailLocale.from(recipientLocale);
+    Copy template = template(type, locale);
+    return fill(template, params);
+  }
+
+  /** Replaces {key} placeholders in the template with the caller's params (missing → left blank). */
+  private static Copy fill(Copy template, Map<String, String> params) {
+    if (params == null || params.isEmpty()) {
+      return template;
+    }
+    return new Copy(fill(template.title(), params), fill(template.body(), params));
+  }
+
+  private static String fill(String s, Map<String, String> params) {
+    if (s == null || s.indexOf('{') < 0) {
+      return s;
+    }
+    String out = s;
+    for (Map.Entry<String, String> e : params.entrySet()) {
+      out = out.replace("{" + e.getKey() + "}", e.getValue() == null ? "" : e.getValue());
+    }
+    return out;
+  }
+
+  private static Copy template(NotificationType type, MailLocale locale) {
     return switch (type) {
       case APPLICATION_SENT ->
           copy(
               locale,
               "Заявка отправлена",
-              "Ваша заявка на участие отправлена.",
+              "Ваша заявка на участие в тарифе «{tariffName}» сервиса «{serviceName}» отправлена.",
               "Өтінім жіберілді",
-              "Қатысуға өтініміңіз жіберілді.",
+              "«{serviceName}» сервисінің «{tariffName}» тарифіне қатысуға өтініміңіз жіберілді.",
               "Application sent",
-              "Your membership application has been sent.");
+              "Your application to join «{tariffName}» ({serviceName}) has been sent.");
       case MEMBER_JOINED ->
           copy(
               locale,
               "Новая заявка",
-              "В вашу комнату поступила новая заявка.",
+              "{memberName} подал(а) заявку в вашу комнату «{roomTitle}».",
               "Жаңа өтінім",
-              "Бөлмеңізге жаңа өтінім түсті.",
+              "{memberName} «{roomTitle}» бөлмеңізге өтінім берді.",
               "New application",
-              "Your room has received a new application.");
+              "{memberName} applied to join your room «{roomTitle}».");
       case PAYMENT_SUCCESS ->
           copy(
               locale,
               "Оплата подтверждена",
-              "Оплата прошла успешно.",
+              "Оплата за участие в комнате «{roomTitle}» на сумму {amount} {currency} прошла успешно.",
               "Төлем расталды",
-              "Төлем сәтті өтті.",
+              "«{roomTitle}» бөлмесіне қатысу үшін {amount} {currency} төлемі сәтті өтті.",
               "Payment confirmed",
-              "Your payment was successful.");
+              "Your payment of {amount} {currency} for room «{roomTitle}» was successful.");
       case PAYMENT_FAILED ->
           copy(
               locale,
@@ -52,47 +83,47 @@ final class NotificationMessages {
           copy(
               locale,
               "Участник оплатил",
-              "Участник оплатил место и ожидает предоставления доступа.",
+              "Участник {memberName} оплатил место в комнате «{roomTitle}» и ожидает доступа.",
               "Қатысушы төледі",
-              "Қатысушы орнын төлеп, қолжетімділікті күтуде.",
+              "{memberName} «{roomTitle}» бөлмесіндегі орнын төледі және қолжетімділікті күтуде.",
               "Member paid",
-              "A member paid for their place and is waiting for access.");
+              "{memberName} paid for their place in room «{roomTitle}» and is waiting for access.");
       case OWNER_ACCESS_GRANTED ->
           copy(
               locale,
               "Доступ предоставлен",
-              "Владелец предоставил доступ. Подтвердите его получение.",
+              "Владелец предоставил доступ к «{tariffName}». Подтвердите его получение.",
               "Қолжетімділік берілді",
-              "Иесі қолжетімділік берді. Оны алғаныңызды растаңыз.",
+              "Иесі «{tariffName}» қолжетімділігін берді. Оны алғаныңызды растаңыз.",
               "Access granted",
-              "The owner granted access. Please confirm that you received it.");
+              "The owner granted access to «{tariffName}». Please confirm that you received it.");
       case MEMBER_ACCESS_CONFIRMED ->
           copy(
               locale,
               "Доступ подтверждён",
-              "Вы подтвердили получение доступа.",
+              "Вы подтвердили получение доступа к тарифу «{tariffName}».",
               "Қолжетімділік расталды",
-              "Сіз қолжетімділікті алғаныңызды растадыңыз.",
+              "Сіз «{tariffName}» тарифіне қолжетімділікті алғаныңызды растадыңыз.",
               "Access confirmed",
-              "You confirmed that you received access.");
+              "You confirmed that you received access to «{tariffName}».");
       case MEMBER_CONFIRMED ->
           copy(
               locale,
               "Участник подтвердил доступ",
-              "Участник подтвердил получение доступа.",
+              "Участник {memberName} подтвердил доступ в комнате «{roomTitle}».",
               "Қатысушы қолжетімділікті растады",
-              "Қатысушы қолжетімділікті алғанын растады.",
+              "{memberName} «{roomTitle}» бөлмесінде қолжетімділікті растады.",
               "Member confirmed access",
-              "A member confirmed that they received access.");
+              "{memberName} confirmed access in room «{roomTitle}».");
       case MEMBERSHIP_ACTIVATED ->
           copy(
               locale,
               "Участие активно",
-              "Ваше участие активировано.",
+              "Ваше участие в комнате «{roomTitle}» активировано.",
               "Қатысу белсенді",
-              "Сіздің қатысуыңыз белсендірілді.",
+              "«{roomTitle}» бөлмесіндегі қатысуыңыз белсендірілді.",
               "Membership active",
-              "Your membership is now active.");
+              "Your membership in room «{roomTitle}» is now active.");
       case MEMBERSHIP_REJECTED ->
           copy(
               locale,
@@ -115,29 +146,29 @@ final class NotificationMessages {
           copy(
               locale,
               "Комната активна",
-              "Ваша комната перешла в активный статус.",
+              "Комната «{roomTitle}» перешла в активный статус.",
               "Бөлме белсенді",
-              "Бөлмеңіз белсенді мәртебеге өтті.",
+              "«{roomTitle}» бөлмесі белсенді мәртебеге өтті.",
               "Room active",
-              "Your room is now active.");
+              "Room «{roomTitle}» is now active.");
       case ROOM_FULL_AWAITING_ACCESS ->
           copy(
               locale,
               "Комната заполнена",
-              "Все места оплачены. Предоставьте участникам доступ.",
+              "Все места в комнате «{roomTitle}» оплачены. Предоставьте участникам доступ.",
               "Бөлме толды",
-              "Барлық орын төленді. Қатысушыларға қолжетімділік беріңіз.",
+              "«{roomTitle}» бөлмесіндегі барлық орын төленді. Қатысушыларға қолжетімділік беріңіз.",
               "Room is full",
-              "All places are paid. Please grant access to the members.");
+              "All places in room «{roomTitle}» are paid. Please grant access to the members.");
       case CHAT_MESSAGE ->
           copy(
               locale,
               "Новое сообщение",
-              "В чате комнаты появилось новое сообщение.",
+              "Новое сообщение в чате комнаты «{roomTitle}».",
               "Жаңа хабарлама",
-              "Бөлме чатында жаңа хабарлама бар.",
+              "«{roomTitle}» бөлмесінің чатында жаңа хабарлама.",
               "New message",
-              "There is a new message in the room chat.");
+              "A new message in the chat of room «{roomTitle}».");
       case ROOM_COMPLETED ->
           copy(
               locale,
@@ -169,20 +200,20 @@ final class NotificationMessages {
           copy(
               locale,
               "Возврат отправлен",
-              "Возврат средств оформлен.",
+              "Возврат средств на сумму {amount} {currency} оформлен.",
               "Қаражатты қайтару жіберілді",
-              "Қаражатты қайтару рәсімделді.",
+              "{amount} {currency} сомасындағы қаражатты қайтару рәсімделді.",
               "Refund issued",
-              "Your refund has been issued.");
+              "A refund of {amount} {currency} has been issued.");
       case PAYOUT_SENT ->
           copy(
               locale,
               "Выплата отправлена",
-              "Выплата отправлена на выбранный способ получения.",
+              "Выплата на сумму {amount} {currency} отправлена на выбранный способ получения.",
               "Төлем жіберілді",
-              "Төлем таңдалған алу тәсіліне жіберілді.",
+              "{amount} {currency} сомасындағы төлем таңдалған алу тәсіліне жіберілді.",
               "Payout sent",
-              "The payout was sent to your selected payout method.");
+              "A payout of {amount} {currency} was sent to your selected payout method.");
       case DISPUTE_OPENED ->
           copy(
               locale,

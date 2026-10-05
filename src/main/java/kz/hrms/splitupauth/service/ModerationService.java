@@ -332,13 +332,7 @@ public class ModerationService {
 
     tokenRevocationService.revokeAllUserTokens(target);
     accountRealtimeService.publishBanned(target.getId(), target.getBanReason(), now);
-    notificationService.notify(
-        target,
-        NotificationType.ACCOUNT_BANNED,
-        "Аккаунт заблокирован",
-        "Ваш аккаунт был заблокирован. Причина: " + request.getReason(),
-        null,
-        null);
+    notificationService.notify(target, NotificationType.ACCOUNT_BANNED);
 
     adminActionLogRepository.save(
         AdminActionLog.builder()
@@ -470,14 +464,7 @@ public class ModerationService {
     notificationService.notify(
         roomMember.getUser(),
         NotificationType.MEMBERSHIP_ACTIVATED,
-        "Участие активно",
-        "Ваше участие в тарифе «"
-            + tariffName
-            + "» сервиса «"
-            + (room.getService() == null || room.getService().getName() == null
-                ? "сервиса"
-                : room.getService().getName())
-            + "» активно.",
+        java.util.Map.of("roomTitle", room.getTitle() == null ? "" : room.getTitle()),
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
   }

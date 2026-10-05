@@ -82,8 +82,10 @@ public class AuthController {
 
   @PostMapping("/login")
   public ResponseEntity<AuthResponse> login(
-      @Valid @RequestBody LoginRequest request, HttpServletResponse response) {
-    AuthResponse auth = authService.login(request);
+      @Valid @RequestBody LoginRequest request,
+      HttpServletRequest httpRequest,
+      HttpServletResponse response) {
+    AuthResponse auth = authService.login(request, httpRequest);
     // Staff 2FA path does not issue tokens yet — only set the cookie when a
     // real refresh token was minted (regular users, or the second 2FA step).
     if (auth.getRefreshToken() != null) {
@@ -158,8 +160,8 @@ public class AuthController {
 
   @PostMapping("/reset-password")
   public ResponseEntity<Void> requestPasswordReset(
-      @Valid @RequestBody PasswordResetRequest request) {
-    authService.requestPasswordReset(request);
+      @Valid @RequestBody PasswordResetRequest request, HttpServletRequest httpRequest) {
+    authService.requestPasswordReset(request, httpRequest);
     return ResponseEntity.ok().build();
   }
 

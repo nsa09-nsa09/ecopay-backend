@@ -16,25 +16,31 @@ public class CleanupScheduler {
   private final RateLimitService rateLimitService;
   private final StaffTwoFactorService staffTwoFactorService;
   private final PaymentService paymentService;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(cron = "0 0 2 * * ?")
   public void cleanupExpiredTokens() {
-    refreshTokenService.cleanupExpiredTokens();
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.CLEANUP_EXPIRED_TOKENS, refreshTokenService::cleanupExpiredTokens);
   }
 
   @Scheduled(cron = "0 0 3 * * ?")
   public void cleanupOldLoginAttempts() {
-    rateLimitService.cleanupOldAttempts();
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.CLEANUP_OLD_LOGIN_ATTEMPTS, rateLimitService::cleanupOldAttempts);
   }
 
   @Scheduled(cron = "0 30 3 * * ?")
   public void cleanupExpiredStaffTwoFactorChallenges() {
-    staffTwoFactorService.cleanupExpired();
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.CLEANUP_STAFF_2FA, staffTwoFactorService::cleanupExpired);
   }
 
   /** Every 5 minutes: fail PENDING payment intents that passed their expiry. */
   @Scheduled(fixedDelayString = "${app.scheduler.intent-expiry-delay-ms:300000}")
   public void expireStalePaymentIntents() {
-    paymentService.expireStalePendingIntents();
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.EXPIRE_STALE_PAYMENT_INTENTS,
+        paymentService::expireStalePendingIntents);
   }
 }

@@ -95,8 +95,7 @@ public class RoomChatService {
    * handles anyone currently viewing; this is the persistent bell entry. In-app only.
    */
   private void notifyOtherParticipants(Room room, User sender, RoomChatMessageDto dto) {
-    String title = "Новое сообщение";
-    String body = dto.getSenderName() + " написал(а) в чате комнаты «" + room.getTitle() + "».";
+    Map<String, String> params = Map.of("roomTitle", room.getTitle() == null ? "" : room.getTitle());
     Map<String, Object> metadata = Map.of("roomId", room.getId());
 
     User owner = room.getOwner();
@@ -104,8 +103,7 @@ public class RoomChatService {
       notificationService.notify(
           owner,
           NotificationType.CHAT_MESSAGE,
-          title,
-          body,
+          params,
           "/rooms/owner/" + room.getId(),
           metadata);
     }
@@ -120,7 +118,7 @@ public class RoomChatService {
         continue;
       }
       notificationService.notify(
-          u, NotificationType.CHAT_MESSAGE, title, body, "/rooms/member/" + room.getId(), metadata);
+          u, NotificationType.CHAT_MESSAGE, params, "/rooms/member/" + room.getId(), metadata);
     }
   }
 

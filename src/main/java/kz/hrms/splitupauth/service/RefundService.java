@@ -252,18 +252,20 @@ public class RefundService {
     if (paymentTransaction.getType() != PaymentTransactionType.CHARGE
         || (paymentTransaction.getStatus() != PaymentTransactionStatus.SUCCESS
             && paymentTransaction.getStatus() != PaymentTransactionStatus.REFUNDED_PARTIAL)) {
-      throw new InvalidRequestException("Only a captured charge can be refunded");
+      throw new InvalidRequestException("REFUND_NOT_CAPTURED", "Only a captured charge can be refunded");
     }
 
     BigDecimal already = refundTransactionRepository.sumActiveRefundAmounts(paymentTransaction);
     BigDecimal remaining = paymentTransaction.getAmount().subtract(already);
     if (remaining.signum() <= 0) {
-      throw new InvalidRequestException("No captured balance remains to refund");
+      throw new InvalidRequestException(
+          "REFUND_NO_BALANCE", "No captured balance remains to refund");
     }
     BigDecimal amount =
         requestedAmount == null ? remaining : normalizeRefundAmount(requestedAmount);
     if (amount.compareTo(remaining) > 0) {
-      throw new InvalidRequestException("Refund amount cannot exceed available captured balance");
+      throw new InvalidRequestException(
+          "REFUND_AMOUNT_EXCEEDS_BALANCE", "Refund amount cannot exceed available captured balance");
     }
 
     RefundTransaction refund =
@@ -320,7 +322,8 @@ public class RefundService {
     BigDecimal already = refundTransactionRepository.sumActiveRefundAmounts(paymentTransaction);
     BigDecimal remaining = paymentTransaction.getAmount().subtract(already);
     if (amount.compareTo(remaining) > 0) {
-      throw new InvalidRequestException("Refund amount cannot exceed available captured balance");
+      throw new InvalidRequestException(
+          "REFUND_AMOUNT_EXCEEDS_BALANCE", "Refund amount cannot exceed available captured balance");
     }
 
     Dispute dispute = null;
@@ -518,8 +521,9 @@ public class RefundService {
     notificationService.notify(
         recipient,
         NotificationType.REFUND_ISSUED,
-        "Refund issued",
-        "A refund of " + refund.getAmount() + " " + refund.getCurrency() + " has been issued.",
+        java.util.Map.of(
+            "amount", String.valueOf(refund.getAmount()),
+            "currency", refund.getCurrency() == null ? "KZT" : refund.getCurrency()),
         "/payment/refund",
         java.util.Map.of("refundId", refund.getId()));
   }
@@ -579,7 +583,8 @@ public class RefundService {
 
   private BigDecimal normalizeRefundAmount(BigDecimal amount) {
     if (amount == null || amount.signum() <= 0) {
-      throw new InvalidRequestException("Refund amount must be greater than zero");
+      throw new InvalidRequestException(
+          "REFUND_AMOUNT_INVALID", "Refund amount must be greater than zero");
     }
     try {
       return amount.setScale(2, java.math.RoundingMode.UNNECESSARY);

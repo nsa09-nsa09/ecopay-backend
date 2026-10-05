@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.PayoutStatus;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -20,12 +21,12 @@ public interface PayoutRepository
     extends JpaRepository<Payout, Long>, JpaSpecificationExecutor<Payout> {
   List<Payout> findByUserOrderByCreatedAtDesc(User user);
 
-  long countByUserAndStatusIn(User user, List<String> statuses);
+  long countByUserAndStatusIn(User user, List<PayoutStatus> statuses);
 
-  List<Payout> findByStatusInOrderByCreatedAtAsc(List<String> statuses);
+  List<Payout> findByStatusInOrderByCreatedAtAsc(List<PayoutStatus> statuses);
 
   @Query(
-      "select p from Payout p where p.status = 'PENDING_PROVIDER' "
+      "select p from Payout p where p.status = kz.hrms.splitupauth.entity.PayoutStatus.PENDING_PROVIDER "
           + "and p.providerPayoutId is not null "
           + "and (p.nextRetryAt is null or p.nextRetryAt <= :now) "
           + "order by p.createdAt asc")
@@ -36,7 +37,7 @@ public interface PayoutRepository
    * processing payouts are deliberately excluded by the status/release predicates.
    */
   List<Payout> findByUserAndCurrencyAndStatusInAndReleaseAtAfterOrderByReleaseAtAsc(
-      User user, String currency, List<String> statuses, LocalDateTime releaseAt);
+      User user, String currency, List<PayoutStatus> statuses, LocalDateTime releaseAt);
 
   @Query(
       "select p from Payout p where p.triggeringPaymentIntent.roomMember = :roomMember "
@@ -45,7 +46,7 @@ public interface PayoutRepository
   List<Payout> findHeldByRoomMember(
       @Param("roomMember") RoomMember roomMember,
       @Param("currency") String currency,
-      @Param("statuses") List<String> statuses,
+      @Param("statuses") List<PayoutStatus> statuses,
       @Param("now") LocalDateTime now);
 
   /** Payouts in a dispatchable status whose hold window has elapsed (due now). */
@@ -55,14 +56,14 @@ public interface PayoutRepository
           + "AND p.payoutBatch IS NULL "
           + "AND (p.releaseAt IS NULL OR p.releaseAt <= :now) "
           + "AND (p.nextRetryAt IS NULL OR p.nextRetryAt <= :now)) "
-          + "OR (p.status = 'PROCESSING' "
+          + "OR (p.status = kz.hrms.splitupauth.entity.PayoutStatus.PROCESSING "
           + "AND p.payoutBatch IS NULL "
           + "AND p.providerPayoutId IS NULL "
           + "AND p.leaseUntil IS NOT NULL "
           + "AND p.leaseUntil <= :now) "
           + "ORDER BY p.createdAt ASC")
   List<Payout> findDispatchable(
-      @Param("statuses") List<String> statuses, @Param("now") LocalDateTime now);
+      @Param("statuses") List<PayoutStatus> statuses, @Param("now") LocalDateTime now);
 
   Optional<Payout> findByProviderPayoutId(String providerPayoutId);
 
@@ -78,7 +79,7 @@ public interface PayoutRepository
       "select p from Payout p where p.triggeringPaymentIntent.roomMember = :roomMember "
           + "and p.status in :statuses")
   List<Payout> findWithLockByRoomMemberAndStatusIn(
-      @Param("roomMember") RoomMember roomMember, @Param("statuses") List<String> statuses);
+      @Param("roomMember") RoomMember roomMember, @Param("statuses") List<PayoutStatus> statuses);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select p from Payout p where p.id = :id")

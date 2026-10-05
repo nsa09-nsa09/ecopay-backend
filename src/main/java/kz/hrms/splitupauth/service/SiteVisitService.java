@@ -5,13 +5,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Optional;
 import java.util.UUID;
-import kz.hrms.splitupauth.entity.SiteVisit;
 import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.repository.SiteVisitRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,8 +32,27 @@ public class SiteVisitService {
 
   private static final int MAX_PATH_LENGTH = 255;
 
-  private final SiteVisitRepository repository;
+  /**
+   * Single atomic UPSERT replacing the old find → mutate → save (which issued 2–3 statements and
+   * raced on the first hit of the day). {@code RETURNING (xmax = 0)} is Postgres's insert-vs-update
+   * discriminator: true when the row was freshly inserted (a new unique visitor for the day). The
+   * update branch mirrors the previous mutation exactly: bump page_count, refresh last_seen, keep a
+   * non-null path, and only ever upgrade is_authenticated / attach the user (never clear them).
+   */
+  private static final String UPSERT_SQL =
+      "INSERT INTO site_visit (visitor_id, visit_date, first_seen_at, last_seen_at, page_count, "
+          + "is_authenticated, user_id, last_path) "
+          + "VALUES (?, ?, ?, ?, 1, ?, CAST(? AS bigint), CAST(? AS varchar)) "
+          + "ON CONFLICT (visitor_id, visit_date) DO UPDATE SET "
+          + "last_seen_at = EXCLUDED.last_seen_at, "
+          + "page_count = site_visit.page_count + 1, "
+          + "last_path = COALESCE(EXCLUDED.last_path, site_visit.last_path), "
+          + "is_authenticated = (site_visit.is_authenticated OR EXCLUDED.is_authenticated), "
+          + "user_id = COALESCE(site_visit.user_id, EXCLUDED.user_id) "
+          + "RETURNING (xmax = 0)";
+
   private final InMemoryRateLimiter rateLimiter;
+  private final JdbcTemplate jdbcTemplate;
 
   public record VisitResult(UUID visitorId, boolean newVisitorToday) {}
 
@@ -62,56 +78,19 @@ public class SiteVisitService {
     String truncatedPath =
         path != null && path.length() > MAX_PATH_LENGTH ? path.substring(0, MAX_PATH_LENGTH) : path;
 
-    Optional<SiteVisit> existing = repository.findByVisitorIdAndVisitDate(visitorId, today);
-    if (existing.isPresent()) {
-      SiteVisit v = existing.get();
-      v.setLastSeenAt(now);
-      v.setPageCount(v.getPageCount() == null ? 1 : v.getPageCount() + 1);
-      if (truncatedPath != null) {
-        v.setLastPath(truncatedPath);
-      }
-      if (authenticatedUser != null) {
-        v.setIsAuthenticated(true);
-        if (v.getUser() == null) {
-          v.setUser(authenticatedUser);
-        }
-      }
-      repository.save(v);
-      return new VisitResult(visitorId, false);
-    }
-
-    SiteVisit fresh =
-        SiteVisit.builder()
-            .visitorId(visitorId)
-            .visitDate(today)
-            .firstSeenAt(now)
-            .lastSeenAt(now)
-            .pageCount(1)
-            .isAuthenticated(authenticatedUser != null)
-            .user(authenticatedUser)
-            .lastPath(truncatedPath)
-            .build();
-    try {
-      repository.save(fresh);
-      return new VisitResult(visitorId, true);
-    } catch (DataIntegrityViolationException race) {
-      // Concurrent first-of-day insert from another request — fall back to update.
-      SiteVisit other =
-          repository.findByVisitorIdAndVisitDate(visitorId, today).orElseThrow(() -> race);
-      other.setLastSeenAt(now);
-      other.setPageCount(other.getPageCount() == null ? 1 : other.getPageCount() + 1);
-      if (truncatedPath != null) {
-        other.setLastPath(truncatedPath);
-      }
-      if (authenticatedUser != null) {
-        other.setIsAuthenticated(true);
-        if (other.getUser() == null) {
-          other.setUser(authenticatedUser);
-        }
-      }
-      repository.save(other);
-      return new VisitResult(visitorId, false);
-    }
+    Long userId = authenticatedUser == null ? null : authenticatedUser.getId();
+    Boolean inserted =
+        jdbcTemplate.queryForObject(
+            UPSERT_SQL,
+            Boolean.class,
+            visitorId,
+            today,
+            now,
+            now,
+            authenticatedUser != null,
+            userId,
+            truncatedPath);
+    return new VisitResult(visitorId, Boolean.TRUE.equals(inserted));
   }
 
   private UUID readOrIssueVisitorId(HttpServletRequest request, HttpServletResponse response) {

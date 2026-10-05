@@ -10,7 +10,10 @@ import lombok.NoArgsConstructor;
 @Entity
 @Table(
     name = "login_attempts",
-    indexes = {@Index(name = "idx_email_attempt", columnList = "email, attempt_time")})
+    indexes = {
+      @Index(name = "idx_email_attempt", columnList = "email, attempt_time"),
+      @Index(name = "idx_login_attempt_ip", columnList = "ip, attempt_time")
+    })
 @Data
 @Builder
 @NoArgsConstructor
@@ -29,6 +32,10 @@ public class LoginAttempt {
 
   @Column(nullable = false)
   private Boolean successful;
+
+  /** Source IP (from the trusted proxy chain) — backs the per-IP credential-stuffing throttle. */
+  @Column(name = "ip", length = 64)
+  private String ip;
 
   @PrePersist
   protected void onCreate() {

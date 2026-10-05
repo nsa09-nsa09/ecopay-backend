@@ -13,9 +13,12 @@ public class AccessConfirmationScheduler {
 
   private final AccessConfirmationService accessConfirmationService;
   private final Clock clock;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.access.deemed-confirmation-delay-ms:60000}")
   public void processDueConfirmations() {
-    accessConfirmationService.processDue(LocalDateTime.now(clock), 100);
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.ACCESS_CONFIRMATION,
+        () -> accessConfirmationService.processDue(LocalDateTime.now(clock), 100));
   }
 }

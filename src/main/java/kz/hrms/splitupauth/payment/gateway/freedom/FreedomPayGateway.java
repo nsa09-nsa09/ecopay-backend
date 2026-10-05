@@ -240,7 +240,7 @@ public class FreedomPayGateway implements PaymentGateway {
     String sig = signatureService.signWithMerchantSecret("get_status.php", params);
     params.put("pg_sig", sig);
 
-    Map<String, String> response = client.postForm("/get_status.php", params);
+    Map<String, String> response = client.postFormRetryable("/get_status.php", params);
     // Diagnostic: which fields Freedom Pay returns for a saved-card status query (token may
     // only arrive via the result webhook, not here). Values omitted — keys + presence only.
     log.info(
@@ -290,7 +290,7 @@ public class FreedomPayGateway implements PaymentGateway {
     String script = "payment_status2";
     params.put("pg_sig", signatureService.signWithPayoutSecret(script, params));
 
-    Map<String, String> response = client.postForm("/api/payment_status2", params);
+    Map<String, String> response = client.postFormRetryable("/api/payment_status2", params);
     String requestStatus = response.getOrDefault("pg_status", "");
     String paymentStatus = response.getOrDefault("pg_payment_status", "").trim().toLowerCase();
     String mapped =
@@ -328,7 +328,7 @@ public class FreedomPayGateway implements PaymentGateway {
 
     String xml;
     try {
-      xml = client.postFormRaw(path, params);
+      xml = client.postFormRawRetryable(path, params);
     } catch (Exception ex) {
       log.warn("cardstorage/list failed for user {}: {}", userId, ex.getMessage());
       return null;

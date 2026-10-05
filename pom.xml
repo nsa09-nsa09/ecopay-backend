@@ -93,6 +93,13 @@
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
+        <!-- Apache HttpClient 5: bounded pooling connection manager + explicit socket/connect
+             timeouts for the Freedom Pay client (version managed by the Spring Boot BOM). -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+        </dependency>
+
         <!-- AWS S3 (object storage for avatars / uploads). Version managed by the BOM below. -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

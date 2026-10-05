@@ -31,6 +31,7 @@ import org.springframework.stereotype.Component;
 public class FxRateScheduler {
 
   private final ExchangeRateService exchangeRateService;
+  private final SchedulerLock schedulerLock;
 
   /** Async so a slow upstream cannot delay the rest of application startup. */
   @Async
@@ -49,11 +50,11 @@ public class FxRateScheduler {
       fixedRateString = "#{${app.fx.refresh-interval-hours:6} * 60 * 60 * 1000}",
       initialDelayString = "#{${app.fx.refresh-interval-hours:6} * 60 * 60 * 1000}")
   public void refreshIntraday() {
-    exchangeRateService.refresh();
+    schedulerLock.runExclusive(SchedulerLock.Key.FX_REFRESH_INTRADAY, exchangeRateService::refresh);
   }
 
   @Scheduled(cron = "0 15 4 * * ?")
   public void refreshDaily() {
-    exchangeRateService.refresh();
+    schedulerLock.runExclusive(SchedulerLock.Key.FX_REFRESH_DAILY, exchangeRateService::refresh);
   }
 }

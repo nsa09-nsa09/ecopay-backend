@@ -1,7 +1,6 @@
 package kz.hrms.splitupauth.service;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import kz.hrms.splitupauth.entity.LoginAttempt;
 import kz.hrms.splitupauth.exception.TooManyLoginAttemptsException;
 import kz.hrms.splitupauth.repository.LoginAttemptRepository;
@@ -22,24 +21,57 @@ public class RateLimitService {
   @Value("${app.rate-limit.login.duration-minutes}")
   private Integer durationMinutes;
 
+  /**
+   * Per-source-IP failed-attempt ceiling, across all emails. Deliberately higher than the per-email
+   * {@code maxAttempts} so a shared NAT/office IP with a few fat-fingering users isn't locked out,
+   * while a credential-stuffing run that cycles through many accounts from one host is still caught.
+   */
+  @Value("${app.rate-limit.login.ip-attempts:20}")
+  private Integer maxIpAttempts;
+
+  /** Legacy entry point (per-email only). */
   @Transactional
   public void checkLoginAttempts(String email) {
+    checkLoginAttempts(email, null);
+  }
+
+  /**
+   * Enforces both the per-email bucket and, when an IP is known, the per-IP bucket. Both counts are
+   * index-backed COUNT queries (no row materialization). Throws the same exception/message for
+   * either, so the caller can't tell which bucket tripped.
+   */
+  @Transactional
+  public void checkLoginAttempts(String email, String ip) {
     LocalDateTime thresholdTime = LocalDateTime.now().minusMinutes(durationMinutes);
-    List<LoginAttempt> recentAttempts =
-        loginAttemptRepository.findByEmailAndAttemptTimeAfter(email, thresholdTime);
 
-    long failedAttempts =
-        recentAttempts.stream().filter(attempt -> !attempt.getSuccessful()).count();
-
-    if (failedAttempts >= maxAttempts) {
+    long failedByEmail =
+        loginAttemptRepository.countByEmailAndSuccessfulFalseAndAttemptTimeAfter(
+            email, thresholdTime);
+    if (failedByEmail >= maxAttempts) {
       throw new TooManyLoginAttemptsException(
           "Too many failed login attempts. Please try again later.");
     }
+
+    if (ip != null && !ip.isBlank()) {
+      long failedByIp =
+          loginAttemptRepository.countByIpAndSuccessfulFalseAndAttemptTimeAfter(ip, thresholdTime);
+      if (failedByIp >= maxIpAttempts) {
+        throw new TooManyLoginAttemptsException(
+            "Too many failed login attempts. Please try again later.");
+      }
+    }
+  }
+
+  /** Legacy entry point (no IP recorded). */
+  @Transactional
+  public void recordLoginAttempt(String email, boolean successful) {
+    recordLoginAttempt(email, successful, null);
   }
 
   @Transactional
-  public void recordLoginAttempt(String email, boolean successful) {
-    LoginAttempt attempt = LoginAttempt.builder().email(email).successful(successful).build();
+  public void recordLoginAttempt(String email, boolean successful, String ip) {
+    LoginAttempt attempt =
+        LoginAttempt.builder().email(email).successful(successful).ip(ip).build();
     loginAttemptRepository.save(attempt);
   }
 

@@ -290,7 +290,7 @@ public class AdminFinanceService {
         .releaseAt(p.getReleaseAt())
         .processedAt(p.getProcessedAt())
         .nextRetryAt(p.getNextRetryAt())
-        .status(p.getStatus())
+        .status(p.getStatus() == null ? null : p.getStatus().name())
         .amount(p.getAmount())
         .currency(p.getCurrency())
         .roomId(room != null ? room.getId() : null)

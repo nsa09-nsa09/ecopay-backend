@@ -151,7 +151,8 @@ class FreedomPayGatewayIdempotencyTest {
   @Test
   void payoutStatusUsesPayoutSecretAndDocumentedStatusEndpoint() {
     when(signatureService.signWithPayoutSecret(eq("payment_status2"), anyMap())).thenReturn("sig");
-    when(client.postForm(eq("/api/payment_status2"), anyMap()))
+    // Read-only status lookup uses the retryable transport variant (money POSTs use postForm).
+    when(client.postFormRetryable(eq("/api/payment_status2"), anyMap()))
         .thenReturn(
             Map.of(
                 "pg_status", "ok",
@@ -161,7 +162,7 @@ class FreedomPayGatewayIdempotencyTest {
     GatewayStatusResponse response = gateway.getPayoutStatus("provider-payout-3", "3");
 
     ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
-    verify(client).postForm(eq("/api/payment_status2"), params.capture());
+    verify(client).postFormRetryable(eq("/api/payment_status2"), params.capture());
     assertEquals("provider-payout-3", params.getValue().get("pg_payment_id"));
     assertEquals("3", params.getValue().get("pg_order_id"));
     assertEquals("SUCCESS", response.getStatus());

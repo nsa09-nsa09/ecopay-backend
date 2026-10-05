@@ -54,6 +54,14 @@ public class PaymentTransaction {
   @Column(nullable = false, precision = 12, scale = 2)
   private BigDecimal amount;
 
+  /**
+   * Acquiring cost charged by the payment provider for this capture, when the provider reports it.
+   * Nullable: null means "not reported / unknown", NOT zero. Feeds the admin dashboard's net-revenue
+   * figure (commission − provider fee).
+   */
+  @Column(name = "provider_fee_amount", precision = 12, scale = 2)
+  private BigDecimal providerFeeAmount;
+
   @Column(nullable = false, length = 10)
   @Builder.Default
   private String currency = "KZT";

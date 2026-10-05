@@ -12,9 +12,12 @@ import org.springframework.stereotype.Component;
 public class RefundDispatchScheduler {
 
   private final RefundService refundService;
+  private final kz.hrms.splitupauth.scheduler.SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.refunds.retry-delay-ms:60000}")
   public void dispatchApprovedRefunds() {
-    refundService.processPendingRefunds();
+    schedulerLock.runExclusive(
+        kz.hrms.splitupauth.scheduler.SchedulerLock.Key.REFUND_DISPATCH,
+        refundService::processPendingRefunds);
   }
 }

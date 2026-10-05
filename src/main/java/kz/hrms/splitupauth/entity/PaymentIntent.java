@@ -49,6 +49,14 @@ public class PaymentIntent {
   @Builder.Default
   private BigDecimal commissionAmount = BigDecimal.ZERO;
 
+  /**
+   * Acquiring cost reported by the provider for this charge, carried onto the committed {@link
+   * PaymentTransaction}. Nullable: null means "not reported", not zero. Additive — does not change
+   * {@link #amount} or {@link #commissionAmount}.
+   */
+  @Column(name = "provider_fee_amount", precision = 12, scale = 2)
+  private BigDecimal providerFeeAmount;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false)
   private PaymentIntentStatus status;

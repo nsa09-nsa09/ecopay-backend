@@ -74,6 +74,41 @@ public class AuthService {
   @Value("${app.dev.auto-verify-email:false}")
   private boolean devAutoVerifyEmail;
 
+  /**
+   * In-process limiter for the auth anti-abuse buckets (register / password-reset). Field-injected
+   * (mirrors {@link RoomMapper}) and optional so the Mockito unit tests that {@code new
+   * AuthService(...)} without it keep compiling; when it is null the limiter checks are skipped —
+   * those tests assert the business logic, and the integration tests exercise the real limiter.
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private InMemoryRateLimiter authRateLimiter;
+
+  // --- Registration anti-abuse (Block 4a). Keyed on BOTH source IP and normalized email. ---
+  @Value("${app.rate-limit.register.ip-max:10}")
+  private int registerIpMax;
+
+  @Value("${app.rate-limit.register.ip-window-seconds:3600}")
+  private long registerIpWindowSeconds;
+
+  @Value("${app.rate-limit.register.email-max:3}")
+  private int registerEmailMax;
+
+  @Value("${app.rate-limit.register.email-window-seconds:3600}")
+  private long registerEmailWindowSeconds;
+
+  // --- Password-reset anti-abuse (Block 4b). Per-account cooldown is SILENT; per-IP may 429. ---
+  @Value("${app.rate-limit.password-reset.account-max:3}")
+  private int passwordResetAccountMax;
+
+  @Value("${app.rate-limit.password-reset.account-window-seconds:900}")
+  private long passwordResetAccountWindowSeconds;
+
+  @Value("${app.rate-limit.password-reset.ip-max:15}")
+  private int passwordResetIpMax;
+
+  @Value("${app.rate-limit.password-reset.ip-window-seconds:3600}")
+  private long passwordResetIpWindowSeconds;
+
   @Transactional
   public AuthResponse register(RegisterRequest request, MailLocale locale) {
     return register(request, locale, null);
@@ -81,11 +116,30 @@ public class AuthService {
 
   @Transactional
   public AuthResponse register(
-      RegisterRequest request, MailLocale locale, HttpServletRequest ignoredHttpRequest) {
+      RegisterRequest request, MailLocale locale, HttpServletRequest httpRequest) {
     // Registration attaches a brand-new address, so it gets the full
     // pipeline: canonicalise, then reject malformed addresses and domains that
     // publish no MX. Skipping this is how gmial.com rows end up in the table.
     String email = emailValidationService.normalizeAndValidateDeliverable(request.getEmail());
+
+    // Anti-abuse (Block 4a): throttle on BOTH the source IP and the normalized email so neither a
+    // single host nor a single address can drive an unverified-account creation storm. Done before
+    // the existence check so it also caps "does this email exist" probing via the signup form.
+    if (authRateLimiter != null) {
+      String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+      if (ip != null) {
+        authRateLimiter.check(
+            "register:ip:" + ip,
+            registerIpMax,
+            registerIpWindowSeconds,
+            "Too many registration attempts. Please try again later.");
+      }
+      authRateLimiter.check(
+          "register:email:" + email,
+          registerEmailMax,
+          registerEmailWindowSeconds,
+          "Too many registration attempts for this email. Please try again later.");
+    }
 
     if (userRepository.existsByEmail(email)) {
       throw new UserAlreadyExistsException("User with this email already exists");
@@ -141,6 +195,11 @@ public class AuthService {
 
   @Transactional
   public AuthResponse login(LoginRequest request) {
+    return login(request, null);
+  }
+
+  @Transactional
+  public AuthResponse login(LoginRequest request, HttpServletRequest httpRequest) {
     // Format check only (level 1). The address already exists in the database
     // here, so an MX lookup would add latency without adding safety — and would
     // lock out an existing user whose provider's DNS is having a bad day.
@@ -149,23 +208,25 @@ public class AuthService {
     String email = emailValidationService.normalizeAndValidateFormat(request.getEmail());
 
     // Rate-limit on the canonical identifier so case variants share one bucket
-    // rather than giving an attacker a fresh allowance per spelling.
+    // rather than giving an attacker a fresh allowance per spelling. The IP bucket
+    // (Block 4c) additionally catches credential stuffing across many emails from one host.
     String identifier = email;
-    rateLimitService.checkLoginAttempts(identifier);
+    final String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+    rateLimitService.checkLoginAttempts(identifier, ip);
 
     User user =
         userRepository
             .findByEmail(email)
             .orElseThrow(
                 () -> {
-                  rateLimitService.recordLoginAttempt(identifier, false);
+                  rateLimitService.recordLoginAttempt(identifier, false, ip);
                   return new InvalidCredentialsException("Invalid credentials");
                 });
 
     accountRestrictionService.requireAllowed(user);
 
     if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-      rateLimitService.recordLoginAttempt(identifier, false);
+      rateLimitService.recordLoginAttempt(identifier, false, ip);
       throw new InvalidCredentialsException("Invalid credentials");
     }
 
@@ -174,7 +235,7 @@ public class AuthService {
           "Email not verified. Please check your inbox for the verification link.");
     }
 
-    rateLimitService.recordLoginAttempt(identifier, true);
+    rateLimitService.recordLoginAttempt(identifier, true, ip);
 
     // ADMIN / SUPPORT accounts must complete an email 2FA step before any
     // access or refresh tokens are issued.
@@ -260,6 +321,26 @@ public class AuthService {
 
   @Transactional
   public void requestPasswordReset(PasswordResetRequest request) {
+    requestPasswordReset(request, null);
+  }
+
+  @Transactional
+  public void requestPasswordReset(PasswordResetRequest request, HttpServletRequest httpRequest) {
+    // Per-IP throttle (Block 4b). Keyed on IP only and applied BEFORE any address lookup, so a 429
+    // here is address-INDEPENDENT: it reflects only how many reset requests this host made, never
+    // whether a given address exists. That keeps the no-enumeration contract intact while capping a
+    // mail-bomb run from one source.
+    if (authRateLimiter != null && httpRequest != null) {
+      String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+      if (ip != null) {
+        authRateLimiter.check(
+            "pwreset:ip:" + ip,
+            passwordResetIpMax,
+            passwordResetIpWindowSeconds,
+            "Too many password reset requests. Please try again later.");
+      }
+    }
+
     // Normalize only — never validate loudly here. Any thrown error (bad
     // format, dead domain) would be a different response than the silent
     // success below, handing an attacker an oracle for which addresses exist.
@@ -271,6 +352,22 @@ public class AuthService {
     // responding differently would leak which addresses exist in the system.
     if (user == null || !Boolean.TRUE.equals(user.getEmailVerified())) {
       return;
+    }
+
+    // Per-account cooldown (Block 4b). MUST be SILENT: throwing here only for known+verified
+    // accounts would make the response differ from the unknown-address case and reintroduce the
+    // enumeration oracle. So when the cooldown trips we return the same way the unknown path does —
+    // no token, no mail, no error.
+    if (authRateLimiter != null) {
+      try {
+        authRateLimiter.check(
+            "pwreset:acct:" + user.getId(),
+            passwordResetAccountMax,
+            passwordResetAccountWindowSeconds,
+            "cooldown");
+      } catch (TooManyRequestsException silent) {
+        return;
+      }
     }
 
     passwordResetTokenRepository.deleteByUser(user);

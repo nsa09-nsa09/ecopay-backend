@@ -128,8 +128,8 @@ class AuthServiceEmailAuthTest {
     AuthResponse response = authService.login(loginRequest(" Mail@Test.KZ "));
 
     assertEquals("access", response.getAccessToken());
-    verify(rateLimitService).checkLoginAttempts(EMAIL);
-    verify(rateLimitService).recordLoginAttempt(EMAIL, true);
+    verify(rateLimitService).checkLoginAttempts(EMAIL, null);
+    verify(rateLimitService).recordLoginAttempt(EMAIL, true, null);
   }
 
   @Test

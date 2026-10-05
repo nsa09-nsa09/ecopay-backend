@@ -119,20 +119,14 @@ public class RoomMemberService {
     notificationService.notify(
         room.getOwner(),
         NotificationType.MEMBER_JOINED,
-        "Новая заявка в комнату",
-        currentUser.getDisplayName() + " подал(а) заявку в комнату «" + room.getTitle() + "».",
+        java.util.Map.of("memberName", currentUser.getDisplayName(), "roomTitle", room.getTitle()),
         "/rooms/owner/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
     notificationService.notify(
         currentUser,
         NotificationType.APPLICATION_SENT,
-        "Заявка отправлена",
-        "Ваша заявка на участие в тарифе «"
-            + tariffName(room)
-            + "» сервиса «"
-            + serviceName(room)
-            + "» отправлена.",
+        java.util.Map.of("tariffName", tariffName(room), "serviceName", serviceName(room)),
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -271,12 +265,7 @@ public class RoomMemberService {
     notificationService.notify(
         roomMember.getUser(),
         NotificationType.OWNER_ACCESS_GRANTED,
-        "Владелец выдал доступ",
-        "Вас приглашают в семейный тариф «"
-            + tariffName(room)
-            + "» сервиса «"
-            + serviceName(room)
-            + "». Зайдите в приложение или сервис и подтвердите получение доступа в EcoPay.",
+        java.util.Map.of("tariffName", tariffName(room), "serviceName", serviceName(room)),
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -319,19 +308,14 @@ public class RoomMemberService {
     notificationService.notify(
         room.getOwner(),
         NotificationType.MEMBER_CONFIRMED,
-        "Участник подтвердил доступ",
-        currentUser.getDisplayName()
-            + " подтвердил(а) получение доступа в комнате «"
-            + room.getTitle()
-            + "».",
+        java.util.Map.of("memberName", currentUser.getDisplayName(), "roomTitle", room.getTitle()),
         "/rooms/owner/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
     notificationService.notify(
         currentUser,
         NotificationType.MEMBER_ACCESS_CONFIRMED,
-        "Вы подтвердили доступ",
-        "Вы подтвердили получение доступа к тарифу «" + tariffName(room) + "».",
+        java.util.Map.of("tariffName", tariffName(room)),
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -396,12 +380,7 @@ public class RoomMemberService {
     notificationService.notify(
         owner,
         NotificationType.ROOM_MEMBER_PAID,
-        "Участник оплатил",
-        "Участник "
-            + memberName
-            + " оплатил участие в комнате «"
-            + room.getTitle()
-            + "» и ожидает подключения. Предоставьте доступ.",
+        java.util.Map.of("memberName", memberName, "roomTitle", room.getTitle()),
         "/rooms/owner/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -413,10 +392,7 @@ public class RoomMemberService {
       notificationService.notify(
           owner,
           NotificationType.ROOM_FULL_AWAITING_ACCESS,
-          "Комната заполнена",
-          "Все участники комнаты «"
-              + room.getTitle()
-              + "» оплатили и ожидают подключения. Предоставьте доступ каждому.",
+          java.util.Map.of("roomTitle", room.getTitle()),
           "/rooms/owner/" + room.getId(),
           java.util.Map.of("roomId", room.getId()));
     }
@@ -499,12 +475,7 @@ public class RoomMemberService {
     notificationService.notify(
         roomMember.getUser(),
         NotificationType.MEMBERSHIP_ACTIVATED,
-        "Участие активно",
-        "Ваше участие в тарифе «"
-            + tariffName(room)
-            + "» сервиса «"
-            + serviceName(room)
-            + "» активно.",
+        java.util.Map.of("roomTitle", room.getTitle()),
         "/rooms/member/" + room.getId(),
         java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
 
@@ -512,8 +483,7 @@ public class RoomMemberService {
       notificationService.notify(
           room.getOwner(),
           NotificationType.ROOM_ACTIVE,
-          "Комната активна",
-          "Комната «" + room.getTitle() + "» перешла в статус «Активна».",
+          java.util.Map.of("roomTitle", room.getTitle()),
           "/rooms/owner/" + room.getId(),
           java.util.Map.of("roomId", room.getId()));
     }
@@ -537,27 +507,27 @@ public class RoomMemberService {
 
   private void validateJoin(Room room, User currentUser, JoinRoomRequest request) {
     if (room.getOwner().getId().equals(currentUser.getId())) {
-      throw new InvalidRequestException("Room owner cannot join own room");
+      throw new InvalidRequestException("ROOM_OWNER_CANNOT_JOIN", "Room owner cannot join own room");
     }
 
     if (!(room.getStatus() == RoomStatus.OPEN)) {
-      throw new InvalidRequestException("Room is not available for joining");
+      throw new InvalidRequestException("ROOM_NOT_JOINABLE", "Room is not available for joining");
     }
 
     if (!room.getStartDate().isAfter(LocalDateTime.now())) {
-      throw new InvalidRequestException("Cannot join room after start date");
+      throw new InvalidRequestException("JOIN_AFTER_START_DATE", "Cannot join room after start date");
     }
 
     boolean consentAccepted = Boolean.TRUE.equals(request.getConsentAccepted());
     if (!consentAccepted) {
-      throw new InvalidRequestException("Consent must be accepted");
+      throw new InvalidRequestException("CONSENT_REQUIRED", "Consent must be accepted");
     }
 
     roomMemberRepository
         .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
         .ifPresent(
             existing -> {
-              throw new InvalidRequestException("User has already joined this room");
+              throw new InvalidRequestException("ALREADY_JOINED", "User has already joined this room");
             });
 
     long occupiedSlots =
@@ -565,7 +535,7 @@ public class RoomMemberService {
             room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
 
     if (RoomSeatMath.marketplaceFull(room, occupiedSlots)) {
-      throw new InvalidRequestException("No available slots in this room");
+      throw new InvalidRequestException("ROOM_FULL", "No available slots in this room");
     }
 
     validateContact(room, request);

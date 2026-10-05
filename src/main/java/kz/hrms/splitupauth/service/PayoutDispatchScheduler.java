@@ -16,10 +16,15 @@ import org.springframework.stereotype.Component;
 public class PayoutDispatchScheduler {
 
   private final PayoutService payoutService;
+  private final kz.hrms.splitupauth.scheduler.SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.payout.dispatch-delay-ms:60000}")
   public void dispatchDuePayouts() {
-    payoutService.processPendingPayouts();
-    payoutService.reconcilePendingProviderPayouts();
+    schedulerLock.runExclusive(
+        kz.hrms.splitupauth.scheduler.SchedulerLock.Key.PAYOUT_DISPATCH,
+        () -> {
+          payoutService.processPendingPayouts();
+          payoutService.reconcilePendingProviderPayouts();
+        });
   }
 }

@@ -65,18 +65,20 @@ public class NotificationService {
   public void notify(
       User recipient,
       NotificationType type,
-      String title,
-      String body,
+      Map<String, String> params,
       String link,
       Map<String, Object> metadata) {
     if (recipient == null || recipient.getId() == null) {
       return;
     }
     try {
+      // Localized TEMPLATE for the type, with {placeholders} (roomTitle, amount, currency,
+      // memberName, …) filled from the caller's structured params. Callers no longer pass a
+      // pre-built sentence, so a member with three rooms gets three context-specific messages.
       NotificationMessages.Copy localized =
-          NotificationMessages.forRecipient(type, recipient.getLocale());
-      title = localized.title();
-      body = localized.body();
+          NotificationMessages.forRecipient(type, recipient.getLocale(), params);
+      String title = localized.title();
+      String body = localized.body();
       NotificationPreferenceService.Channels channels =
           preferenceService.channelsFor(recipient, type);
       if (!channels.inApp() && !channels.email()) {
@@ -123,10 +125,16 @@ public class NotificationService {
     }
   }
 
-  /** Convenience overload for notifications with no deep link / metadata. */
+  /** Convenience overload for parameterless notifications with no deep link / metadata. */
   @Transactional
-  public void notify(User recipient, NotificationType type, String title, String body) {
-    notify(recipient, type, title, body, null, null);
+  public void notify(User recipient, NotificationType type) {
+    notify(recipient, type, Map.of(), null, null);
+  }
+
+  /** Convenience overload: params, no deep link / metadata. */
+  @Transactional
+  public void notify(User recipient, NotificationType type, Map<String, String> params) {
+    notify(recipient, type, params, null, null);
   }
 
   // ===================== read surface =====================

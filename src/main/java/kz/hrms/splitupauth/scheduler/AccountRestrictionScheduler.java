@@ -13,15 +13,20 @@ import org.springframework.stereotype.Component;
 public class AccountRestrictionScheduler {
   private final UserRepository userRepository;
   private final AccountRestrictionTransitions transitions;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.scheduler.account-restrictions-delay-ms:60000}")
   public void reconcile() {
-    LocalDateTime now = LocalDateTime.now();
-    userRepository
-        .findDueBanActivationIds(now, PageRequest.of(0, 100))
-        .forEach(transitions::activate);
-    userRepository
-        .findDueBanExpirationIds(now, PageRequest.of(0, 100))
-        .forEach(transitions::expire);
+    schedulerLock.runExclusive(
+        SchedulerLock.Key.ACCOUNT_RESTRICTION,
+        () -> {
+          LocalDateTime now = LocalDateTime.now();
+          userRepository
+              .findDueBanActivationIds(now, PageRequest.of(0, 100))
+              .forEach(transitions::activate);
+          userRepository
+              .findDueBanExpirationIds(now, PageRequest.of(0, 100))
+              .forEach(transitions::expire);
+        });
   }
 }

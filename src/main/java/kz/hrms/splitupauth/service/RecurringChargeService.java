@@ -36,28 +36,48 @@ public class RecurringChargeService {
   private final PaymentGatewayRegistry gatewayRegistry;
   private final PaymentEventLogger eventLogger;
   private final PaymentService paymentService;
+  private final kz.hrms.splitupauth.scheduler.SchedulerLock schedulerLock;
+
+  /** Page size for the bounded ACTIVE-member scan — avoids loading the whole set into memory. */
+  private static final int SCAN_PAGE_SIZE = 200;
 
   @Value("${app.recurring.enabled:false}")
   private boolean recurringEnabled;
 
-  /** Runs every day at 03:30 server time. */
+  /** Runs every day at 03:30 server time, on a single node (advisory lock). */
   @Scheduled(cron = "0 30 3 * * *")
   public void runDailyAutoCharges() {
+    schedulerLock.runExclusive(
+        kz.hrms.splitupauth.scheduler.SchedulerLock.Key.RECURRING_CHARGES, this::scanAndChargeDue);
+  }
+
+  private void scanAndChargeDue() {
     if (!recurringEnabled) {
       log.info("RecurringChargeService: disabled, skipping daily run");
       return;
     }
     log.info("RecurringChargeService: starting daily run");
-    List<RoomMember> activeMembers =
-        roomMemberRepository.findByStatusAndDeletedAtIsNull(MemberStatus.ACTIVE);
-    for (RoomMember member : activeMembers) {
-      try {
-        tryAutoCharge(member.getId());
-      } catch (Exception ex) {
-        log.warn("Auto-charge failed for member {}: {}", member.getId(), ex.getMessage());
+    // Bounded paging over member IDs. The ACTIVE set is stable across the run (tryAutoCharge never
+    // moves a member out of ACTIVE), so page-index paging is safe and we never materialise the
+    // whole set. Only IDs are fetched; each charge loads its own row under lock.
+    int page = 0;
+    long scanned = 0;
+    List<Long> ids;
+    do {
+      ids =
+          roomMemberRepository.findIdsByStatusAndDeletedAtIsNull(
+              MemberStatus.ACTIVE, org.springframework.data.domain.PageRequest.of(page, SCAN_PAGE_SIZE));
+      for (Long memberId : ids) {
+        try {
+          tryAutoCharge(memberId);
+        } catch (Exception ex) {
+          log.warn("Auto-charge failed for member {}: {}", memberId, ex.getMessage());
+        }
       }
-    }
-    log.info("RecurringChargeService: done, scanned {} active members", activeMembers.size());
+      scanned += ids.size();
+      page++;
+    } while (ids.size() == SCAN_PAGE_SIZE);
+    log.info("RecurringChargeService: done, scanned {} active members", scanned);
   }
 
   @Transactional
@@ -138,13 +158,18 @@ public class RecurringChargeService {
     }
 
     var gateway = gatewayRegistry.defaultGateway();
+    // Recompute the charge from the CURRENT room, not from lastSuccess: an owner price change or a
+    // commission-tier config change must take effect on the next cycle rather than being frozen at
+    // the first payment's numbers. Same single-source-of-truth math as the initial charge.
+    PaymentService.ChargeBreakdown breakdown =
+        paymentService.currentChargeBreakdown(member.getRoom());
     PaymentIntent intent =
         PaymentIntent.builder()
             .idempotencyKey(idempotencyKey)
             .roomMember(member)
             .user(member.getUser())
-            .amount(lastSuccess.getAmount())
-            .commissionAmount(lastSuccess.getCommissionAmount())
+            .amount(breakdown.amount())
+            .commissionAmount(breakdown.commission())
             .status(PaymentIntentStatus.PENDING)
             .providerName(gateway.providerName())
             .saveCardRequested(false)
@@ -170,6 +195,12 @@ public class RecurringChargeService {
               card.getProviderToken());
 
       if (resp.isSuccess()) {
+        // Carry the provider's acquiring fee (when reported) before finalize reloads the intent, so
+        // the recurring charge's transaction records it for net-revenue reporting (Block 5d).
+        if (resp.getProviderFeeAmount() != null) {
+          intent.setProviderFeeAmount(resp.getProviderFeeAmount());
+          intent = paymentIntentRepository.save(intent);
+        }
         paymentService.finalizeSuccessfulPayment(
             intent.getId(),
             resp.getExternalPaymentId(),
