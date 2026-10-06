@@ -12,4 +12,6 @@ public interface PayoutCardBindingRepository extends JpaRepository<PayoutCardBin
   Optional<PayoutCardBinding> findByIdAndUser(Long id, User user);
 
   List<PayoutCardBinding> findByUserAndStatusOrderByCreatedAtDesc(User user, String status);
+
+  Optional<PayoutCardBinding> findByExternalPaymentId(String externalPaymentId);
 }

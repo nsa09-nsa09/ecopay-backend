@@ -7,7 +7,7 @@ import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.service.InMemoryRateLimiter;
+import kz.hrms.splitupauth.service.RateLimiter;
 import kz.hrms.splitupauth.service.RoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.*;
 public class RoomController {
 
   private final RoomService roomService;
-  private final InMemoryRateLimiter rateLimiter;
+  private final RateLimiter rateLimiter;
 
   /** Burst guard: max rooms one user may create within the short window. */
   @Value("${app.rate-limit.room-create.burst-max:5}")

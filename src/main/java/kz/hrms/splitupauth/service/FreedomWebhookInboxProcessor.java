@@ -2,12 +2,15 @@ package kz.hrms.splitupauth.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.LocalDateTime;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import kz.hrms.splitupauth.entity.FreedomWebhookInbox;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayMessage;
 import kz.hrms.splitupauth.repository.FreedomWebhookInboxRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -29,33 +32,28 @@ public class FreedomWebhookInboxProcessor {
         inboxRepository.findClaimedWithLockById(inboxId, leaseOwner).orElse(null);
     if (inbox == null) return false;
 
-    Map<String, String> params = toStringMap(inbox.getRawBody());
+    Map<String, List<String>> params = toParams(inbox.getRawBody());
     String script =
         inbox.getCallbackScript() == null || inbox.getCallbackScript().isBlank()
             ? resolveLegacyScript(params)
             : inbox.getCallbackScript();
 
-    if (!gateway.verifyWebhookSignature(script, params)) {
+    FreedomPayMessage message = gateway.callbackMessage(params);
+    // The signature is checked again right before any money is touched, independently of the
+    // check done at accept time.
+    if (!gateway.verifyCallback(script, message)) {
       throw new FreedomWebhookProcessingException(
           "INVALID_SIGNATURE", "Signature verification failed", false);
     }
 
-    GatewayWebhookEvent event = gateway.verifyAndParseWebhook(script, params);
-    String orderId = params.get("pg_order_id");
-    if (orderId != null && orderId.startsWith("cardbind-")) {
-      Long bindingId = parseLongOrNull(orderId.substring("cardbind-".length()));
-      if (bindingId == null) {
-        throw new FreedomWebhookProcessingException(
-            "INVALID_BINDING_ID", "Card-binding webhook has an invalid order id", false);
-      }
-      boolean success =
-          "1".equals(params.get("pg_result"))
-              || "SUCCESS".equals(event.getResultStatus())
-              || ("approve".equalsIgnoreCase(params.get("pg_type"))
-                  && event.getCardToken() != null
-                  && !event.getCardToken().isBlank());
-      cardBindingService.applyBindingWebhook(
-          bindingId, success, event.getCardToken(), event.getCardPanMask());
+    GatewayWebhookEvent event = gateway.parseCallback(script, message);
+    String orderId = message.get("pg_order_id");
+    if (FreedomPayGateway.CARD_STORAGE_RESULT_SCRIPT.equals(script)) {
+      // Purchase card storage (cardstorage/add2). Its token is not proven payout-compatible, so it
+      // can never become a payout destination; the binding is closed as "rebind required".
+      cardBindingService.rejectLegacyPurchaseCardCallback(bindingIdFrom(orderId));
+    } else if ("PAYOUT_CARD".equals(event.getKind())) {
+      cardBindingService.applyPayoutCardWebhook(event);
     } else {
       validateEventIdentity(event);
       paymentService.applyWebhookEvent(event);
@@ -74,33 +72,55 @@ public class FreedomWebhookInboxProcessor {
     return true;
   }
 
+  private static Long bindingIdFrom(String orderId) {
+    if (orderId == null || !orderId.startsWith("cardbind-")) {
+      return null;
+    }
+    return parseLongOrNull(orderId.substring("cardbind-".length()));
+  }
+
   private static void validateEventIdentity(GatewayWebhookEvent event) {
     if ("CHARGE".equals(event.getKind()) && event.getIntentId() == null) {
       throw new FreedomWebhookProcessingException(
           "MISSING_INTENT_ID", "Charge webhook has no valid payment intent id", false);
     }
-    if (("PAYOUT".equals(event.getKind()) || "REFUND".equals(event.getKind()))
+    if ("REFUND".equals(event.getKind())
         && (event.getExternalPaymentId() == null || event.getExternalPaymentId().isBlank())) {
       throw new FreedomWebhookProcessingException(
           "MISSING_PROVIDER_ID", "Money-operation webhook has no provider id", false);
     }
+    if ("PAYOUT".equals(event.getKind())
+        && (event.getExternalPaymentId() == null || event.getExternalPaymentId().isBlank())
+        && (event.getOrderId() == null || event.getOrderId().isBlank())) {
+      throw new FreedomWebhookProcessingException(
+          "MISSING_PROVIDER_ID", "Payout webhook has neither provider id nor order id", false);
+    }
   }
 
-  private static Map<String, String> toStringMap(JsonNode node) {
-    Map<String, String> map = new HashMap<>();
+  /** Inbox rows store single values as strings and repeated values as arrays. */
+  static Map<String, List<String>> toParams(JsonNode node) {
+    Map<String, List<String>> map = new LinkedHashMap<>();
     if (node == null || !node.isObject()) return map;
     Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
     while (fields.hasNext()) {
       Map.Entry<String, JsonNode> field = fields.next();
-      map.put(field.getKey(), field.getValue().asText());
+      JsonNode value = field.getValue();
+      List<String> values = new ArrayList<>();
+      if (value.isArray()) {
+        value.forEach(v -> values.add(v.asText()));
+      } else {
+        values.add(value.asText());
+      }
+      map.put(field.getKey(), values);
     }
     return map;
   }
 
-  private static String resolveLegacyScript(Map<String, String> params) {
-    return params.get("pg_payout_id") != null || "PAYOUT".equals(params.get("pg_event_type"))
-        ? "payout-result"
-        : "result";
+  private static String resolveLegacyScript(Map<String, List<String>> params) {
+    return params.get("pg_payout_id") != null
+            || List.of("PAYOUT").equals(params.get("pg_event_type"))
+        ? FreedomPayGateway.PAYOUT_RESULT_SCRIPT
+        : FreedomPayGateway.RESULT_SCRIPT;
   }
 
   private static Long parseLongOrNull(String value) {

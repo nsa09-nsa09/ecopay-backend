@@ -5,13 +5,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Optional;
 import java.util.UUID;
-import kz.hrms.splitupauth.entity.SiteVisit;
 import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.repository.SiteVisitRepository;
+import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,8 +33,19 @@ public class SiteVisitService {
 
   private static final int MAX_PATH_LENGTH = 255;
 
-  private final SiteVisitRepository repository;
-  private final InMemoryRateLimiter rateLimiter;
+  private static final String UPSERT_VISIT =
+      "INSERT INTO site_visit (visitor_id, visit_date, first_seen_at, last_seen_at, page_count,"
+          + " is_authenticated, user_id, last_path) VALUES (?, ?, ?, ?, 1, ?, ?, ?)"
+          + " ON CONFLICT (visitor_id, visit_date) DO UPDATE SET"
+          + " last_seen_at = EXCLUDED.last_seen_at,"
+          + " page_count = site_visit.page_count + 1,"
+          + " is_authenticated = site_visit.is_authenticated OR EXCLUDED.is_authenticated,"
+          + " user_id = COALESCE(site_visit.user_id, EXCLUDED.user_id),"
+          + " last_path = COALESCE(EXCLUDED.last_path, site_visit.last_path)"
+          + " RETURNING page_count";
+
+  private final JdbcTemplate jdbcTemplate;
+  private final RateLimiter rateLimiter;
 
   public record VisitResult(UUID visitorId, boolean newVisitorToday) {}
 
@@ -59,59 +68,44 @@ public class SiteVisitService {
 
     LocalDate today = LocalDate.now();
     LocalDateTime now = LocalDateTime.now();
-    String truncatedPath =
-        path != null && path.length() > MAX_PATH_LENGTH ? path.substring(0, MAX_PATH_LENGTH) : path;
+    String sanitizedPath = sanitizePath(path);
+    Long userId = authenticatedUser == null ? null : authenticatedUser.getId();
 
-    Optional<SiteVisit> existing = repository.findByVisitorIdAndVisitDate(visitorId, today);
-    if (existing.isPresent()) {
-      SiteVisit v = existing.get();
-      v.setLastSeenAt(now);
-      v.setPageCount(v.getPageCount() == null ? 1 : v.getPageCount() + 1);
-      if (truncatedPath != null) {
-        v.setLastPath(truncatedPath);
-      }
-      if (authenticatedUser != null) {
-        v.setIsAuthenticated(true);
-        if (v.getUser() == null) {
-          v.setUser(authenticatedUser);
-        }
-      }
-      repository.save(v);
-      return new VisitResult(visitorId, false);
-    }
+    // One atomic statement per ping: no read-modify-write round trip, no lost increments under
+    // concurrent pings, and no unique-violation retry path.
+    Integer pageCount =
+        jdbcTemplate.queryForObject(
+            UPSERT_VISIT,
+            Integer.class,
+            visitorId,
+            today,
+            now,
+            now,
+            userId != null,
+            userId,
+            sanitizedPath);
+    return new VisitResult(visitorId, pageCount != null && pageCount == 1);
+  }
 
-    SiteVisit fresh =
-        SiteVisit.builder()
-            .visitorId(visitorId)
-            .visitDate(today)
-            .firstSeenAt(now)
-            .lastSeenAt(now)
-            .pageCount(1)
-            .isAuthenticated(authenticatedUser != null)
-            .user(authenticatedUser)
-            .lastPath(truncatedPath)
-            .build();
-    try {
-      repository.save(fresh);
-      return new VisitResult(visitorId, true);
-    } catch (DataIntegrityViolationException race) {
-      // Concurrent first-of-day insert from another request — fall back to update.
-      SiteVisit other =
-          repository.findByVisitorIdAndVisitDate(visitorId, today).orElseThrow(() -> race);
-      other.setLastSeenAt(now);
-      other.setPageCount(other.getPageCount() == null ? 1 : other.getPageCount() + 1);
-      if (truncatedPath != null) {
-        other.setLastPath(truncatedPath);
-      }
-      if (authenticatedUser != null) {
-        other.setIsAuthenticated(true);
-        if (other.getUser() == null) {
-          other.setUser(authenticatedUser);
-        }
-      }
-      repository.save(other);
-      return new VisitResult(visitorId, false);
+  /**
+   * Keeps only the route path: query strings and fragments can carry password-reset tokens, payment
+   * ids or other identifiers that analytics has no use for.
+   */
+  static String sanitizePath(String path) {
+    if (path == null || path.isBlank()) {
+      return null;
     }
+    String trimmed = path.trim();
+    int cut = trimmed.length();
+    int q = trimmed.indexOf('?');
+    if (q >= 0) cut = Math.min(cut, q);
+    int h = trimmed.indexOf('#');
+    if (h >= 0) cut = Math.min(cut, h);
+    trimmed = trimmed.substring(0, cut);
+    if (trimmed.isEmpty()) {
+      return null;
+    }
+    return trimmed.length() > MAX_PATH_LENGTH ? trimmed.substring(0, MAX_PATH_LENGTH) : trimmed;
   }
 
   private UUID readOrIssueVisitorId(HttpServletRequest request, HttpServletResponse response) {
@@ -140,11 +134,6 @@ public class SiteVisitService {
   }
 
   private String clientIp(HttpServletRequest request) {
-    String forwarded = request.getHeader("X-Forwarded-For");
-    if (forwarded != null && !forwarded.isBlank()) {
-      int comma = forwarded.indexOf(',');
-      return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-    }
-    return request.getRemoteAddr();
+    return ClientIp.of(request);
   }
 }

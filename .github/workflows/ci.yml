@@ -38,8 +38,54 @@ jobs:
       - name: Build and test
         run: ./mvnw -B verify
 
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Secrets committed anywhere in history fail the build.
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Dependency vulnerabilities (pom.xml + transitive). CRITICAL/HIGH with a known fix block;
+      # lower severities and unfixed CVEs are reported only — see docs/security/dependency-policy.md.
+      - name: Dependency scan (Trivy fs)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ecopay-backend:scan
+
+      - name: Container scan (Trivy image)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ecopay-backend:scan
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
   build-push:
-    needs: test
+    needs: [test, security-scan]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     concurrency:

@@ -8,7 +8,7 @@ import lombok.Data;
 @Data
 @Builder
 public class GatewayWebhookEvent {
-  /** "CHARGE" | "REFUND" | "PAYOUT" */
+  /** "CHARGE" | "REFUND" | "PAYOUT" | "PAYOUT_CARD" */
   private String kind;
 
   /** "SUCCESS" | "FAILED" | "PENDING" */
@@ -29,6 +29,15 @@ public class GatewayWebhookEvent {
 
   private String signature;
 
-  /** Stable id used for inbox deduplication (e.g. pg_payment_id+pg_salt). */
+  /** Stable id used for inbox deduplication: script + digest of the signed content minus salt. */
   private String providerRequestId;
+
+  /** Merchant order id echoed by the provider (pg_order_id). */
+  private String orderId;
+
+  /** pg_captured from a purchase callback: false means two-step AUTHORIZED, not captured. */
+  private Boolean captured;
+
+  /** Merchant-side user id (pg_user_id) echoed by card-tokenization callbacks. */
+  private String userId;
 }

@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -13,10 +14,9 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingResponse;
-import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
-import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PayoutCardBindingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,18 +27,24 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Owner payout-card connection via the provider's hosted page.
  *
- * <p>FreedomPay's universal {@code cardstorage/add2} hosted flow tokenizes the card without a
- * verification charge. Its signed callback provides the payout-compatible card token, which is then
- * registered as the owner's payout method. The owner never sees or types a token.
+ * <p>FreedomPay has a dedicated PAYOUT card tokenization ({@code /cardstoragepayout/add}); cards
+ * saved there "can only be used for payouts", i.e. exactly with {@code /api/reg2reg}. A payout
+ * method is created ONLY from the token delivered by that flow's signed callback. Purchase card
+ * storage tokens ({@code cardstorage/add2}) and recurring profiles are never assumed to be payout
+ * compatible, and the browser return to the frontend never connects a card by itself.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class PayoutCardBindingService {
 
+  /** A tokenization page left unfinished this long is closed as failed (owner can retry). */
+  static final long BINDING_TIMEOUT_MINUTES = 30;
+
   private final PayoutCardBindingRepository bindingRepository;
   private final PaymentGatewayRegistry gatewayRegistry;
   private final PayoutService payoutService;
+  private final Clock clock;
 
   @Value("${app.frontend-url}")
   private String frontendUrl;
@@ -76,32 +82,25 @@ public class PayoutCardBindingService {
                   .backUrl(backUrl)
                   .build());
     } catch (Exception ex) {
-      log.error("Payout card binding {} init failed: {}", binding.getId(), ex.getMessage());
-      binding.setStatus("FAILED");
-      binding.setFailureMessage("Gateway initiation failed: " + ex.getMessage());
-      bindingRepository.save(binding);
-      return PayoutCardBindingResponse.builder()
-          .bindingId(binding.getId())
-          .status("FAILED")
-          .failureMessage(binding.getFailureMessage())
-          .build();
+      // No money is involved: an ambiguous tokenization start is simply closed, the owner retries.
+      log.error(
+          "Payout card binding {} init failed: {}", binding.getId(), ex.getClass().getSimpleName());
+      return fail(binding, "Card connection could not be started. Please try again.");
     }
 
     if (!resp.isSuccess()) {
-      binding.setStatus("FAILED");
-      binding.setFailureMessage(resp.getFailureMessage());
-      bindingRepository.save(binding);
-      return PayoutCardBindingResponse.builder()
-          .bindingId(binding.getId())
-          .status("FAILED")
-          .failureMessage(resp.getFailureMessage())
-          .build();
+      log.warn(
+          "Payout card binding {} rejected by provider: code={}",
+          binding.getId(),
+          resp.getFailureCode());
+      return fail(binding, "Card connection could not be started. Please try again.");
     }
 
     binding.setExternalPaymentId(resp.getExternalBindingId());
     bindingRepository.save(binding);
 
     if (resp.getCardToken() != null && !resp.getCardToken().isBlank()) {
+      // Synchronous gateways (the in-memory mock) tokenize without a hosted page.
       completeBinding(binding, user, resp.getCardToken(), resp.getCardPanMask());
       return PayoutCardBindingResponse.builder()
           .bindingId(binding.getId())
@@ -119,8 +118,9 @@ public class PayoutCardBindingService {
   }
 
   /**
-   * Reads a binding after the owner returns. Checks if webhook already completed it, or actively
-   * reconciles with the provider if still pending. Idempotent.
+   * Reads a binding after the owner returns from the hosted page. Reaching the return URL proves
+   * nothing: the binding stays PENDING until the signed provider callback arrives, and is closed as
+   * FAILED once it is older than {@link #BINDING_TIMEOUT_MINUTES}. Idempotent.
    */
   @Transactional
   public PayoutCardBindingConfirmResponse confirmBinding(User user, Long bindingId) {
@@ -129,6 +129,7 @@ public class PayoutCardBindingService {
             .findByIdAndUser(bindingId, user)
             .orElseThrow(() -> new ResourceNotFoundException("Card binding not found"));
 
+    expireIfStale(binding);
     if ("SUCCESS".equals(binding.getStatus())) {
       return PayoutCardBindingConfirmResponse.builder()
           .status("SUCCESS")
@@ -144,130 +145,99 @@ public class PayoutCardBindingService {
           .message(binding.getFailureMessage())
           .build();
     }
-
-    // Active reconciliation: in local dev or before webhook delivery, query provider directly
-    if (reconcileBindingWithProvider(binding, user)) {
-      return PayoutCardBindingConfirmResponse.builder()
-          .status("SUCCESS")
-          .method(
-              binding.getPayoutMethod() == null
-                  ? null
-                  : PayoutMethodDto.from(binding.getPayoutMethod()))
-          .build();
-    }
-    if ("FAILED".equals(binding.getStatus())) {
-      return PayoutCardBindingConfirmResponse.builder()
-          .status("FAILED")
-          .message(binding.getFailureMessage())
-          .build();
-    }
-
     return PayoutCardBindingConfirmResponse.builder()
         .status("PENDING")
-        .message("Card tokenization is still being confirmed by the provider.")
+        .message("Card connection is still being confirmed by the payment provider.")
         .build();
   }
 
-  /**
-   * Reconciles all pending card bindings for the specified user with the provider. Useful when
-   * returning to room creation or method list without waiting for a webhook.
-   */
+  /** Closes this user's stale pending bindings. Never calls the provider. */
   @Transactional
   public void reconcilePendingBindingsForUser(User user) {
     if (user == null) return;
     List<PayoutCardBinding> pending =
         bindingRepository.findByUserAndStatusOrderByCreatedAtDesc(user, "PENDING");
-    for (PayoutCardBinding binding : pending) {
-      if (reconcileBindingWithProvider(binding, user)) {
-        break;
-      }
-    }
+    pending.forEach(this::expireIfStale);
   }
 
   /**
-   * Directly queries the provider for the outcome of this specific binding transaction. Returns
-   * true if the binding reached SUCCESS.
-   */
-  public boolean reconcileBindingWithProvider(PayoutCardBinding binding, User user) {
-    if (binding == null || !"PENDING".equals(binding.getStatus())) {
-      return "SUCCESS".equals(binding != null ? binding.getStatus() : null);
-    }
-    if (binding.getExternalPaymentId() == null || binding.getExternalPaymentId().isBlank()) {
-      return false;
-    }
-    try {
-      PaymentGateway gateway =
-          binding.getProviderName() != null
-              ? gatewayRegistry.resolve(binding.getProviderName())
-              : gatewayRegistry.defaultGateway();
-      if (gateway == null) {
-        return false;
-      }
-      GatewayStatusResponse statusResp = gateway.getStatus(binding.getExternalPaymentId());
-      if (statusResp == null) {
-        return false;
-      }
-
-      String token = statusResp.getCardToken();
-      String mask = statusResp.getCardPanMask();
-
-      // If provider marked transaction as success but omitted card token in get_status,
-      // look up the card stored for this user via cardstorage/list
-      if ("SUCCESS".equals(statusResp.getStatus())
-          && (token == null || token.isBlank())
-          && gateway instanceof FreedomPayGateway freedomGateway) {
-        GatewayStatusResponse savedCard =
-            freedomGateway.fetchSavedCardForUser(String.valueOf(user.getId()));
-        if (savedCard != null
-            && savedCard.getCardToken() != null
-            && !savedCard.getCardToken().isBlank()) {
-          token = savedCard.getCardToken();
-          if (mask == null || mask.isBlank()) {
-            mask = savedCard.getCardPanMask();
-          }
-        }
-      }
-
-      if ("SUCCESS".equals(statusResp.getStatus()) && token != null && !token.isBlank()) {
-        completeBinding(binding, user, token, mask);
-        log.info("Binding {} actively reconciled with provider: status=SUCCESS", binding.getId());
-        return true;
-      } else if ("FAILED".equals(statusResp.getStatus())) {
-        binding.setStatus("FAILED");
-        binding.setFailureMessage(statusResp.getFailureMessage());
-        bindingRepository.save(binding);
-        log.info("Binding {} actively reconciled with provider: status=FAILED", binding.getId());
-        return false;
-      }
-    } catch (Exception ex) {
-      log.warn("Active reconciliation for binding {} failed: {}", binding.getId(), ex.getMessage());
-    }
-    return false;
-  }
-
-  /**
-   * Finalize a binding from the Freedom Pay callback carrying {@code pg_card_token}. Routed here
-   * when the order id is a {@code cardbind-...} marker. Idempotent.
+   * Applies a verified {@code cardstoragepayout} callback. The binding is matched by the provider's
+   * {@code pg_payment_id} returned at init (the endpoint has no order id) and, when the callback
+   * carries {@code pg_user_id}, it must be the binding owner's id. Idempotent.
    */
   @Transactional
-  public void applyBindingWebhook(Long bindingId, boolean success, String token, String panMask) {
-    if (bindingId == null) return;
-    PayoutCardBinding binding = bindingRepository.findById(bindingId).orElse(null);
+  public void applyPayoutCardWebhook(GatewayWebhookEvent event) {
+    String providerId = event.getExternalPaymentId();
+    if (providerId == null || providerId.isBlank()) {
+      throw new FreedomWebhookProcessingException(
+          "MISSING_PROVIDER_ID", "Payout-card callback has no pg_payment_id", false);
+    }
+    PayoutCardBinding binding = bindingRepository.findByExternalPaymentId(providerId).orElse(null);
     if (binding == null) {
       throw new FreedomWebhookProcessingException(
-          "BINDING_NOT_FOUND", "Webhook references unknown card binding " + bindingId, true);
+          "BINDING_NOT_FOUND", "Payout-card callback references an unknown binding", true);
+    }
+    if (event.getUserId() != null
+        && !event.getUserId().isBlank()
+        && !event.getUserId().trim().equals(String.valueOf(binding.getUser().getId()))) {
+      throw new FreedomWebhookProcessingException(
+          "BINDING_USER_MISMATCH", "Payout-card callback user does not match the binding", false);
     }
     if ("SUCCESS".equals(binding.getStatus()) || "FAILED".equals(binding.getStatus())) {
-      return; // terminal — idempotent no-op
+      return; // terminal — duplicate callback is a no-op
     }
-    if (success && token != null && !token.isBlank()) {
-      completeBinding(binding, binding.getUser(), token, panMask);
-      log.info("Binding {} completed via webhook", bindingId);
+    if ("SUCCESS".equals(event.getResultStatus())
+        && event.getCardToken() != null
+        && !event.getCardToken().isBlank()) {
+      completeBinding(binding, binding.getUser(), event.getCardToken(), event.getCardPanMask());
+      log.info("Payout card binding {} completed via signed callback", binding.getId());
     } else {
       binding.setStatus("FAILED");
-      binding.setFailureMessage("Provider webhook reported failure or returned no card token");
+      binding.setFailureMessage("The card could not be connected. Please try again.");
       bindingRepository.save(binding);
     }
+  }
+
+  /**
+   * A purchase card-storage ({@code add2}) callback for a binding started before the payout-card
+   * flow existed. Its token is not a proven payout destination, so the binding is closed and the
+   * owner is asked to reconnect. Idempotent.
+   */
+  @Transactional
+  public void rejectLegacyPurchaseCardCallback(Long bindingId) {
+    if (bindingId == null) return;
+    PayoutCardBinding binding = bindingRepository.findById(bindingId).orElse(null);
+    if (binding == null || !"PENDING".equals(binding.getStatus())) {
+      return;
+    }
+    binding.setStatus("FAILED");
+    binding.setFailureMessage("REBIND_REQUIRED: please connect the payout card again.");
+    bindingRepository.save(binding);
+  }
+
+  private void expireIfStale(PayoutCardBinding binding) {
+    if (!"PENDING".equals(binding.getStatus()) || binding.getCreatedAt() == null) {
+      return;
+    }
+    if (binding
+        .getCreatedAt()
+        .plusMinutes(BINDING_TIMEOUT_MINUTES)
+        .isBefore(LocalDateTime.now(clock))) {
+      binding.setStatus("FAILED");
+      binding.setFailureMessage("The card connection was not completed in time. Please try again.");
+      bindingRepository.save(binding);
+    }
+  }
+
+  private PayoutCardBindingResponse fail(PayoutCardBinding binding, String userMessage) {
+    binding.setStatus("FAILED");
+    binding.setFailureMessage(userMessage);
+    bindingRepository.save(binding);
+    return PayoutCardBindingResponse.builder()
+        .bindingId(binding.getId())
+        .status("FAILED")
+        .failureMessage(userMessage)
+        .build();
   }
 
   /** Save the token, register the payout method, and mark the zero-amount binding successful. */
@@ -278,7 +248,7 @@ public class PayoutCardBindingService {
     binding.setStatus("SUCCESS");
     binding.setPanMask(panMask);
     binding.setPayoutMethod(method);
-    binding.setCompletedAt(LocalDateTime.now());
+    binding.setCompletedAt(LocalDateTime.now(clock));
     bindingRepository.save(binding);
     return method;
   }

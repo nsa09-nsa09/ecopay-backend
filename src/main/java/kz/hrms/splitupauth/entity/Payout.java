@@ -121,6 +121,10 @@ public class Payout {
   @Column(name = "updated_at")
   private LocalDateTime updatedAt;
 
+  /** When the transfer was handed to the provider; bounds "provider has no record" waits. */
+  @Column(name = "submitted_at")
+  private LocalDateTime submittedAt;
+
   @PrePersist
   protected void onCreate() {
     if (createdAt == null) createdAt = LocalDateTime.now();

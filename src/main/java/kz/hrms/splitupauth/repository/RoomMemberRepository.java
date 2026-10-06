@@ -83,4 +83,13 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
   List<RoomOccupancyProjection> countOccupiedByRoomIds(
       @Param("roomIds") Collection<Long> roomIds,
       @Param("statuses") Collection<MemberStatus> statuses);
+
+  /** Keyset page of live member ids with the given status, for bounded batch scans. */
+  @Query(
+      "select m.id from RoomMember m where m.status = :status and m.deletedAt is null "
+          + "and m.id > :afterId order by m.id asc")
+  List<Long> findActiveIdsAfter(
+      @Param("status") MemberStatus status,
+      @Param("afterId") Long afterId,
+      org.springframework.data.domain.Pageable pageable);
 }

@@ -26,7 +26,7 @@ public interface PayoutRepository
 
   @Query(
       "select p from Payout p where p.status = 'PENDING_PROVIDER' "
-          + "and p.providerPayoutId is not null "
+          + "and (p.providerPayoutId is not null or p.providerOrderId is not null) "
           + "and (p.nextRetryAt is null or p.nextRetryAt <= :now) "
           + "order by p.createdAt asc")
   List<Payout> findProviderPendingForReconciliation(@Param("now") LocalDateTime now);
@@ -93,4 +93,8 @@ public interface PayoutRepository
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select p from Payout p where p.payoutBatch.id = :id order by p.id asc")
   List<Payout> findWithLockByPayoutBatchId(@Param("id") Long payoutBatchId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select p from Payout p where p.providerOrderId = :providerOrderId")
+  Optional<Payout> findWithLockByProviderOrderId(@Param("providerOrderId") String providerOrderId);
 }

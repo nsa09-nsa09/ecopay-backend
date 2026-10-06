@@ -66,6 +66,10 @@ public class SupportTicketService {
 
       if (room == null) {
         room = roomMember.getRoom();
+      } else if (!room.getId().equals(roomMember.getRoom().getId())) {
+        // A ticket escalated to a dispute blocks payouts of its room, so the room must be the
+        // membership's own room — never one chosen independently by the caller.
+        throw new ForbiddenOperationException("Membership does not belong to this room");
       }
     }
 

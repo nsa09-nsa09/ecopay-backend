@@ -49,4 +49,26 @@ public interface PaymentIntentRepository extends JpaRepository<PaymentIntent, Lo
       @Param("id") Long id,
       @Param("externalPaymentId") String externalPaymentId,
       @Param("providerStatusCode") String providerStatusCode);
+
+  /**
+   * Open intents due for a provider status query: older than {@code createdBefore}, not queried
+   * since {@code reconciledBefore}, under the attempt cap. Oldest first, bounded by the page.
+   */
+  @Query(
+      """
+      select p.id from PaymentIntent p
+       where p.status in :statuses
+         and p.providerName = :providerName
+         and p.createdAt < :createdBefore
+         and (p.lastReconciledAt is null or p.lastReconciledAt < :reconciledBefore)
+         and coalesce(p.reconcileAttempts, 0) < :maxAttempts
+       order by p.createdAt asc
+      """)
+  List<Long> findIdsForProviderReconciliation(
+      @Param("statuses") List<PaymentIntentStatus> statuses,
+      @Param("providerName") String providerName,
+      @Param("createdBefore") LocalDateTime createdBefore,
+      @Param("reconciledBefore") LocalDateTime reconciledBefore,
+      @Param("maxAttempts") int maxAttempts,
+      org.springframework.data.domain.Pageable pageable);
 }

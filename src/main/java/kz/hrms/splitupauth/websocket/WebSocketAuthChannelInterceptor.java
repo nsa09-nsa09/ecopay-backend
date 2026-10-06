@@ -45,6 +45,7 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
   private final RoomMemberRepository roomMemberRepository;
   private final JwtUtil jwtUtil;
   private final UserRepository userRepository;
+  private final WebSocketSessionRegistry sessionRegistry;
 
   @Override
   public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -54,8 +55,16 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
       return message;
     }
 
+    // Flood protection: every inbound frame counts against a per-session budget; the registry
+    // closes a session that exceeds it.
+    if (!StompCommand.DISCONNECT.equals(accessor.getCommand())
+        && !sessionRegistry.tryAcceptInboundFrame(accessor.getSessionId())) {
+      throw new ForbiddenOperationException("Too many WebSocket messages");
+    }
+
     if (StompCommand.CONNECT.equals(accessor.getCommand())) {
       User user = authenticateConnect(accessor);
+      sessionRegistry.bindUser(accessor.getSessionId(), user.getId());
 
       accessor.setUser(
           new UsernamePasswordAuthenticationToken(
@@ -70,7 +79,15 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
 
     if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
       User user = resolveUser(accessor);
+      ensureStillActive(user);
       validateSubscription(user, accessor.getDestination());
+    }
+
+    // The socket is server-push only: there are no @MessageMapping handlers, and the simple broker
+    // would otherwise relay a client SEND on /topic/** straight to other users' subscriptions
+    // (forged "account banned", notification or chat frames). Every client SEND is refused.
+    if (StompCommand.SEND.equals(accessor.getCommand())) {
+      throw new ForbiddenOperationException("Client messages are not accepted on this socket");
     }
 
     return message;
@@ -90,6 +107,18 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     }
 
     throw new ForbiddenOperationException("WebSocket authentication required");
+  }
+
+  /**
+   * The principal is cached for the life of the socket, so a ban issued after CONNECT is re-checked
+   * against the database before any new subscription is granted.
+   */
+  private void ensureStillActive(User user) {
+    UserStatus current =
+        userRepository.findById(user.getId()).map(User::getStatus).orElse(user.getStatus());
+    if (current != UserStatus.ACTIVE) {
+      throw new ForbiddenOperationException("WebSocket authentication required");
+    }
   }
 
   private User authenticateConnect(StompHeaderAccessor accessor) {

@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.pricing;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -54,6 +55,32 @@ class SafeOutboundUrlPolicyTest {
             UnsafeOutboundUrlException.class, () -> policy.validate("https://example.com/"));
 
     assertEquals(PriceSnapshotOutcome.DNS_BLOCKED, ex.getOutcome());
+  }
+
+  @Test
+  void ipv6SpellingsOfPrivateIpv4TargetsAreBlocked() throws Exception {
+    for (String answer :
+        Set.of(
+            "64:ff9b::a00:5", // NAT64 -> 10.0.0.5
+            "2002:a9fe:a9fe::1", // 6to4 -> 169.254.169.254 (cloud metadata)
+            "::7f00:1", // IPv4-compatible -> 127.0.0.1
+            "::ffff:c0a8:101")) { // IPv4-mapped -> 192.168.1.1
+      InetAddress resolved = InetAddress.getByName(answer);
+      SafeOutboundUrlPolicy policy =
+          policy(false, Set.of(443), "", host -> new InetAddress[] {resolved});
+      UnsafeOutboundUrlException ex =
+          assertThrows(
+              UnsafeOutboundUrlException.class,
+              () -> policy.validate("https://example.com/"),
+              answer);
+      assertEquals(PriceSnapshotOutcome.DNS_BLOCKED, ex.getOutcome(), answer);
+    }
+
+    InetAddress publicViaNat64 = InetAddress.getByName("64:ff9b::5db8:d822"); // 93.184.216.34
+    assertDoesNotThrow(
+        () ->
+            policy(false, Set.of(443), "", host -> new InetAddress[] {publicViaNat64})
+                .validate("https://example.com/"));
   }
 
   @Test

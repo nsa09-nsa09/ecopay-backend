@@ -84,7 +84,7 @@ class RoomMemberServiceTest {
   @Mock private NotificationService notificationService;
   @Mock private IdentifierRevealPolicy identifierRevealPolicy;
   @Mock private IdentifierRevealAuditService identifierRevealAuditService;
-  @Mock private InMemoryRateLimiter inMemoryRateLimiter;
+  @Mock private RateLimiter inMemoryRateLimiter;
 
   private RoomMemberService roomMemberService;
 

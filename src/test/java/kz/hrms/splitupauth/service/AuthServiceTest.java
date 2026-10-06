@@ -202,12 +202,26 @@ class AuthServiceTest {
     user.setBanUntil(LocalDateTime.now().plusDays(1));
     user.setBanReason("Investigation");
     when(userRepository.findByEmail(user.getEmail())).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches(anyString(), any())).thenReturn(true);
     UserBannedException error =
         assertThrows(
             UserBannedException.class, () -> authService.login(loginRequest(user.getEmail())));
     assertEquals("Investigation", error.getReason());
     assertEquals(user.getBanUntil(), error.getBanUntil());
     verify(jwtUtil, never()).generateAccessToken(anyString());
+  }
+
+  @Test
+  void banReasonIsNotRevealedWithoutTheCorrectPassword() {
+    User user = user(Role.USER);
+    user.setBanStartsAt(LocalDateTime.now().minusSeconds(1));
+    user.setBanUntil(LocalDateTime.now().plusDays(1));
+    user.setBanReason("Investigation");
+    when(userRepository.findByEmail(user.getEmail())).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches(anyString(), any())).thenReturn(false);
+
+    assertThrows(
+        InvalidCredentialsException.class, () -> authService.login(loginRequest(user.getEmail())));
   }
 
   @Test

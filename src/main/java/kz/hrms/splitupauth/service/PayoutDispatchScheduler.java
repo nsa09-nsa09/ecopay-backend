@@ -1,5 +1,7 @@
 package kz.hrms.splitupauth.service;
 
+import java.time.Duration;
+import kz.hrms.splitupauth.scheduler.SchedulerLock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,10 +18,19 @@ import org.springframework.stereotype.Component;
 public class PayoutDispatchScheduler {
 
   private final PayoutService payoutService;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.payout.dispatch-delay-ms:60000}")
   public void dispatchDuePayouts() {
-    payoutService.processPendingPayouts();
-    payoutService.reconcilePendingProviderPayouts();
+    // Row leases, FOR UPDATE claims and the DB immutability triggers already make a concurrent
+    // second dispatcher harmless; the cluster lock removes the wasted duplicate scans and the
+    // duplicate provider status polls.
+    schedulerLock.runExclusive(
+        "payout-dispatch",
+        Duration.ofMinutes(10),
+        () -> {
+          payoutService.processPendingPayouts();
+          payoutService.reconcilePendingProviderPayouts();
+        });
   }
 }

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,21 +17,29 @@ import kz.hrms.splitupauth.dto.PublicProfileDto;
 import kz.hrms.splitupauth.entity.DeletedUserIdentityArchive;
 import kz.hrms.splitupauth.entity.ReputationLevel;
 import kz.hrms.splitupauth.entity.Role;
+import kz.hrms.splitupauth.entity.SavedCardStatus;
 import kz.hrms.splitupauth.entity.ServiceReview;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.DeletedUserIdentityArchiveRepository;
 import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.EmailVerificationTokenRepository;
+import kz.hrms.splitupauth.repository.LoginAttemptRepository;
+import kz.hrms.splitupauth.repository.PasswordResetTokenRepository;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
+import kz.hrms.splitupauth.repository.PhoneVerificationRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
+import kz.hrms.splitupauth.repository.SavedCardRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.security.FieldEncryptionService;
+import kz.hrms.splitupauth.websocket.WebSocketSessionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -56,6 +65,13 @@ class UserServiceTest {
   @Mock private DisputeRepository disputeRepository;
   @Mock private DeletedUserIdentityArchiveRepository identityArchiveRepository;
   @Mock private FieldEncryptionService fieldEncryptionService;
+  @Mock private PayoutMethodRepository payoutMethodRepository;
+  @Mock private SavedCardRepository savedCardRepository;
+  @Mock private PhoneVerificationRepository phoneVerificationRepository;
+  @Mock private EmailVerificationTokenRepository emailVerificationTokenRepository;
+  @Mock private PasswordResetTokenRepository passwordResetTokenRepository;
+  @Mock private LoginAttemptRepository loginAttemptRepository;
+  @Mock private WebSocketSessionRegistry webSocketSessionRegistry;
 
   private UserService service;
 
@@ -78,7 +94,14 @@ class UserServiceTest {
             payoutRepository,
             disputeRepository,
             identityArchiveRepository,
-            fieldEncryptionService);
+            fieldEncryptionService,
+            payoutMethodRepository,
+            savedCardRepository,
+            phoneVerificationRepository,
+            emailVerificationTokenRepository,
+            passwordResetTokenRepository,
+            loginAttemptRepository,
+            webSocketSessionRegistry);
     // Real impl never returns null; the mock would, so give it a sane default.
     lenient().when(reputationService.levelOf(any())).thenReturn(ReputationLevel.EXCELLENT);
     lenient().when(reputationService.completedRoomsCount(any())).thenReturn(0L);
@@ -164,8 +187,18 @@ class UserServiceTest {
     assertEquals("Удалённый пользователь", saved.getDisplayName());
     assertNull(saved.getPhone());
     assertNull(saved.getAvatar());
+    assertEquals("!deleted", saved.getPassword());
 
     verify(tokenRevocationService).revokeAllUserTokens(u);
+    // Nothing reusable or personal outlives the account.
+    verify(payoutMethodRepository).revokeAllForUser(eq(42L), any());
+    verify(savedCardRepository).revokeAllForUser(eq(42L), eq(SavedCardStatus.REVOKED), any());
+    verify(phoneVerificationRepository).deleteAllForUser(42L);
+    verify(emailVerificationTokenRepository).deleteByUser(u);
+    verify(passwordResetTokenRepository).deleteByUser(u);
+    verify(loginAttemptRepository).anonymizeIdentifier("u42@e.kz", "deleted-42");
+    verify(loginAttemptRepository).anonymizeIdentifier("+77001234567", "deleted-42");
+    verify(webSocketSessionRegistry).closeUserSessions(42L, 0);
   }
 
   @Test
@@ -190,6 +223,7 @@ class UserServiceTest {
         () -> service.deleteAccount(u));
     verify(identityArchiveRepository, never()).save(any());
     verify(tokenRevocationService, never()).revokeAllUserTokens(any());
+    verify(payoutMethodRepository, never()).revokeAllForUser(any(), any());
   }
 
   @Test

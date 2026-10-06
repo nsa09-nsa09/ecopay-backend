@@ -9,23 +9,46 @@ import kz.hrms.splitupauth.payment.gateway.MockPaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayProperties;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
+/**
+ * Refuses to start the prod profile with unsafe configuration.
+ *
+ * <p>Validation runs in {@link #afterSingletonsInstantiated()}, i.e. after every bean exists but
+ * BEFORE the context is refreshed — so before any {@code @Scheduled} money job (payout/refund
+ * dispatch, reconciliation) can fire and before the web server accepts traffic. It is repeated as
+ * an {@link ApplicationRunner} for callers/tests that only drive the runner contract.
+ *
+ * <p>Automatic recurring charges stay rejected in production on purpose: auto-renewal is not part
+ * of the MVP launch and FreedomPay's recurring contract (make_recurring_payment acceptance vs.
+ * capture semantics, recurring lifetime) must first be confirmed for this merchant.
+ */
 @Component
 @Profile("prod")
 @RequiredArgsConstructor
-public class ProductionStartupGuard implements ApplicationRunner {
+public class ProductionStartupGuard implements ApplicationRunner, SmartInitializingSingleton {
 
   private final Environment environment;
   private final CorsProperties corsProperties;
   private final FreedomPayProperties freedomPayProperties;
 
+  private volatile boolean validated;
+
+  @Override
+  public void afterSingletonsInstantiated() {
+    run(null);
+  }
+
   @Override
   public void run(ApplicationArguments args) {
+    if (validated) {
+      return;
+    }
     List<String> violations = new ArrayList<>();
 
     validateProfiles(violations);
@@ -79,12 +102,39 @@ public class ProductionStartupGuard implements ApplicationRunner {
         !List.of("framework", "native").contains(prop("server.forward-headers-strategy")),
         violations,
         "forwarded headers strategy is not configured for reverse proxy use");
+    if ("native".equals(prop("server.forward-headers-strategy"))) {
+      String proxies = prop("server.tomcat.remoteip.internal-proxies").trim();
+      reject(
+          proxies.isBlank() || proxies.equals(".*") || proxies.equals(".+"),
+          violations,
+          "trusted proxy list would let any client spoof X-Forwarded-For");
+    }
+    reject(
+        !"jdbc".equalsIgnoreCase(prop("app.rate-limit.store")),
+        violations,
+        "rate limiting is per-instance (app.rate-limit.store must be jdbc for production)");
+    String exposure = prop("management.endpoints.web.exposure.include").toLowerCase(Locale.ROOT);
+    reject(
+        exposure.contains("*")
+            || exposure.contains("env")
+            || exposure.contains("heapdump")
+            || exposure.contains("threaddump")
+            || exposure.contains("configprops")
+            || exposure.contains("loggers")
+            || exposure.contains("beans"),
+        violations,
+        "sensitive actuator endpoints are exposed");
+    reject(
+        !freedomPayProperties.isVerifyResponseSignatures(),
+        violations,
+        "FreedomPay response signature verification is disabled");
 
     if (!violations.isEmpty()) {
       throw new IllegalStateException(
           "Refusing to start production profile due to unsafe configuration: "
               + String.join("; ", violations));
     }
+    validated = true;
   }
 
   private void validateProfiles(List<String> violations) {
@@ -130,6 +180,10 @@ public class ProductionStartupGuard implements ApplicationRunner {
     reject(!refundDispatchEnabled, violations, "refund dispatch is disabled in live-money mode");
     reject(intProp("app.payout.hold-days", -1) != 30, violations, "payout hold is not 30 days");
     reject(
+        !freedomPayProperties.isAutoClearing(),
+        violations,
+        "FreedomPay two-step (pg_auto_clearing=0) charges would be treated as captured money");
+    reject(
         postPayoutRefundEnabled && !ownerReceivableEnabled,
         violations,
         "post-payout refunds require owner receivables");
@@ -139,6 +193,17 @@ public class ProductionStartupGuard implements ApplicationRunner {
     rejectUnsafeCallback(freedomPayProperties.getResultUrl(), violations, "FreedomPay result URL");
     rejectUnsafeCallback(
         freedomPayProperties.getPayoutResultUrl(), violations, "FreedomPay payout result URL");
+    rejectUnsafeCallback(
+        freedomPayProperties.getPayoutCardResultUrl(),
+        violations,
+        "FreedomPay payout card result URL");
+    // Callback signatures use the last path segment of the callback URL as script name, so the
+    // configured URLs must end exactly like the controller mappings.
+    rejectWrongCallbackScript(freedomPayProperties.getResultUrl(), "result", violations);
+    rejectWrongCallbackScript(
+        freedomPayProperties.getPayoutResultUrl(), "payout-result", violations);
+    rejectWrongCallbackScript(
+        freedomPayProperties.getPayoutCardResultUrl(), "payout-card-result", violations);
     rejectUnsafeCallback(
         freedomPayProperties.getSuccessUrl(), violations, "FreedomPay success URL");
     rejectUnsafeCallback(
@@ -222,6 +287,22 @@ public class ProductionStartupGuard implements ApplicationRunner {
         !"true".equalsIgnoreCase(prop("app.production.legal-reviewed")),
         violations,
         "terms/privacy legal review is not confirmed");
+  }
+
+  private static void rejectWrongCallbackScript(
+      String url, String expectedScript, List<String> violations) {
+    String path = "";
+    try {
+      URI uri = URI.create(url == null ? "" : url.trim());
+      path = uri.getPath() == null ? "" : uri.getPath();
+    } catch (IllegalArgumentException ignored) {
+      // reported by rejectUnsafeCallback
+    }
+    while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+    reject(
+        !path.endsWith("/" + expectedScript),
+        violations,
+        "FreedomPay callback URL must end with /" + expectedScript);
   }
 
   private void rejectUnsafeCallback(String url, List<String> violations, String label) {

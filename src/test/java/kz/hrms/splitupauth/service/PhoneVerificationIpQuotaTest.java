@@ -139,17 +139,18 @@ class PhoneVerificationIpQuotaTest {
   }
 
   @Test
-  void theProxiedClientAddressIsUsed_notTheProxysOwn() {
-    MockHttpServletRequest http = request("10.0.0.1");
-    http.addHeader("X-Forwarded-For", IP + ", 10.0.0.1");
+  void spoofedForwardedForHeaderCannotDodgeTheQuota() {
+    // The trusted-proxy valve has already resolved the real client into remoteAddr. A client that
+    // rotates its own X-Forwarded-For value must still hit the same exhausted bucket.
     for (int i = 0; i < 3; i++) {
+      MockHttpServletRequest http = request(IP);
+      http.addHeader("X-Forwarded-For", "198.51.100." + i);
       service.enforceIpQuota(http);
     }
 
-    // Same real client, fresh socket address → must still be the exhausted bucket.
-    MockHttpServletRequest other = request("10.0.0.2");
-    other.addHeader("X-Forwarded-For", IP + ", 10.0.0.2");
-    assertThrows(TooManyRequestsException.class, () -> service.enforceIpQuota(other));
+    MockHttpServletRequest spoofed = request(IP);
+    spoofed.addHeader("X-Forwarded-For", "203.0.113.99");
+    assertThrows(TooManyRequestsException.class, () -> service.enforceIpQuota(spoofed));
   }
 
   @Test

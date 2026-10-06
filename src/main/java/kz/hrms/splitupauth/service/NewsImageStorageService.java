@@ -15,6 +15,7 @@ import kz.hrms.splitupauth.config.NewsImageUploadProperties;
 import kz.hrms.splitupauth.config.S3Properties;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.util.SafeImageDecoder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -97,7 +98,7 @@ public class NewsImageStorageService {
 
     BufferedImage decoded;
     try (InputStream in = new ByteArrayInputStream(bytes)) {
-      decoded = ImageIO.read(in);
+      decoded = SafeImageDecoder.read(in);
     } catch (IOException ex) {
       throw new InvalidRequestException("Не удалось декодировать изображение");
     }

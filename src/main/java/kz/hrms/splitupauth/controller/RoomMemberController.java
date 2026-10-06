@@ -6,8 +6,8 @@ import java.util.List;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.DisputeService;
-import kz.hrms.splitupauth.service.InMemoryRateLimiter;
 import kz.hrms.splitupauth.service.MemberHoldService;
+import kz.hrms.splitupauth.service.RateLimiter;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,7 +24,7 @@ public class RoomMemberController {
   private final RoomMemberService roomMemberService;
   private final MemberHoldService memberHoldService;
   private final DisputeService disputeService;
-  private final InMemoryRateLimiter rateLimiter;
+  private final RateLimiter rateLimiter;
 
   @Value("${app.rate-limit.room-join.max:20}")
   private int joinMax;

@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.repository.IdentifierRevealAuditRepository;
+import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -66,12 +67,7 @@ public class IdentifierRevealAuditService {
     if (request == null) {
       return null;
     }
-    String forwarded = request.getHeader("X-Forwarded-For");
-    String ip =
-        forwarded == null || forwarded.isBlank()
-            ? request.getRemoteAddr()
-            : forwarded.split(",")[0].trim();
-    return limit(ip, 64);
+    return limit(ClientIp.of(request), 64);
   }
 
   private String userAgent(HttpServletRequest request) {

@@ -1,5 +1,7 @@
 package kz.hrms.splitupauth.service;
 
+import java.time.Duration;
+import kz.hrms.splitupauth.scheduler.SchedulerLock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -12,9 +14,16 @@ import org.springframework.stereotype.Component;
 public class RefundDispatchScheduler {
 
   private final RefundService refundService;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.refunds.retry-delay-ms:60000}")
   public void dispatchApprovedRefunds() {
-    refundService.processPendingRefunds();
+    schedulerLock.runExclusive(
+        "refund-dispatch",
+        Duration.ofMinutes(10),
+        () -> {
+          refundService.processPendingRefunds();
+          refundService.reconcilePendingProviderRefunds(20);
+        });
   }
 }

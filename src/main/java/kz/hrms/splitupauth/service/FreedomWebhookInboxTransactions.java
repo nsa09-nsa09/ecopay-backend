@@ -83,6 +83,35 @@ public class FreedomWebhookInboxTransactions {
     inboxRepository.save(inbox);
   }
 
+  /**
+   * Puts a DEAD_LETTER row back into the retry queue. Rows that failed signature verification are
+   * never re-queued: their content is not provably from FreedomPay. Re-processing is safe because
+   * every downstream money operation is idempotent and re-checks the signature.
+   *
+   * @return the previous error code, or null when the row cannot be re-queued
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public String requeueDeadLetter(Long inboxId) {
+    FreedomWebhookInbox inbox = inboxRepository.findWithLockById(inboxId).orElse(null);
+    if (inbox == null
+        || !"DEAD_LETTER".equals(inbox.getProcessingStatus())
+        || Boolean.FALSE.equals(inbox.getSignatureValid())
+        || "INVALID_SIGNATURE".equals(inbox.getLastErrorCode())) {
+      return null;
+    }
+    String previous = inbox.getLastErrorCode() == null ? "UNKNOWN" : inbox.getLastErrorCode();
+    inbox.setProcessingStatus("PENDING");
+    inbox.setAttemptCount(0);
+    inbox.setNextRetryAt(null);
+    inbox.setProcessedAt(null);
+    inbox.setDeadLetteredAt(null);
+    inbox.setLeaseOwner(null);
+    inbox.setLeaseUntil(null);
+    inbox.setLastErrorCode("REQUEUED_AFTER_" + truncate(previous, 60));
+    inboxRepository.save(inbox);
+    return previous;
+  }
+
   private static String truncate(String value, int maxLength) {
     if (value == null || value.length() <= maxLength) return value;
     return value.substring(0, maxLength);

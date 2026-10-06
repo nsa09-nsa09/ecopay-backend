@@ -106,6 +106,14 @@ public class PaymentIntent {
   @Column(name = "updated_at")
   private LocalDateTime updatedAt;
 
+  /** Last provider status query for an ambiguous (UNKNOWN/RECONCILING/PENDING) intent. */
+  @Column(name = "last_reconciled_at")
+  private LocalDateTime lastReconciledAt;
+
+  @Column(name = "reconcile_attempts", nullable = false)
+  @Builder.Default
+  private Integer reconcileAttempts = 0;
+
   @PrePersist
   protected void onCreate() {
     createdAt = LocalDateTime.now();

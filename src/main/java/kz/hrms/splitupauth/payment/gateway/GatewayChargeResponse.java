@@ -16,4 +16,11 @@ public class GatewayChargeResponse {
   private String providerStatusCode;
   private String failureCode;
   private String failureMessage;
+
+  /**
+   * True only when the gateway PROVES the money is captured synchronously (the in-memory mock). A
+   * provider "ok" acknowledgement of a token/recurring charge is acceptance, not capture: such
+   * charges stay open until a signed callback or a status query confirms them.
+   */
+  private boolean captureConfirmed;
 }

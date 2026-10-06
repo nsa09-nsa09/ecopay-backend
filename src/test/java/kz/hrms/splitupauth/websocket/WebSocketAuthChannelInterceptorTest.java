@@ -49,7 +49,12 @@ class WebSocketAuthChannelInterceptorTest {
   void setUp() {
     interceptor =
         new WebSocketAuthChannelInterceptor(
-            supportTicketRepository, roomRepository, roomMemberRepository, jwtUtil, userRepository);
+            supportTicketRepository,
+            roomRepository,
+            roomMemberRepository,
+            jwtUtil,
+            userRepository,
+            new WebSocketSessionRegistry(60, 10));
   }
 
   private User user(long id, Role role) {
@@ -74,6 +79,66 @@ class WebSocketAuthChannelInterceptorTest {
   private Message<byte[]> subscribe(User principal, String destination) {
     StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
     accessor.setDestination(destination);
+    accessor.setUser(
+        new UsernamePasswordAuthenticationToken(
+            principal, null, List.of(new SimpleGrantedAuthority(principal.getRole().name()))));
+    accessor.setLeaveMutable(true);
+    return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+  }
+
+  @Test
+  void clientSend_toAnotherUsersTopic_isRejected() {
+    User attacker = user(42L, Role.USER);
+    StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
+    accessor.setDestination("/topic/users/43/account");
+    accessor.setUser(
+        new UsernamePasswordAuthenticationToken(
+            attacker, null, List.of(new SimpleGrantedAuthority(attacker.getRole().name()))));
+    accessor.setLeaveMutable(true);
+    Message<byte[]> forged =
+        MessageBuilder.createMessage(
+            "{\"type\":\"BANNED\"}".getBytes(), accessor.getMessageHeaders());
+
+    assertThrows(ForbiddenOperationException.class, () -> interceptor.preSend(forged, null));
+  }
+
+  @Test
+  void subscription_afterBanIssuedPostConnect_isRejected() {
+    User cached = user(42L, Role.USER);
+    User banned = user(42L, Role.USER);
+    banned.setStatus(UserStatus.BANNED);
+    when(userRepository.findById(42L)).thenReturn(Optional.of(banned));
+
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> interceptor.preSend(subscribe(cached, "/topic/users/42/notifications"), null));
+  }
+
+  @Test
+  void floodingSession_isCutOffAfterItsFrameBudget() {
+    WebSocketAuthChannelInterceptor strict =
+        new WebSocketAuthChannelInterceptor(
+            supportTicketRepository,
+            roomRepository,
+            roomMemberRepository,
+            jwtUtil,
+            userRepository,
+            new WebSocketSessionRegistry(3, 60));
+    User u = user(42L, Role.USER);
+    for (int i = 0; i < 3; i++) {
+      strict.preSend(subscribeOnSession(u, "/topic/users/42/account", "s-1"), null);
+    }
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> strict.preSend(subscribeOnSession(u, "/topic/users/42/account", "s-1"), null));
+    // Budgets are per session: another socket is unaffected.
+    strict.preSend(subscribeOnSession(u, "/topic/users/42/account", "s-2"), null);
+  }
+
+  private Message<byte[]> subscribeOnSession(User principal, String destination, String session) {
+    StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+    accessor.setDestination(destination);
+    accessor.setSessionId(session);
     accessor.setUser(
         new UsernamePasswordAuthenticationToken(
             principal, null, List.of(new SimpleGrantedAuthority(principal.getRole().name()))));

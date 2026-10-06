@@ -128,6 +128,70 @@ class ProductionStartupGuardTest {
     assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
   }
 
+  @Test
+  void perInstanceRateLimitingFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.rate-limit.store", "memory");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void disabledResponseSignatureVerificationFailsProductionStartup() {
+    FreedomPayProperties freedomPay = liveFreedomPay();
+    freedomPay.setVerifyResponseSignatures(false);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> new ProductionStartupGuard(validEnvironment(), validCors(), freedomPay).run(null));
+  }
+
+  @Test
+  void twoStepClearingFailsLiveMoneyStartup() {
+    FreedomPayProperties freedomPay = liveFreedomPay();
+    freedomPay.setAutoClearing(false);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> new ProductionStartupGuard(validEnvironment(), validCors(), freedomPay).run(null));
+  }
+
+  @Test
+  void callbackUrlWhoseLastSegmentBreaksSignaturesFailsProductionStartup() {
+    FreedomPayProperties freedomPay = liveFreedomPay();
+    freedomPay.setPayoutCardResultUrl("https://api.ecopay.kz/hooks/payout-card");
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> new ProductionStartupGuard(validEnvironment(), validCors(), freedomPay).run(null));
+  }
+
+  @Test
+  void wildcardTrustedProxiesFailProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("server.forward-headers-strategy", "native");
+    environment.setProperty("server.tomcat.remoteip.internal-proxies", ".*");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void sensitiveActuatorExposureFailsProductionStartup() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("management.endpoints.web.exposure.include", "*");
+
+    assertThrows(IllegalStateException.class, () -> guard(environment).run(null));
+  }
+
+  @Test
+  void guardRunsBeforeSchedulersViaSingletonCallback() {
+    MockEnvironment environment = validEnvironment();
+    environment.setProperty("app.recurring.enabled", "true");
+
+    assertThrows(
+        IllegalStateException.class, () -> guard(environment).afterSingletonsInstantiated());
+  }
+
   private ProductionStartupGuard guard(MockEnvironment environment) {
     return new ProductionStartupGuard(environment, validCors(), liveFreedomPay());
   }
@@ -176,7 +240,9 @@ class ProductionStartupGuardTest {
         .withProperty("spring.jpa.show-sql", "false")
         .withProperty("spring.flyway.validate-on-migrate", "true")
         .withProperty("spring.flyway.ignore-migration-patterns", "")
-        .withProperty("server.forward-headers-strategy", "framework");
+        .withProperty("server.forward-headers-strategy", "framework")
+        .withProperty("app.rate-limit.store", "jdbc")
+        .withProperty("management.endpoints.web.exposure.include", "health,prometheus");
     return environment;
   }
 
@@ -195,6 +261,8 @@ class ProductionStartupGuardTest {
     properties.setTestMode("0");
     properties.setResultUrl("https://api.ecopay.kz/api/v1/webhooks/freedompay/result");
     properties.setPayoutResultUrl("https://api.ecopay.kz/api/v1/webhooks/freedompay/payout-result");
+    properties.setPayoutCardResultUrl(
+        "https://api.ecopay.kz/api/v1/webhooks/freedompay/payout-card-result");
     properties.setSuccessUrl("https://app.ecopay.kz/payment/confirmation");
     properties.setFailureUrl("https://app.ecopay.kz/payment/failure");
     return properties;

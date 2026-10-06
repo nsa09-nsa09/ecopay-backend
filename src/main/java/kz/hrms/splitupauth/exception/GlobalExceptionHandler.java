@@ -228,21 +228,16 @@ public class GlobalExceptionHandler {
     // Always log the full stack trace so operators can see what actually failed
     // — the previous behaviour of swallowing this with `printStackTrace()`
     // made admin endpoints opaque ("An unexpected error occurred").
+    // Full details stay server-side, keyed by a correlation id the client can quote to support.
+    // Exception class names and messages (NPE field names, constraint/column names) are never
+    // returned: they disclose internals and help an attacker map the schema.
+    String errorId = java.util.UUID.randomUUID().toString();
     log.error(
-        "Unhandled exception serving request: {}: {}",
+        "Unhandled exception serving request [errorId={}]: {}",
+        errorId,
         ex.getClass().getSimpleName(),
-        ex.getMessage(),
         ex);
-
-    // Surface the exception class + a short message in the response body. This
-    // is still safe (no stack trace, no SQL, no secrets) and gives the UI a
-    // hint instead of a generic 500. Validation/auth/known-error paths above
-    // already produce nicer, fully-translated messages.
-    String safeMessage = ex.getClass().getSimpleName();
-    String detail = ex.getMessage();
-    if (detail != null && !detail.isBlank() && detail.length() < 300) {
-      safeMessage = safeMessage + ": " + detail;
-    }
+    String safeMessage = "Internal server error. Reference: " + errorId;
 
     ErrorResponse error = new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(), safeMessage);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);

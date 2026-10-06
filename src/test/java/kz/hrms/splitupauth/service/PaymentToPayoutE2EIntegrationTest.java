@@ -1,10 +1,14 @@
 package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -13,7 +17,9 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -22,6 +28,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import kz.hrms.splitupauth.AbstractIntegrationTest;
+import kz.hrms.splitupauth.controller.AdminFinanceController;
 import kz.hrms.splitupauth.dto.ConfirmOwnerAccessRequest;
 import kz.hrms.splitupauth.dto.CreatePaymentIntentRequest;
 import kz.hrms.splitupauth.dto.CreateRoomRequest;
@@ -31,6 +38,7 @@ import kz.hrms.splitupauth.dto.PaymentIntentResponse;
 import kz.hrms.splitupauth.dto.RegisterRequest;
 import kz.hrms.splitupauth.dto.RoomMemberDto;
 import kz.hrms.splitupauth.dto.RoomResponse;
+import kz.hrms.splitupauth.entity.FreedomWebhookInbox;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
@@ -41,6 +49,11 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.MockPaymentGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayMessage;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayProperties;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPaySignatureService;
+import kz.hrms.splitupauth.repository.FreedomWebhookInboxRepository;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
@@ -55,6 +68,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * End-to-end money flow against a real Postgres (Testcontainers) with the dev mock gateway: guest
@@ -106,6 +123,14 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
   @Autowired MutableClock mutableClock;
   @Autowired MockPaymentGateway mockGateway;
   @Autowired PaymentHistoryService paymentHistoryService;
+  @Autowired FreedomWebhookInboxCoordinator inboxCoordinator;
+  @Autowired FreedomWebhookInboxTransactions inboxTransactions;
+  @Autowired FreedomWebhookInboxRepository inboxRepository;
+  @Autowired FreedomPayGateway freedomPayGateway;
+  @Autowired FreedomPaySignatureService freedomPaySignatures;
+  @Autowired FreedomPayProperties freedomPayProperties;
+  @Autowired AdminFinanceController adminFinanceController;
+  @Autowired AdminDashboardService adminDashboardService;
 
   private static final AtomicInteger SEQ = new AtomicInteger();
 
@@ -148,8 +173,8 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     }
     jdbcTemplate.update(
         "INSERT INTO payout_methods (user_id, provider_name, provider_card_token, pan_mask, "
-            + "is_default, status, created_at) VALUES (?, 'mock', ?, '6666', TRUE, "
-            + "'ACTIVE', CURRENT_TIMESTAMP)",
+            + "is_default, status, token_source, created_at) VALUES (?, 'mock', ?, '6666', TRUE, "
+            + "'ACTIVE', 'PAYOUT_CARD_TOKEN', CURRENT_TIMESTAMP)",
         owner.getId(),
         "tok_e2e_" + owner.getId());
   }
@@ -490,6 +515,169 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
             intent.getId());
     assertEquals(1L, chargeRows);
     assertEquals(1L, payoutRows);
+  }
+
+  /**
+   * Required test #27: a genuine, correctly signed result callback that exhausted its retries (e.g.
+   * a database outage) sits in DEAD_LETTER without touching money; an admin re-queue is audited,
+   * applies it exactly once, and neither a later provider retry nor a second re-queue duplicates
+   * it. Forged (invalid-signature) dead letters can never be re-queued.
+   */
+  @Test
+  void deadLetteredWebhook_isRecoveredByAuditedRequeue_exactlyOnce() {
+    String previousSecret = freedomPayProperties.getSecretKey();
+    freedomPayProperties.setSecretKey("dlq-it-secret");
+    try {
+      User host = registerVerified("DLQ Host");
+      User guest = registerVerified("DLQ Guest");
+      User admin = registerVerified("DLQ Admin");
+      RoomResponse room = createDigitalRoom(host, "DLQ Room");
+      RoomMemberDto member = joinRoom(room.getId(), guest, "dlq@test.kz");
+      mockGateway.setAsyncCapture(true);
+      PaymentIntentResponse response = pay(member, guest, "dlq-key-" + member.getId());
+      PaymentIntent intent = paymentIntentRepository.findById(response.getId()).orElseThrow();
+
+      Map<String, String> callback = new LinkedHashMap<>();
+      callback.put("pg_order_id", String.valueOf(intent.getId()));
+      callback.put("pg_payment_id", intent.getExternalPaymentId());
+      callback.put("pg_amount", intent.getAmount().toPlainString());
+      callback.put("pg_currency", "KZT");
+      callback.put("pg_result", "1");
+      callback.put("pg_captured", "1");
+      callback.put("pg_salt", "dlq-salt");
+      callback.put(
+          "pg_sig",
+          freedomPaySignatures.sign(
+              FreedomPayGateway.RESULT_SCRIPT, callback, freedomPayProperties.getSecretKey()));
+      ObjectNode rawBody = JsonNodeFactory.instance.objectNode();
+      callback.forEach(rawBody::put);
+      FreedomWebhookInbox deadLetter =
+          inboxTransactions.insert(
+              FreedomWebhookInbox.builder()
+                  .providerRequestId(
+                      freedomPayGateway.callbackRequestId(
+                          FreedomPayGateway.RESULT_SCRIPT, FreedomPayMessage.of(callback)))
+                  .callbackScript(FreedomPayGateway.RESULT_SCRIPT)
+                  .rawBody(rawBody)
+                  .signatureValid(true)
+                  .processingStatus("DEAD_LETTER")
+                  .attemptCount(8)
+                  .lastAttemptAt(LocalDateTime.now())
+                  .processedAt(LocalDateTime.now())
+                  .deadLetteredAt(LocalDateTime.now())
+                  .lastErrorCode("DATABASE_ERROR")
+                  .errorMessage("database unavailable")
+                  .build());
+
+      // Dead letters are never applied on their own, not even by the retry scheduler.
+      inboxCoordinator.retryDueWebhooks();
+      assertEquals(
+          PaymentIntentStatus.PENDING,
+          paymentIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+      assertEquals(0L, successfulCharges(intent.getId()));
+
+      SecurityContextHolder.getContext()
+          .setAuthentication(
+              new UsernamePasswordAuthenticationToken(
+                  admin, null, List.of(new SimpleGrantedAuthority("ADMIN"))));
+      MockHttpServletRequest http = new MockHttpServletRequest();
+      http.addHeader("User-Agent", "dlq-it");
+      adminFinanceController.requeueWebhook(
+          deadLetter.getId(),
+          new AdminFinanceController.RequeueWebhookRequest("database recovered"),
+          admin,
+          http);
+
+      FreedomWebhookInbox recovered = inboxRepository.findById(deadLetter.getId()).orElseThrow();
+      assertEquals("PROCESSED", recovered.getProcessingStatus());
+      assertEquals(
+          PaymentIntentStatus.SUCCESS,
+          paymentIntentRepository.findById(intent.getId()).orElseThrow().getStatus());
+      assertEquals(1L, successfulCharges(intent.getId()));
+      assertEquals(1L, payoutsFor(intent.getId()));
+      assertEquals(
+          1L,
+          jdbcTemplate.queryForObject(
+              "SELECT COUNT(*) FROM admin_action_log WHERE action_type = 'WEBHOOK_REQUEUED' "
+                  + "AND entity_id = ?",
+              Long.class,
+              deadLetter.getId()));
+
+      // The provider retries the same callback later, and an admin clicks re-queue again.
+      FreedomWebhookInboxCoordinator.Acceptance retry =
+          inboxCoordinator.acceptAndProcess(FreedomPayGateway.RESULT_SCRIPT, callback);
+      assertEquals(deadLetter.getId(), retry.inboxId());
+      assertNull(inboxTransactions.requeueDeadLetter(deadLetter.getId()));
+      assertEquals(1L, successfulCharges(intent.getId()));
+      assertEquals(1L, payoutsFor(intent.getId()));
+
+      // A forged callback is dead-lettered at the door and cannot be re-queued into processing.
+      Map<String, String> forged = new LinkedHashMap<>(callback);
+      forged.put("pg_amount", "1.00");
+      forged.put("pg_salt", "forged");
+      FreedomWebhookInboxCoordinator.Acceptance rejected =
+          inboxCoordinator.acceptAndProcess(FreedomPayGateway.RESULT_SCRIPT, forged);
+      assertTrue(rejected.invalidSignature());
+      assertNull(inboxTransactions.requeueDeadLetter(rejected.inboxId()));
+      assertThrows(
+          ResourceConflictException.class,
+          () ->
+              adminFinanceController.requeueWebhook(
+                  rejected.inboxId(),
+                  new AdminFinanceController.RequeueWebhookRequest("try forged"),
+                  admin,
+                  http));
+      assertFalse(
+          "PROCESSED"
+              .equals(
+                  inboxRepository
+                      .findById(rejected.inboxId())
+                      .orElseThrow()
+                      .getProcessingStatus()));
+      assertEquals(1L, successfulCharges(intent.getId()));
+    } finally {
+      SecurityContextHolder.clearContext();
+      mockGateway.setAsyncCapture(false);
+      freedomPayProperties.setSecretKey(previousSecret);
+    }
+  }
+
+  private Long successfulCharges(Long intentId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM payment_transactions "
+            + "WHERE payment_intent_id = ? AND type = 'CHARGE' AND status = 'SUCCESS'",
+        Long.class,
+        intentId);
+  }
+
+  private Long payoutsFor(Long intentId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM payouts WHERE triggering_payment_intent_id = ?",
+        Long.class,
+        intentId);
+  }
+
+  @Test
+  void dashboardStartupKpis_countARealCapturedPayment_andAreComputedNotFaked() {
+    var before = adminDashboardService.getKpis();
+    User host = registerVerified("KPI Host");
+    User guest = registerVerified("KPI Guest");
+    RoomResponse room = createDigitalRoom(host, "KPI Room");
+    RoomMemberDto member = joinRoom(room.getId(), guest, "kpi@test.kz");
+    pay(member, guest, "kpi-key-" + member.getId());
+
+    var after = adminDashboardService.getKpis();
+    assertEquals(before.getSuccessfulPayments30d() + 1, after.getSuccessfulPayments30d());
+    assertEquals(
+        before.getUsersWithFirstSuccessfulPayment30d() + 1,
+        after.getUsersWithFirstSuccessfulPayment30d());
+    assertEquals(before.getRegistrations30d() + 2, after.getRegistrations30d());
+    // The captured payment's owner share is now inside the 30-day payout reserve.
+    assertTrue(after.getPayoutHeldAmountKzt().compareTo(before.getPayoutHeldAmountKzt()) > 0);
+    assertNotNull(after.getFreedomWebhookDeadLetterCount());
+    assertNotNull(after.getRefundRequiresReviewCount());
+    double successRate = after.getPaymentSuccessRate30d();
+    assertTrue(successRate > 0 && successRate <= 100, "rate is a percentage: " + successRate);
   }
 
   @Test

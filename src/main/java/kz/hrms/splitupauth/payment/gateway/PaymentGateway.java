@@ -28,6 +28,14 @@ public interface PaymentGateway {
   GatewayStatusResponse getStatus(String externalPaymentId);
 
   /**
+   * Status lookup by the merchant order id, used when an initiation call was ambiguous and no
+   * provider payment id is known. Returns null when the provider has no such lookup.
+   */
+  default GatewayStatusResponse getStatusByOrderId(String merchantOrderId) {
+    return null;
+  }
+
+  /**
    * Reconcile an owner payout that was accepted by the provider but has not reached a final state.
    * The merchant order id is required by Freedom Pay together with its payment id.
    */

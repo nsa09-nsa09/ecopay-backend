@@ -53,3 +53,4 @@ logs/
 ### Graphify tooling artifacts ###
 graphify-out/
 **/graphify-out/
+perf/results/

@@ -13,23 +13,31 @@ import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.RoomStatus;
+import kz.hrms.splitupauth.entity.SavedCardStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.DeletedUserIdentityArchiveRepository;
 import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.EmailVerificationTokenRepository;
+import kz.hrms.splitupauth.repository.LoginAttemptRepository;
+import kz.hrms.splitupauth.repository.PasswordResetTokenRepository;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PayoutMethodRepository;
 import kz.hrms.splitupauth.repository.PayoutRepository;
+import kz.hrms.splitupauth.repository.PhoneVerificationRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
+import kz.hrms.splitupauth.repository.SavedCardRepository;
 import kz.hrms.splitupauth.repository.ServiceReviewRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.security.FieldEncryptionService;
 import kz.hrms.splitupauth.util.EmailNormalizer;
 import kz.hrms.splitupauth.util.SlugGenerator;
+import kz.hrms.splitupauth.websocket.WebSocketSessionRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,6 +63,13 @@ public class UserService {
   private final DisputeRepository disputeRepository;
   private final DeletedUserIdentityArchiveRepository identityArchiveRepository;
   private final FieldEncryptionService fieldEncryptionService;
+  private final PayoutMethodRepository payoutMethodRepository;
+  private final SavedCardRepository savedCardRepository;
+  private final PhoneVerificationRepository phoneVerificationRepository;
+  private final EmailVerificationTokenRepository emailVerificationTokenRepository;
+  private final PasswordResetTokenRepository passwordResetTokenRepository;
+  private final LoginAttemptRepository loginAttemptRepository;
+  private final WebSocketSessionRegistry webSocketSessionRegistry;
 
   @Transactional(readOnly = true)
   public UserDto getCurrentUser(User user) {
@@ -190,16 +205,38 @@ public class UserService {
       archive.setArchivedAt(deletedAt);
       identityArchiveRepository.save(archive);
     }
+    String formerEmail = user.getEmail();
+    String formerPhone = user.getPhone();
     user.setStatus(UserStatus.DELETED);
     user.setDeletedAt(deletedAt);
     user.setEmail("deleted-" + id + "@ecopay.local");
     user.setDisplayName("Удалённый пользователь");
+    // The slug is usually derived from the real name and is shown on rooms/members; the original
+    // is kept only in the encrypted identity archive above.
+    user.setSlug("deleted-" + (user.getPublicId() != null ? user.getPublicId() : id));
     user.setPhone(null);
     user.setPhoneVerifiedAt(null);
     user.setAvatar(null);
+    // Not a valid hash for any encoder: the credential can never match again.
+    user.setPassword("!deleted");
     userRepository.save(user);
 
+    // Nothing reusable or personal may outlive the account (financial rows stay, anonymized).
+    payoutMethodRepository.revokeAllForUser(id, deletedAt);
+    savedCardRepository.revokeAllForUser(id, SavedCardStatus.REVOKED, deletedAt);
+    phoneVerificationRepository.deleteAllForUser(id);
+    emailVerificationTokenRepository.deleteByUser(user);
+    passwordResetTokenRepository.deleteByUser(user);
+    String anonymousIdentifier = "deleted-" + id;
+    if (formerEmail != null) {
+      loginAttemptRepository.anonymizeIdentifier(formerEmail, anonymousIdentifier);
+    }
+    if (formerPhone != null) {
+      loginAttemptRepository.anonymizeIdentifier(formerPhone, anonymousIdentifier);
+    }
+
     tokenRevocationService.revokeAllUserTokens(user);
+    webSocketSessionRegistry.closeUserSessions(id, 0);
   }
 
   static String maskArchivedPhone(String phone) {

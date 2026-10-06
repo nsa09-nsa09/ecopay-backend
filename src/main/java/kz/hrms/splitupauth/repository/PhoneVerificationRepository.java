@@ -5,10 +5,17 @@ import java.util.Optional;
 import kz.hrms.splitupauth.entity.PhoneVerification;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public interface PhoneVerificationRepository extends JpaRepository<PhoneVerification, Long> {
+
+  @Modifying
+  @Query("delete from PhoneVerification p where p.user.id = :userId")
+  int deleteAllForUser(@Param("userId") Long userId);
 
   Optional<PhoneVerification> findTopByUserAndPhoneAndVerifiedAtIsNullOrderByCreatedAtDesc(
       User user, String phone);

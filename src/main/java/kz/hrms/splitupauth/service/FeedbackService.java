@@ -25,6 +25,7 @@ import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.exception.TooManyLoginAttemptsException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.FeedbackRepository;
+import kz.hrms.splitupauth.util.ClientIp;
 import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,7 +56,7 @@ public class FeedbackService {
   private final FeedbackRepository feedbackRepository;
   private final AdminActionLogRepository adminActionLogRepository;
   private final ObjectMapper objectMapper;
-  private final InMemoryRateLimiter rateLimiter;
+  private final RateLimiter rateLimiter;
 
   @Value("${app.rate-limit.feedback.max-per-hour:5}")
   private int maxPerHour;
@@ -132,12 +133,7 @@ public class FeedbackService {
   }
 
   private String clientIp(HttpServletRequest request) {
-    String forwarded = request.getHeader("X-Forwarded-For");
-    if (forwarded != null && !forwarded.isBlank()) {
-      int comma = forwarded.indexOf(',');
-      return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-    }
-    return request.getRemoteAddr();
+    return ClientIp.of(request);
   }
 
   // ===================== admin surface =====================

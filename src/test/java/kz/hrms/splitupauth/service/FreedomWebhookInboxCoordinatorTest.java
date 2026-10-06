@@ -34,7 +34,19 @@ class FreedomWebhookInboxCoordinatorTest {
   @BeforeEach
   void setUp() {
     coordinator =
-        new FreedomWebhookInboxCoordinator(gateway, new ObjectMapper(), transactions, processor);
+        new FreedomWebhookInboxCoordinator(
+            gateway,
+            new ObjectMapper(),
+            transactions,
+            processor,
+            new org.springframework.beans.factory.support.DefaultListableBeanFactory()
+                .getBeanProvider(io.micrometer.core.instrument.MeterRegistry.class));
+    org.mockito.Mockito.lenient()
+        .when(gateway.callbackMessage(any()))
+        .thenAnswer(
+            invocation ->
+                kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayMessage.ofMulti(
+                    invocation.getArgument(0)));
     ReflectionTestUtils.setField(coordinator, "maxAttempts", 3);
     ReflectionTestUtils.setField(coordinator, "retryBaseSeconds", 30L);
     ReflectionTestUtils.setField(coordinator, "retryMaxSeconds", 3600L);
@@ -45,8 +57,8 @@ class FreedomWebhookInboxCoordinatorTest {
   @Test
   void validCallback_isStoredBeforeItIsClaimedAndProcessed() {
     Map<String, String> params = Map.of("pg_order_id", "42", "pg_sig", "valid");
-    when(gateway.verifyWebhookSignature("result", params)).thenReturn(true);
-    when(gateway.verifyAndParseWebhook("result", params))
+    when(gateway.verifyCallback(eq("result"), any())).thenReturn(true);
+    when(gateway.parseCallback(eq("result"), any()))
         .thenReturn(GatewayWebhookEvent.builder().providerRequestId("request-42").build());
     when(transactions.insert(any()))
         .thenAnswer(
@@ -69,7 +81,7 @@ class FreedomWebhookInboxCoordinatorTest {
   @Test
   void invalidSignature_isDurablyDeadLetteredWithoutProcessing() {
     Map<String, String> params = Map.of("pg_order_id", "42", "pg_sig", "bad");
-    when(gateway.verifyWebhookSignature("result", params)).thenReturn(false);
+    when(gateway.verifyCallback(eq("result"), any())).thenReturn(false);
     when(transactions.insert(any()))
         .thenAnswer(
             invocation -> {

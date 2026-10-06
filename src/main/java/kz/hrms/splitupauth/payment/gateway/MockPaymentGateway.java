@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.payment.gateway;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import kz.hrms.splitupauth.util.SecurityLogSanitizer;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,12 @@ public class MockPaymentGateway implements PaymentGateway {
 
   private final AtomicInteger chargeAttempts = new AtomicInteger();
   private final AtomicInteger payoutAttempts = new AtomicInteger();
+
+  /**
+   * When true, charges behave like a real hosted payment page: accepted, not yet captured, and
+   * finalized only by a callback or status reconciliation. Default false (synchronous capture).
+   */
+  private final AtomicBoolean asyncCapture = new AtomicBoolean();
 
   private static String newId(String prefix) {
     // UUID keeps external ids unique even across app restarts (no in-memory counter
@@ -55,6 +62,19 @@ public class MockPaymentGateway implements PaymentGateway {
   public GatewayChargeResponse initCharge(GatewayChargeRequest request) {
     chargeAttempts.incrementAndGet();
     String ext = newId("MOCK-PAY-");
+    if (asyncCapture.get()) {
+      log.info(
+          "[MOCK-GATEWAY] initCharge intent={} -> ACCEPTED, awaiting callback",
+          request.getIntentId());
+      return GatewayChargeResponse.builder()
+          .success(true)
+          .requiresRedirect(true)
+          .paymentUrl("https://mock-pay.invalid/" + ext)
+          .captureConfirmed(false)
+          .externalPaymentId(ext)
+          .providerStatusCode("ok")
+          .build();
+    }
     log.info(
         "[MOCK-GATEWAY] initCharge intent={} amount={} -> SUCCESS ({})",
         request.getIntentId(),
@@ -63,6 +83,7 @@ public class MockPaymentGateway implements PaymentGateway {
     return GatewayChargeResponse.builder()
         .success(true)
         .requiresRedirect(false)
+        .captureConfirmed(true)
         .externalPaymentId(ext)
         .providerStatusCode("ok")
         .build();
@@ -82,6 +103,7 @@ public class MockPaymentGateway implements PaymentGateway {
     return GatewayChargeResponse.builder()
         .success(true)
         .requiresRedirect(false)
+        .captureConfirmed(true)
         .externalPaymentId(ext)
         .providerStatusCode("ok")
         .build();
@@ -121,6 +143,7 @@ public class MockPaymentGateway implements PaymentGateway {
     return GatewayStatusResponse.builder()
         .externalPaymentId(externalPaymentId)
         .status("SUCCESS")
+        .providerState(ProviderPaymentState.CAPTURED)
         .providerStatusCode("ok")
         .build();
   }
@@ -152,5 +175,10 @@ public class MockPaymentGateway implements PaymentGateway {
   public void resetCounters() {
     chargeAttempts.set(0);
     payoutAttempts.set(0);
+    asyncCapture.set(false);
+  }
+
+  public void setAsyncCapture(boolean enabled) {
+    asyncCapture.set(enabled);
   }
 }

@@ -39,7 +39,7 @@ public class RoomMemberService {
   private final NotificationService notificationService;
   private final IdentifierRevealPolicy identifierRevealPolicy;
   private final IdentifierRevealAuditService identifierRevealAuditService;
-  private final InMemoryRateLimiter inMemoryRateLimiter;
+  private final RateLimiter inMemoryRateLimiter;
 
   @Value("${app.identifier-reveal.ttl-seconds:30}")
   private long identifierRevealTtlSeconds;

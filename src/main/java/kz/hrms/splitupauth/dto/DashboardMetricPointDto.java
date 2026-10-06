@@ -46,4 +46,14 @@ public class DashboardMetricPointDto {
    * charges).
    */
   private BigDecimal commissionRevenue;
+
+  // ----- Funnel series (additive). -----
+  /** Users whose first successful charge falls in the bucket. */
+  private long firstSuccessfulPayments;
+
+  /** Successful CHARGE transactions created in the bucket. */
+  private long successfulCharges;
+
+  /** Provider-confirmed refunds created in the bucket. */
+  private long refunds;
 }

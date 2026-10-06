@@ -180,7 +180,7 @@ class PaymentServiceTest {
 
     paymentService.applyWebhookEvent(event);
 
-    verify(payoutService, times(1)).applyPayoutWebhook("MOCK-OUT-9", true);
+    verify(payoutService, times(1)).applyPayoutWebhook("MOCK-OUT-9", null, true, null);
     // Not a charge — no intent lookup / membership / charge-payout side effects.
     verify(roomMemberService, never()).markMembershipAsPaid(any());
     verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
@@ -223,6 +223,7 @@ class PaymentServiceTest {
     when(paymentIntentRepository.findByStatusAndExpiresAtBefore(
             org.mockito.ArgumentMatchers.eq(PaymentIntentStatus.PENDING), any()))
         .thenReturn(java.util.List.of(stale));
+    when(paymentIntentRepository.findWithLockById(stale.getId())).thenReturn(Optional.of(stale));
     when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
     int expired = paymentService.expireStalePendingIntents();

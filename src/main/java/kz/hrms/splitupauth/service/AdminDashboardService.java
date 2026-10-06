@@ -4,6 +4,7 @@ import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -34,6 +35,7 @@ public class AdminDashboardService {
 
   private final EntityManager em;
   private final JdbcTemplate jdbc;
+  private final Clock clock;
 
   @Transactional(readOnly = true)
   public AdminDashboardKpisDto getKpis() {
@@ -201,7 +203,142 @@ public class AdminDashboardService {
         .refundRatePercent(refundRatePercent)
         .openTickets(openTickets)
         .avgRoomFillRate(avgRoomFillRate)
+        .build()
+        .withStartupMetrics(startupMetrics());
+  }
+
+  /**
+   * Startup KPIs: one aggregate SQL per figure over bounded windows and indexed columns, never a
+   * table scan into Java. A metric that cannot be computed stays null so the UI can show "—".
+   */
+  private AdminDashboardKpisDto startupMetrics() {
+    LocalDate today = LocalDate.now();
+    LocalDateTime now = LocalDateTime.now();
+    Long dau =
+        optionalLong(
+            "SELECT COUNT(DISTINCT user_id) FROM site_visit WHERE user_id IS NOT NULL AND visit_date = ?",
+            today);
+    Long wau =
+        optionalLong(
+            "SELECT COUNT(DISTINCT user_id) FROM site_visit WHERE user_id IS NOT NULL AND visit_date >= ?",
+            today.minusDays(6));
+    Long mau =
+        optionalLong(
+            "SELECT COUNT(DISTINCT user_id) FROM site_visit WHERE user_id IS NOT NULL AND visit_date >= ?",
+            today.minusDays(29));
+    Long registrations7d =
+        optionalLong("SELECT COUNT(*) FROM users WHERE created_at >= ?", now.minusDays(7));
+    Long registrations30d =
+        optionalLong("SELECT COUNT(*) FROM users WHERE created_at >= ?", now.minusDays(30));
+    Long firstPayers30d =
+        optionalLong(
+            "SELECT COUNT(*) FROM ("
+                + " SELECT pi.user_id, MIN(t.created_at) AS first_at FROM payment_transactions t"
+                + " JOIN payment_intents pi ON pi.id = t.payment_intent_id"
+                + " WHERE t.type = 'CHARGE' AND t.status IN ('SUCCESS','REFUNDED_PARTIAL','REFUNDED_FULL')"
+                + " GROUP BY pi.user_id) f WHERE f.first_at >= ?",
+            now.minusDays(30));
+    Long successfulPayments30d =
+        optionalLong(
+            "SELECT COUNT(*) FROM payment_transactions t WHERE t.type = 'CHARGE'"
+                + " AND t.status IN ('SUCCESS','REFUNDED_PARTIAL','REFUNDED_FULL')"
+                + " AND t.created_at >= ?",
+            now.minusDays(30));
+    Long newUsersWhoPaid30d =
+        optionalLong(
+            "SELECT COUNT(DISTINCT u.id) FROM users u"
+                + " JOIN payment_intents pi ON pi.user_id = u.id"
+                + " JOIN payment_transactions t ON t.payment_intent_id = pi.id"
+                + " WHERE u.created_at >= ? AND t.type = 'CHARGE'"
+                + " AND t.status IN ('SUCCESS','REFUNDED_PARTIAL','REFUNDED_FULL')",
+            now.minusDays(30));
+
+    Long intents30d =
+        optionalLong(
+            "SELECT COUNT(*) FROM payment_intents WHERE created_at >= ?", now.minusDays(30));
+    Long succeeded30d =
+        optionalLong(
+            "SELECT COUNT(*) FROM payment_intents WHERE created_at >= ? AND status IN"
+                + " ('SUCCESS','REFUND_REQUIRED','REFUND_PENDING','REFUNDED','REQUIRES_REVIEW','CAPTURE_ANOMALY')",
+            now.minusDays(30));
+    Long failed30d =
+        optionalLong(
+            "SELECT COUNT(*) FROM payment_intents WHERE created_at >= ? AND status IN"
+                + " ('FAILED','EXPIRED','CANCELLED')",
+            now.minusDays(30));
+    Long pending30d =
+        optionalLong(
+            "SELECT COUNT(*) FROM payment_intents WHERE created_at >= ? AND status IN"
+                + " ('PENDING','UNKNOWN','RECONCILING')",
+            now.minusDays(30));
+
+    return AdminDashboardKpisDto.builder()
+        .dau(dau)
+        .wau(wau)
+        .mau(mau)
+        .dauMauPercent(percent(dau, mau))
+        .registrations7d(registrations7d)
+        .registrations30d(registrations30d)
+        .usersWithFirstSuccessfulPayment30d(firstPayers30d)
+        .signupToFirstPaymentConversion30d(percent(newUsersWhoPaid30d, registrations30d))
+        .successfulPayments30d(successfulPayments30d)
+        .paymentSuccessRate30d(percent(succeeded30d, intents30d))
+        .paymentFailureRate30d(percent(failed30d, intents30d))
+        .paymentPendingRate30d(percent(pending30d, intents30d))
+        .paymentRequiresReviewCount(
+            optionalLong(
+                "SELECT COUNT(*) FROM payment_intents WHERE status IN"
+                    + " ('REQUIRES_REVIEW','CAPTURE_ANOMALY') OR (review_required = TRUE"
+                    + " AND status IN ('PENDING','UNKNOWN','RECONCILING'))"))
+        .payoutHeldAmountKzt(
+            optionalBigDecimal(
+                "SELECT COALESCE(SUM(COALESCE(payable_amount, amount)), 0) FROM payouts"
+                    + " WHERE currency = 'KZT' AND status IN ('PENDING','PENDING_METHOD','FROZEN')"
+                    + " AND release_at > ?",
+                // Same business clock that set release_at (PayoutService).
+                LocalDateTime.now(clock)))
+        .payoutDueCount(
+            optionalLong(
+                "SELECT COUNT(*) FROM payouts WHERE status IN ('PENDING','PENDING_METHOD')"
+                    + " AND (release_at IS NULL OR release_at <= ?)",
+                LocalDateTime.now(clock)))
+        .payoutPendingProviderCount(
+            optionalLong("SELECT COUNT(*) FROM payouts WHERE status = 'PENDING_PROVIDER'"))
+        .payoutRequiresReviewCount(
+            optionalLong("SELECT COUNT(*) FROM payouts WHERE status = 'REQUIRES_REVIEW'"))
+        .refundPendingProviderCount(
+            optionalLong(
+                "SELECT COUNT(*) FROM refund_transactions WHERE status = 'PENDING_PROVIDER'"))
+        .refundRequiresReviewCount(
+            optionalLong(
+                "SELECT COUNT(*) FROM refund_transactions WHERE status = 'REQUIRES_REVIEW'"))
+        .freedomWebhookDeadLetterCount(
+            optionalLong(
+                "SELECT COUNT(*) FROM freedom_webhook_inbox WHERE processing_status = 'DEAD_LETTER'"))
         .build();
+  }
+
+  private static Double percent(Long part, Long whole) {
+    if (part == null || whole == null || whole == 0) {
+      return null;
+    }
+    return Math.round(part * 10000.0 / whole) / 100.0;
+  }
+
+  private Long optionalLong(String sql, Object... params) {
+    try {
+      return jdbc.queryForObject(sql, Long.class, params);
+    } catch (Exception ex) {
+      return null;
+    }
+  }
+
+  private BigDecimal optionalBigDecimal(String sql, Object... params) {
+    try {
+      return jdbc.queryForObject(sql, BigDecimal.class, params);
+    } catch (Exception ex) {
+      return null;
+    }
   }
 
   /**
@@ -230,7 +367,8 @@ public class AdminDashboardService {
             ? DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ROOT)
             : DateTimeFormatter.ofPattern("yyyy-MM", Locale.ROOT);
 
-    // bucket → [registrations, loginsTotal, uniqueLogins, visitors, pageViews, newRooms]
+    // bucket → [registrations, loginsTotal, uniqueLogins, visitors, pageViews, newRooms,
+    //           firstSuccessfulPayments, successfulCharges, refunds]
     Map<String, long[]> buckets = new HashMap<>();
     Map<String, BigDecimal> revenueBuckets = new HashMap<>();
     Map<String, BigDecimal> commissionBuckets = new HashMap<>();
@@ -246,7 +384,7 @@ public class AdminDashboardService {
         rs -> {
           String period = rs.getString(1);
           long count = rs.getLong(2);
-          long[] cur = buckets.computeIfAbsent(period, k -> new long[6]);
+          long[] cur = buckets.computeIfAbsent(period, k -> new long[9]);
           cur[0] += count;
         },
         unit,
@@ -265,7 +403,7 @@ public class AdminDashboardService {
           String period = rs.getString(1);
           long total = rs.getLong(2);
           long uniq = rs.getLong(3);
-          long[] cur = buckets.computeIfAbsent(period, k -> new long[6]);
+          long[] cur = buckets.computeIfAbsent(period, k -> new long[9]);
           cur[1] += total;
           cur[2] += uniq;
         },
@@ -287,7 +425,7 @@ public class AdminDashboardService {
           String period = rs.getString(1);
           long visitors = rs.getLong(2);
           long views = rs.getLong(3);
-          long[] cur = buckets.computeIfAbsent(period, k -> new long[6]);
+          long[] cur = buckets.computeIfAbsent(period, k -> new long[9]);
           cur[3] += visitors;
           cur[4] += views;
         },
@@ -305,7 +443,7 @@ public class AdminDashboardService {
         rs -> {
           String period = rs.getString(1);
           long count = rs.getLong(2);
-          long[] cur = buckets.computeIfAbsent(period, k -> new long[6]);
+          long[] cur = buckets.computeIfAbsent(period, k -> new long[9]);
           cur[5] += count;
         },
         unit,
@@ -361,12 +499,49 @@ public class AdminDashboardService {
         fromTs,
         toTs);
 
+    // Funnel: first successful payment per user, successful charges and confirmed refunds.
+    jdbc.query(
+        "SELECT to_char(date_trunc(?, f.first_at), ?) AS bucket, COUNT(*) FROM ("
+            + " SELECT pi.user_id, MIN(t.created_at) AS first_at FROM payment_transactions t"
+            + " JOIN payment_intents pi ON pi.id = t.payment_intent_id"
+            + " WHERE t.type = 'CHARGE' AND t.status IN ('SUCCESS','REFUNDED_PARTIAL','REFUNDED_FULL')"
+            + " GROUP BY pi.user_id) f WHERE f.first_at >= ? AND f.first_at < ?"
+            + " GROUP BY bucket",
+        rs -> {
+          buckets.computeIfAbsent(rs.getString(1), k -> new long[9])[6] += rs.getLong(2);
+        },
+        unit,
+        sqlLabelPattern(unit),
+        fromTs,
+        toTs);
+    jdbc.query(
+        "SELECT to_char(date_trunc(?, created_at), ?) AS bucket, COUNT(*) FROM payment_transactions"
+            + " WHERE type = 'CHARGE' AND status IN ('SUCCESS','REFUNDED_PARTIAL','REFUNDED_FULL')"
+            + " AND created_at >= ? AND created_at < ? GROUP BY bucket",
+        rs -> {
+          buckets.computeIfAbsent(rs.getString(1), k -> new long[9])[7] += rs.getLong(2);
+        },
+        unit,
+        sqlLabelPattern(unit),
+        fromTs,
+        toTs);
+    jdbc.query(
+        "SELECT to_char(date_trunc(?, created_at), ?) AS bucket, COUNT(*) FROM refund_transactions"
+            + " WHERE status = 'SUCCESS' AND created_at >= ? AND created_at < ? GROUP BY bucket",
+        rs -> {
+          buckets.computeIfAbsent(rs.getString(1), k -> new long[9])[8] += rs.getLong(2);
+        },
+        unit,
+        sqlLabelPattern(unit),
+        fromTs,
+        toTs);
+
     List<DashboardMetricPointDto> series = new ArrayList<>();
     for (LocalDateTime cursor = truncate(resolvedFrom, unit);
         !cursor.isAfter(resolvedTo);
         cursor = advance(cursor, unit)) {
       String label = cursor.format(labelFormat);
-      long[] cur = buckets.getOrDefault(label, new long[6]);
+      long[] cur = buckets.getOrDefault(label, new long[9]);
       BigDecimal revenue = revenueBuckets.getOrDefault(label, BigDecimal.ZERO);
       BigDecimal commissionRevenue = commissionBuckets.getOrDefault(label, BigDecimal.ZERO);
       series.add(
@@ -380,6 +555,9 @@ public class AdminDashboardService {
               .newRooms(cur[5])
               .revenue(revenue)
               .commissionRevenue(commissionRevenue)
+              .firstSuccessfulPayments(cur[6])
+              .successfulCharges(cur[7])
+              .refunds(cur[8])
               .build());
     }
 

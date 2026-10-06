@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.scheduler;
 
+import java.time.Duration;
 import kz.hrms.splitupauth.service.ExchangeRateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ import org.springframework.stereotype.Component;
 public class FxRateScheduler {
 
   private final ExchangeRateService exchangeRateService;
+  private final SchedulerLock schedulerLock;
 
   /** Async so a slow upstream cannot delay the rest of application startup. */
   @Async
@@ -49,11 +51,13 @@ public class FxRateScheduler {
       fixedRateString = "#{${app.fx.refresh-interval-hours:6} * 60 * 60 * 1000}",
       initialDelayString = "#{${app.fx.refresh-interval-hours:6} * 60 * 60 * 1000}")
   public void refreshIntraday() {
-    exchangeRateService.refresh();
+    schedulerLock.runExclusive(
+        "fx-refresh-intraday", Duration.ofMinutes(10), exchangeRateService::refresh);
   }
 
   @Scheduled(cron = "0 15 4 * * ?")
   public void refreshDaily() {
-    exchangeRateService.refresh();
+    schedulerLock.runExclusive(
+        "fx-refresh-daily", Duration.ofMinutes(10), exchangeRateService::refresh);
   }
 }

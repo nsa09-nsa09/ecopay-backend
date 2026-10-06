@@ -15,7 +15,6 @@ import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
 import kz.hrms.splitupauth.entity.PayoutBatch;
 import kz.hrms.splitupauth.entity.PayoutMethod;
-import kz.hrms.splitupauth.entity.SavedCardStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
@@ -47,6 +46,12 @@ public class PayoutService {
   private static final int DISPATCH_LEASE_MINUTES = 5;
   private static final int PROVIDER_RECONCILIATION_DELAY_MINUTES = 5;
 
+  /**
+   * A submission whose outcome was ambiguous (timeout, unreadable or unsigned response) and that
+   * the provider still does not know after this long is handed to manual review — never re-sent.
+   */
+  private static final int NOT_FOUND_REVIEW_AFTER_MINUTES = 30;
+
   private final PayoutRepository payoutRepository;
   private final PayoutBatchRepository payoutBatchRepository;
   private final PayoutMethodRepository payoutMethodRepository;
@@ -60,7 +65,10 @@ public class PayoutService {
   private final PlatformTransactionManager transactionManager;
 
   /**
-   * Days a captured payment is held in the merchant balance before the owner payout is dispatched.
+   * EcoPay owner payout reserve: days the owner's share of a CAPTURED member payment stays held
+   * before it may be paid out ({@code releaseAt = capturedAt + holdDays}). This is EcoPay's
+   * internal settlement rule and has nothing to do with card authorization/capture at the provider
+   * (members are charged one-step, see {@code ecopay.payments.freedompay.auto-clearing}).
    */
   @Value("${app.payout.hold-days:30}")
   private int payoutHoldDays;
@@ -207,7 +215,7 @@ public class PayoutService {
     List<Payout> pending =
         payoutRepository.findProviderPendingForReconciliation(LocalDateTime.now(clock));
     for (Payout payout : pending) {
-      if (payout.getProviderPayoutId() == null || payout.getProviderPayoutId().isBlank()) {
+      if (payout.getProviderOrderId() == null && payout.getProviderPayoutId() == null) {
         continue;
       }
       try {
@@ -225,7 +233,7 @@ public class PayoutService {
     List<PayoutBatch> pendingBatches =
         payoutBatchRepository.findProviderPendingForReconciliation(LocalDateTime.now(clock));
     for (PayoutBatch batch : pendingBatches) {
-      if (batch.getProviderPayoutId() == null || batch.getProviderPayoutId().isBlank()) {
+      if (batch.getProviderOrderId() == null && batch.getProviderPayoutId() == null) {
         continue;
       }
       try {
@@ -308,10 +316,7 @@ public class PayoutService {
                     java.util.Map.of("reason", eligibility.reason()));
                 return null;
               }
-              PayoutMethod method =
-                  payoutMethodRepository
-                      .findByUserAndIsDefaultTrueAndStatus(payout.getUser(), "ACTIVE")
-                      .orElse(null);
+              PayoutMethod method = dispatchableMethod(payout.getUser());
               if (method == null) {
                 payout.setStatus("PENDING_METHOD");
                 payoutRepository.save(payout);
@@ -396,10 +401,7 @@ public class PayoutService {
     }
     LocalDateTime now = LocalDateTime.now(clock);
     Payout first = payouts.get(0);
-    PayoutMethod method =
-        payoutMethodRepository
-            .findByUserAndIsDefaultTrueAndStatus(first.getUser(), "ACTIVE")
-            .orElse(null);
+    PayoutMethod method = dispatchableMethod(first.getUser());
     if (method == null) {
       return null;
     }
@@ -417,10 +419,7 @@ public class PayoutService {
       if (!eligibility.eligible()) {
         return null;
       }
-      PayoutMethod currentMethod =
-          payoutMethodRepository
-              .findByUserAndIsDefaultTrueAndStatus(payout.getUser(), "ACTIVE")
-              .orElse(null);
+      PayoutMethod currentMethod = dispatchableMethod(payout.getUser());
       if (currentMethod == null || !currentMethod.getId().equals(method.getId())) {
         return null;
       }
@@ -453,6 +452,7 @@ public class PayoutService {
       payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
       payout.setAmount(payoutPayableAmount(payout));
       payout.setSubmittedAmount(payoutPayableAmount(payout));
+      payout.setSubmittedAt(now);
     }
     payoutRepository.saveAll(payouts);
     return new BatchDispatchClaim(
@@ -556,10 +556,7 @@ public class PayoutService {
       return null;
     }
 
-    PayoutMethod method =
-        payoutMethodRepository
-            .findByUserAndIsDefaultTrueAndStatus(payout.getUser(), "ACTIVE")
-            .orElse(null);
+    PayoutMethod method = dispatchableMethod(payout.getUser());
     if (method == null) {
       payout.setStatus("PENDING_METHOD");
       payoutRepository.save(payout);
@@ -577,6 +574,7 @@ public class PayoutService {
     payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
     payout.setPayoutMethod(method);
     payout.setSubmittedAmount(payoutPayableAmount(payout));
+    payout.setSubmittedAt(now);
     payout.setAmount(payout.getSubmittedAmount());
     if (payout.getProviderOrderId() == null) {
       payout.setProviderOrderId("ecopay-payout-" + payout.getId());
@@ -673,6 +671,25 @@ public class PayoutService {
     }
     String status = providerStatus == null ? "PENDING" : providerStatus.getStatus();
     LocalDateTime now = LocalDateTime.now(clock);
+    backfillProviderId(batch, providerStatus);
+    if (providerStatus != null && providerStatus.isNotFound()) {
+      LocalDateTime since =
+          batch.getSubmissionStartedAt() == null
+              ? batch.getCreatedAt()
+              : batch.getSubmissionStartedAt();
+      if (since != null && since.plusMinutes(NOT_FOUND_REVIEW_AFTER_MINUTES).isBefore(now)) {
+        batch.setStatus("REQUIRES_REVIEW");
+        batch.setFailureReason(
+            "Provider has no record of this payout order; verify before resending");
+        batch.setNextRetryAt(null);
+        payoutBatchRepository.save(batch);
+        markBatchChildrenTerminal(batch.getId(), "REQUIRES_REVIEW", batch.getFailureReason());
+        return;
+      }
+      batch.setNextRetryAt(now.plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
+      payoutBatchRepository.save(batch);
+      return;
+    }
     if ("SUCCESS".equals(status)) {
       batch.setStatus("SUCCESS");
       batch.setFailureReason(null);
@@ -716,11 +733,12 @@ public class PayoutService {
       return;
     }
     if (!gatewayRegistry.defaultGateway().supportsIdempotentPayoutReplay()) {
-      batch.setStatus("REQUIRES_REVIEW");
-      batch.setFailureReason("Ambiguous provider submission: " + ex.getMessage());
+      // The provider may have accepted the transfer. Never resend: reconcile by order id.
+      batch.setStatus("PENDING_PROVIDER");
+      batch.setFailureReason("Ambiguous provider submission: " + ex.getClass().getSimpleName());
       batch.setLeaseUntil(null);
-      batch.setNextRetryAt(null);
-      markBatchChildrenTerminal(batchId, "REQUIRES_REVIEW", batch.getFailureReason());
+      batch.setNextRetryAt(
+          LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
       payoutBatchRepository.save(batch);
       return;
     }
@@ -776,6 +794,42 @@ public class PayoutService {
       return;
     }
     String status = providerStatus == null ? "PENDING" : providerStatus.getStatus();
+    LocalDateTime now = LocalDateTime.now(clock);
+    if (providerStatus != null
+        && notBlank(providerStatus.getExternalPaymentId())
+        && !"0".equals(providerStatus.getExternalPaymentId().trim())
+        && payout.getProviderPayoutId() == null) {
+      payout.setProviderPayoutId(providerStatus.getExternalPaymentId());
+    }
+    if (providerStatus != null && providerStatus.isNotFound()) {
+      LocalDateTime since = payout.getSubmittedAt();
+      if (since == null || since.plusMinutes(NOT_FOUND_REVIEW_AFTER_MINUTES).isBefore(now)) {
+        payout.setStatus("REQUIRES_REVIEW");
+        payout.setFailureReason(
+            "Provider has no record of this payout order; verify before resending");
+        payout.setNextRetryAt(null);
+        payoutRepository.save(payout);
+        return;
+      }
+      payout.setNextRetryAt(now.plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
+      payoutRepository.save(payout);
+      return;
+    }
+    if (providerStatus != null
+        && "SUCCESS".equals(status)
+        && providerStatus.getAmount() != null
+        && payout.getSubmittedAmount() != null
+        && providerStatus.getAmount().compareTo(payout.getSubmittedAmount()) != 0) {
+      payout.setStatus("REQUIRES_REVIEW");
+      payout.setFailureReason(
+          "Provider payout amount "
+              + providerStatus.getAmount()
+              + " differs from submitted "
+              + payout.getSubmittedAmount());
+      payout.setNextRetryAt(null);
+      payoutRepository.save(payout);
+      return;
+    }
     if ("SUCCESS".equals(status)) {
       payout.setStatus("SUCCESS");
       payout.setFailureReason(null);
@@ -813,19 +867,24 @@ public class PayoutService {
     payoutRepository.save(payout);
   }
 
+  /**
+   * The transfer request may or may not have reached FreedomPay (timeout, unreadable or unsigned
+   * answer). A second reg2reg could pay the owner twice, so the payout is NEVER re-sent: it moves
+   * to PENDING_PROVIDER and is reconciled with payment_status2 by its immutable order id; a
+   * provider that still has no record after {@link #NOT_FOUND_REVIEW_AFTER_MINUTES} sends it to
+   * review.
+   */
   private void markPayoutDispatchException(Long payoutId, Exception ex) {
     Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
     if (payout == null || !"PROCESSING".equals(payout.getStatus())) {
       return;
     }
     payout.setRetryCount((payout.getRetryCount() == null ? 0 : payout.getRetryCount()) + 1);
-    payout.setFailureReason(ex.getMessage());
-    payout.setStatus(payout.getRetryCount() >= MAX_RETRY ? "FAILED" : "PENDING");
+    payout.setFailureReason("Ambiguous provider submission: " + ex.getClass().getSimpleName());
+    payout.setStatus("PENDING_PROVIDER");
     payout.setLeaseUntil(null);
     payout.setNextRetryAt(
-        payout.getRetryCount() >= MAX_RETRY
-            ? null
-            : LocalDateTime.now(clock).plusSeconds(retryBackoffSeconds(payout.getRetryCount())));
+        LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
     payoutRepository.save(payout);
   }
 
@@ -841,17 +900,43 @@ public class PayoutService {
    */
   @Transactional
   public void applyPayoutWebhook(String providerPayoutId, boolean success) {
-    if (providerPayoutId == null || providerPayoutId.isBlank()) {
-      log.warn("Payout webhook without provider payout id, ignoring");
+    applyPayoutWebhook(providerPayoutId, null, success, null);
+  }
+
+  /**
+   * Apply a signed payout callback. Matched by provider payment id, or by our order id when the
+   * submission was ambiguous and no provider id was stored. A callback amount that differs from
+   * what was submitted never settles the payout. Duplicate callbacks are no-ops.
+   */
+  @Transactional
+  public void applyPayoutWebhook(
+      String providerPayoutId, String providerOrderId, boolean success, BigDecimal amount) {
+    if (notBlank(providerOrderId) && !notBlank(providerPayoutId)) {
+      providerPayoutId = null;
+    }
+    if (!notBlank(providerPayoutId) && !notBlank(providerOrderId)) {
+      log.warn("Payout webhook without provider payout id or order id, ignoring");
       return;
     }
     PayoutBatch batch =
-        payoutBatchRepository.findWithLockByProviderPayoutId(providerPayoutId).orElse(null);
+        notBlank(providerPayoutId)
+            ? payoutBatchRepository.findWithLockByProviderPayoutId(providerPayoutId).orElse(null)
+            : null;
+    if (batch == null && notBlank(providerOrderId)) {
+      batch = payoutBatchRepository.findWithLockByProviderOrderId(providerOrderId).orElse(null);
+    }
     if (batch != null) {
       if ("SUCCESS".equals(batch.getStatus())
           || "FAILED".equals(batch.getStatus())
           || "REQUIRES_REVIEW".equals(batch.getStatus())) {
         return;
+      }
+      if (success && amount != null && amount.compareTo(batch.getAmount()) != 0) {
+        success = false;
+        log.error("Payout batch {} callback amount differs from submitted amount", batch.getId());
+      }
+      if (batch.getProviderPayoutId() == null && notBlank(providerPayoutId)) {
+        batch.setProviderPayoutId(providerPayoutId);
       }
       batch.setStatus(success ? "SUCCESS" : "REQUIRES_REVIEW");
       if (!success) {
@@ -869,15 +954,28 @@ public class PayoutService {
       log.info("Payout batch {} marked {} by provider callback", batch.getId(), batch.getStatus());
       return;
     }
-    Payout payout = payoutRepository.findWithLockByProviderPayoutId(providerPayoutId).orElse(null);
+    Payout payout =
+        notBlank(providerPayoutId)
+            ? payoutRepository.findWithLockByProviderPayoutId(providerPayoutId).orElse(null)
+            : null;
+    if (payout == null && notBlank(providerOrderId)) {
+      payout = payoutRepository.findWithLockByProviderOrderId(providerOrderId).orElse(null);
+    }
     if (payout == null) {
       throw new FreedomWebhookProcessingException(
-          "PAYOUT_NOT_FOUND",
-          "Webhook references unknown provider payout " + providerPayoutId,
-          true);
+          "PAYOUT_NOT_FOUND", "Webhook references an unknown provider payout", true);
     }
     if ("SUCCESS".equals(payout.getStatus()) || "FAILED".equals(payout.getStatus())) {
       return; // terminal — idempotent no-op
+    }
+    BigDecimal submitted =
+        payout.getSubmittedAmount() == null ? payout.getAmount() : payout.getSubmittedAmount();
+    if (success && amount != null && submitted != null && amount.compareTo(submitted) != 0) {
+      success = false;
+      log.error("Payout {} callback amount differs from submitted amount", payout.getId());
+    }
+    if (payout.getProviderPayoutId() == null && notBlank(providerPayoutId)) {
+      payout.setProviderPayoutId(providerPayoutId);
     }
     payout.setStatus(success ? "SUCCESS" : "REQUIRES_REVIEW");
     if (!success) {
@@ -1146,45 +1244,15 @@ public class PayoutService {
     return p;
   }
 
+  /**
+   * Formerly registered a purchase saved-card token as payout destination. FreedomPay purchase /
+   * recurring tokens are not proven valid for reg2reg, so this path is closed: payout methods are
+   * created only by the payout-card binding flow ({@link #registerVerifiedPayoutMethod}).
+   */
   @Transactional
   public PayoutMethod registerMethod(User user, String providerCardToken, String panMask) {
-    if (providerCardToken == null || providerCardToken.isBlank()) {
-      throw new InvalidRequestException("providerCardToken is required");
-    }
-    // Anti-IDOR: a payout method may only be registered from a card token the user
-    // actually owns (one of their saved cards). Prevents registering someone else's
-    // card token as a payout destination.
-    savedCardRepository
-        .findByUserAndProviderTokenAndProviderName(
-            user, providerCardToken, FreedomPayGateway.PROVIDER_NAME)
-        .filter(c -> c.getStatus() == SavedCardStatus.ACTIVE)
-        .orElseThrow(
-            () ->
-                new InvalidRequestException(
-                    "Card token does not belong to you or is not an active saved card"));
-
-    // Idempotent: re-registering an already-connected card returns the existing method
-    // (also avoids tripping the unique (user, provider_card_token) constraint).
-    PayoutMethod already =
-        payoutMethodRepository
-            .findByUserAndProviderCardTokenAndStatus(user, providerCardToken, "ACTIVE")
-            .orElse(null);
-    if (already != null) {
-      return already;
-    }
-
-    boolean firstMethod =
-        payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(user, "ACTIVE").isEmpty();
-    PayoutMethod method =
-        PayoutMethod.builder()
-            .user(user)
-            .providerName(FreedomPayGateway.PROVIDER_NAME)
-            .providerCardToken(providerCardToken)
-            .panMask(panMask)
-            .isDefault(firstMethod)
-            .status("ACTIVE")
-            .build();
-    return payoutMethodRepository.save(method);
+    throw new InvalidRequestException(
+        "PAYOUT_CARD_BINDING_REQUIRED: connect a payout card through the payout card flow");
   }
 
   @Transactional
@@ -1209,15 +1277,52 @@ public class PayoutService {
             .providerCardToken(providerCardToken)
             .panMask(panMask)
             .isDefault(firstMethod)
-            .status("ACTIVE")
+            .status(PayoutMethod.STATUS_ACTIVE)
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .verifiedAt(LocalDateTime.now(clock))
             .build();
     return payoutMethodRepository.save(method);
   }
 
+  /** Active methods plus legacy ones the owner must reconnect (flagged requiresRebind). */
   @Transactional(readOnly = true)
   public List<PayoutMethod> listMethods(User user) {
-    return payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
-        user, "ACTIVE");
+    List<PayoutMethod> methods =
+        new ArrayList<>(
+            payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+                user, PayoutMethod.STATUS_ACTIVE));
+    methods.addAll(
+        payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+            user, PayoutMethod.STATUS_REQUIRES_REBIND));
+    return methods;
+  }
+
+  /**
+   * The owner's default destination, only if its token came from payout-card tokenization. Anything
+   * else (legacy, purchase token, revoked) is never paid to: the payout waits in PENDING_METHOD.
+   */
+  private PayoutMethod dispatchableMethod(User owner) {
+    PayoutMethod method =
+        payoutMethodRepository
+            .findByUserAndIsDefaultTrueAndStatus(owner, PayoutMethod.STATUS_ACTIVE)
+            .orElse(null);
+    if (method == null || !method.isPayoutCompatible()) {
+      return null;
+    }
+    return method;
+  }
+
+  private static boolean notBlank(String value) {
+    return value != null && !value.isBlank();
+  }
+
+  private void backfillProviderId(PayoutBatch batch, GatewayStatusResponse providerStatus) {
+    if (providerStatus != null
+        && batch.getProviderPayoutId() == null
+        && notBlank(providerStatus.getExternalPaymentId())
+        && !"0".equals(providerStatus.getExternalPaymentId().trim())) {
+      batch.setProviderPayoutId(providerStatus.getExternalPaymentId());
+    }
   }
 
   @Transactional

@@ -84,4 +84,13 @@ public interface RefundTransactionRepository
         .map(RefundTransaction::getAmount)
         .reduce(BigDecimal.ZERO, BigDecimal::add);
   }
+
+  @Query(
+      "select r.id from RefundTransaction r "
+          + "where r.status = kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER "
+          + "and (r.lastReconciledAt is null or r.lastReconciledAt < :reconciledBefore) "
+          + "order by r.createdAt asc")
+  java.util.List<Long> findIdsPendingProviderForReconciliation(
+      @Param("reconciledBefore") java.time.LocalDateTime reconciledBefore,
+      org.springframework.data.domain.Pageable pageable);
 }

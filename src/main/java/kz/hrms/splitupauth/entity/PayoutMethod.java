@@ -15,6 +15,14 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class PayoutMethod {
 
+  /** Token produced by FreedomPay payout-card tokenization (cardstoragepayout/add). */
+  public static final String TOKEN_SOURCE_PAYOUT_CARD = "PAYOUT_CARD_TOKEN";
+
+  public static final String STATUS_ACTIVE = "ACTIVE";
+
+  /** Legacy method whose token is not proven payout-compatible; never dispatched to. */
+  public static final String STATUS_REQUIRES_REBIND = "REQUIRES_REBIND";
+
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -34,6 +42,14 @@ public class PayoutMethod {
 
   @Column(name = "verified_at")
   private LocalDateTime verifiedAt;
+
+  /** Origin of the token; only {@link #TOKEN_SOURCE_PAYOUT_CARD} may receive payouts. */
+  @Column(name = "token_source", length = 40)
+  private String tokenSource;
+
+  public boolean isPayoutCompatible() {
+    return STATUS_ACTIVE.equals(status) && TOKEN_SOURCE_PAYOUT_CARD.equals(tokenSource);
+  }
 
   @Column(name = "is_default", nullable = false)
   @Builder.Default

@@ -22,6 +22,7 @@ import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
+import kz.hrms.splitupauth.payment.gateway.ProviderPaymentState;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PaymentReservationRepository;
@@ -43,6 +44,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class PaymentService {
 
   private static final int MONEY_SCALE = 2;
+  private static final int MAX_RECONCILE_ATTEMPTS = 50;
   private static final long PAYMENT_INTENT_TTL_MINUTES = 30;
   private static final List<PaymentIntentStatus> OPEN_INTENT_STATUSES =
       List.of(
@@ -132,7 +134,10 @@ public class PaymentService {
               : gateway.initCharge(prepared.chargeRequest());
     } catch (Exception ex) {
       log.error(
-          "Gateway charge initiation failed for intent {}: {}", intent.getId(), ex.getMessage());
+          "Gateway charge initiation failed for intent {}: {}",
+          intent.getId(),
+          ex.getClass().getSimpleName());
+      MoneyOperationsMetrics.paymentInit("unknown");
       PaymentIntentResponse failed =
           tx().execute(
                   status ->
@@ -147,8 +152,19 @@ public class PaymentService {
                 status ->
                     mapToResponse(
                         applyGatewayInitResponse(intent.getId(), chargeResp, currentUser.getId())));
+    MoneyOperationsMetrics.paymentInit(
+        !chargeResp.isSuccess()
+            ? "failed"
+            : chargeResp.isRequiresRedirect()
+                ? "redirect"
+                : chargeResp.isCaptureConfirmed() ? "captured" : "accepted");
 
-    if (chargeResp.isSuccess() && !chargeResp.isRequiresRedirect()) {
+    // Only a gateway that PROVES synchronous capture (the in-memory mock) finalizes here. A
+    // provider "ok" for a saved-card/recurring charge is acceptance: the intent stays open until
+    // the signed result callback or a status query confirms captured money.
+    if (chargeResp.isSuccess()
+        && !chargeResp.isRequiresRedirect()
+        && chargeResp.isCaptureConfirmed()) {
       Long updatedIntentId = updated.getId();
       updated =
           tx().execute(
@@ -389,15 +405,26 @@ public class PaymentService {
    */
   @Transactional
   public int expireStalePendingIntents() {
-    List<PaymentIntent> stale =
+    LocalDateTime now = LocalDateTime.now();
+    List<PaymentIntent> candidates =
         OPEN_INTENT_STATUSES.stream()
             .flatMap(
                 status ->
-                    paymentIntentRepository
-                        .findByStatusAndExpiresAtBefore(status, LocalDateTime.now())
-                        .stream())
+                    paymentIntentRepository.findByStatusAndExpiresAtBefore(status, now).stream())
             .toList();
-    for (PaymentIntent intent : stale) {
+    List<PaymentIntent> stale = new java.util.ArrayList<>();
+    for (PaymentIntent candidate : candidates) {
+      // Re-read under a row lock: a webhook/redirect may have finalized it since the scan, and an
+      // unlocked save would overwrite SUCCESS with EXPIRED.
+      PaymentIntent intent =
+          paymentIntentRepository.findWithLockById(candidate.getId()).orElse(null);
+      if (intent == null
+          || !OPEN_INTENT_STATUSES.contains(intent.getStatus())
+          || intent.getExpiresAt() == null
+          || !intent.getExpiresAt().isBefore(now)) {
+        continue;
+      }
+      stale.add(intent);
       String fromStatus = intent.getStatus().name();
       intent.setStatus(PaymentIntentStatus.EXPIRED);
       intent.setFailureCode("EXPIRED");
@@ -443,68 +470,195 @@ public class PaymentService {
     return mapToResponse(intent);
   }
 
-  @Transactional
+  /**
+   * Browser-return reconciliation. The redirect itself proves nothing (the success URL can be
+   * opened by anyone); this asks the provider for the payment state and applies only a signed,
+   * amount- and currency-consistent CAPTURED answer. The intent row lock is NOT held during the
+   * provider call; the result is re-validated under the lock before anything changes.
+   */
   public PaymentIntentResponse confirmPaymentSuccess(
       Long paymentIntentId, User currentUser, ConfirmPaymentRequest request) {
-    // Redirect-back reconciliation. The async webhook (result.php) is the
-    // primary source of truth, but it needs a publicly reachable URL. When
-    // the user is redirected back from the hosted payment page we actively
-    // query the gateway for the payment status and finalize if it already
-    // succeeded — this makes the flow complete end-to-end even when the
-    // inbound webhook cannot reach us (e.g. local dev without a tunnel).
+    ReconcileTarget target =
+        tx().execute(
+                status -> {
+                  PaymentIntent intent =
+                      paymentIntentRepository
+                          .findById(paymentIntentId)
+                          .orElseThrow(
+                              () -> new ResourceNotFoundException("Payment intent not found"));
+                  if (!intent.getUser().getId().equals(currentUser.getId())) {
+                    throw new ForbiddenOperationException("Not your payment intent");
+                  }
+                  return new ReconcileTarget(
+                      intent.getId(),
+                      intent.getProviderName(),
+                      intent.getExternalPaymentId(),
+                      isReconcilable(intent),
+                      mapToResponse(intent));
+                });
+    if (!target.reconcilable()) {
+      return target.response();
+    }
+    return reconcileWithProvider(target, currentUser.getId(), "REDIRECT_RECONCILE");
+  }
+
+  /**
+   * Scheduled reconciliation of intents whose outcome is still open at the provider side (lost
+   * callbacks, ambiguous initiation, accepted-but-unconfirmed recurring charges). Bounded batch,
+   * spaced provider calls (FreedomPay recommends 1.5-2 s between payment API requests), capped
+   * attempts per intent. Returns the number of intents queried.
+   */
+  public int reconcileOpenIntents(int limit, long spacingMillis) {
+    LocalDateTime now = LocalDateTime.now(clock);
+    List<Long> ids =
+        tx().execute(
+                status ->
+                    paymentIntentRepository.findIdsForProviderReconciliation(
+                        OPEN_INTENT_STATUSES,
+                        FreedomPayGateway.PROVIDER_NAME,
+                        now.minusMinutes(2),
+                        now.minusMinutes(5),
+                        MAX_RECONCILE_ATTEMPTS,
+                        org.springframework.data.domain.PageRequest.of(0, Math.max(1, limit))));
+    int queried = 0;
+    for (Long id : ids) {
+      ReconcileTarget target =
+          tx().execute(
+                  status -> {
+                    PaymentIntent intent = paymentIntentRepository.findById(id).orElse(null);
+                    if (intent == null || !isReconcilable(intent)) {
+                      return null;
+                    }
+                    intent.setLastReconciledAt(LocalDateTime.now(clock));
+                    intent.setReconcileAttempts(
+                        (intent.getReconcileAttempts() == null ? 0 : intent.getReconcileAttempts())
+                            + 1);
+                    paymentIntentRepository.save(intent);
+                    return new ReconcileTarget(
+                        intent.getId(),
+                        intent.getProviderName(),
+                        intent.getExternalPaymentId(),
+                        true,
+                        null);
+                  });
+      if (target == null) {
+        continue;
+      }
+      if (queried > 0 && spacingMillis > 0) {
+        try {
+          Thread.sleep(spacingMillis);
+        } catch (InterruptedException ex) {
+          Thread.currentThread().interrupt();
+          break;
+        }
+      }
+      queried++;
+      try {
+        reconcileWithProvider(target, null, "SCHEDULED_RECONCILE");
+      } catch (RuntimeException ex) {
+        log.warn(
+            "Scheduled reconciliation of intent {} failed: {}", id, ex.getClass().getSimpleName());
+      }
+    }
+    return queried;
+  }
+
+  private boolean isReconcilable(PaymentIntent intent) {
+    if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
+      return false;
+    }
+    return OPEN_INTENT_STATUSES.contains(intent.getStatus())
+        || intent.getStatus() == PaymentIntentStatus.EXPIRED
+        || intent.getStatus() == PaymentIntentStatus.FAILED;
+  }
+
+  private PaymentIntentResponse reconcileWithProvider(
+      ReconcileTarget target, Long actorUserId, String eventPrefix) {
+    PaymentGateway gateway = gatewayRegistry.resolve(target.providerName());
+    GatewayStatusResponse providerStatus;
+    try {
+      if (target.externalPaymentId() != null && !target.externalPaymentId().isBlank()) {
+        providerStatus = gateway.getStatus(target.externalPaymentId());
+      } else {
+        // Ambiguous initiation: no provider id was stored, look the payment up by our order id.
+        providerStatus = gateway.getStatusByOrderId(String.valueOf(target.intentId()));
+        if (providerStatus == null) {
+          return tx().execute(
+                  s ->
+                      mapToResponse(
+                          paymentIntentRepository.findById(target.intentId()).orElseThrow()));
+        }
+      }
+    } catch (Exception ex) {
+      log.warn(
+          "Status reconcile failed for intent {}: {}",
+          target.intentId(),
+          ex.getClass().getSimpleName());
+      MoneyOperationsMetrics.reconciliation(
+          eventPrefix.startsWith("SCHEDULED") ? "scheduled" : "redirect", "error");
+      return tx().execute(
+              s ->
+                  mapToResponse(
+                      markReconcileUnknown(target.intentId(), actorUserId, eventPrefix, ex)));
+    }
+    MoneyOperationsMetrics.reconciliation(
+        eventPrefix.startsWith("SCHEDULED") ? "scheduled" : "redirect",
+        providerStatus.isNotFound()
+            ? "not_found"
+            : String.valueOf(providerStatus.getStatus()).toLowerCase(java.util.Locale.ROOT));
+    GatewayStatusResponse finalStatus = providerStatus;
+    return tx().execute(
+            s ->
+                mapToResponse(
+                    applyProviderStatus(target.intentId(), finalStatus, actorUserId, eventPrefix)));
+  }
+
+  private PaymentIntent markReconcileUnknown(
+      Long intentId, Long actorUserId, String eventPrefix, Exception ex) {
     PaymentIntent intent =
         paymentIntentRepository
-            .findWithLockById(paymentIntentId)
+            .findWithLockById(intentId)
             .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
-
-    if (!intent.getUser().getId().equals(currentUser.getId())) {
-      throw new ForbiddenOperationException("Not your payment intent");
+    if (!OPEN_INTENT_STATUSES.contains(intent.getStatus())) {
+      return intent;
     }
+    String fromStatus = intent.getStatus().name();
+    intent.setStatus(PaymentIntentStatus.RECONCILING);
+    intent.setFailureCode("GATEWAY_STATUS_UNKNOWN");
+    intent.setFailureMessage("Gateway status check failed: " + ex.getClass().getSimpleName());
+    intent = paymentIntentRepository.save(intent);
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        eventPrefix + "_UNKNOWN",
+        fromStatus,
+        intent.getStatus().name(),
+        actorUserId,
+        null,
+        intent.getIdempotencyKey(),
+        Map.of("error", ex.getClass().getSimpleName()));
+    return intent;
+  }
 
-    // Already captured at provider (e.g. the webhook arrived first) - nothing to do.
-    if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
-      return mapToResponse(intent);
+  /** Applies a provider status answer under the intent lock, re-checking the current state. */
+  private PaymentIntent applyProviderStatus(
+      Long intentId, GatewayStatusResponse status, Long actorUserId, String eventPrefix) {
+    PaymentIntent intent =
+        paymentIntentRepository
+            .findWithLockById(intentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Payment intent not found"));
+    if (!isReconcilable(intent)) {
+      return intent;
     }
-    if (!OPEN_INTENT_STATUSES.contains(intent.getStatus())
-        && intent.getStatus() != PaymentIntentStatus.EXPIRED
-        && intent.getStatus() != PaymentIntentStatus.FAILED) {
-      return mapToResponse(intent);
-    }
-
-    // No external id means the charge was never initiated at the gateway.
-    if (intent.getExternalPaymentId() == null || intent.getExternalPaymentId().isBlank()) {
-      return mapToResponse(intent);
-    }
-
-    PaymentGateway gateway = gatewayRegistry.resolve(intent.getProviderName());
-    GatewayStatusResponse status;
-    try {
-      status = gateway.getStatus(intent.getExternalPaymentId());
-    } catch (Exception ex) {
-      log.warn("Status reconcile failed for intent {}: {}", intent.getId(), ex.getMessage());
-      if (OPEN_INTENT_STATUSES.contains(intent.getStatus())) {
-        String fromStatus = intent.getStatus().name();
-        intent.setStatus(PaymentIntentStatus.RECONCILING);
-        intent.setFailureCode("GATEWAY_STATUS_UNKNOWN");
-        intent.setFailureMessage("Gateway status check failed: " + ex.getMessage());
-        intent = paymentIntentRepository.save(intent);
-        eventLogger.log(
-            "INTENT",
-            intent.getId(),
-            "REDIRECT_RECONCILE_UNKNOWN",
-            fromStatus,
-            intent.getStatus().name(),
-            currentUser.getId(),
-            null,
-            intent.getIdempotencyKey(),
-            Map.of("error", String.valueOf(ex.getMessage())));
-      }
-      return mapToResponse(intent);
-    }
-
     String mapped = status == null ? "PENDING" : status.getStatus();
+    String fromStatus = intent.getStatus().name();
 
     if ("SUCCESS".equals(mapped)) {
+      String mismatch = amountOrCurrencyMismatch(intent, status.getAmount(), status.getCurrency());
+      if (mismatch != null) {
+        return markCaptureAnomaly(
+            intent, status.getExternalPaymentId(), status.getProviderStatusCode(), mismatch, null);
+      }
       if (Boolean.TRUE.equals(intent.getSaveCardRequested())
           && status.getCardToken() != null
           && !status.getCardToken().isBlank()) {
@@ -514,41 +668,118 @@ public class PaymentService {
             status.getCardToken(),
             status.getCardPanMask());
       }
-
-      intent =
-          finalizeSuccessfulPayment(
-              intent.getId(),
-              status.getExternalPaymentId(),
-              status.getProviderStatusCode(),
-              status.getCardPanMask(),
-              null,
-              null,
-              currentUser.getId(),
-              "REDIRECT_RECONCILE_SUCCESS");
-    } else if ("FAILED".equals(mapped)) {
-      String fromStatus = intent.getStatus().name();
+      return finalizeSuccessfulPayment(
+          intent.getId(),
+          status.getExternalPaymentId(),
+          status.getProviderStatusCode(),
+          status.getCardPanMask(),
+          null,
+          null,
+          actorUserId,
+          eventPrefix + "_SUCCESS");
+    }
+    if ("FAILED".equals(mapped)) {
       intent.setStatus(PaymentIntentStatus.FAILED);
       intent.setProviderStatusCode(status.getProviderStatusCode());
       intent.setFailureCode("GATEWAY_FAILED");
       intent.setFailureMessage("Gateway reported the payment as failed");
-      releaseReservation(intent, "REDIRECT_RECONCILE_FAILED");
+      releaseReservation(intent, eventPrefix + "_FAILED");
       intent = paymentIntentRepository.save(intent);
-
       eventLogger.log(
           "INTENT",
           intent.getId(),
-          "REDIRECT_RECONCILE_FAILED",
+          eventPrefix + "_FAILED",
           fromStatus,
           intent.getStatus().name(),
-          currentUser.getId(),
+          actorUserId,
           null,
           intent.getIdempotencyKey(),
           Map.of("providerStatus", String.valueOf(status.getProviderStatusCode())));
+      return intent;
+    }
+    if ("REVIEW".equals(mapped)
+        || (status != null && status.getProviderState() == ProviderPaymentState.AUTHORIZED)) {
+      // Captured-then-refunded, or authorized-but-not-captured (two-step): neither is money EcoPay
+      // may treat as a completed payment, and neither is a plain failure.
+      if (OPEN_INTENT_STATUSES.contains(intent.getStatus())
+          && intent.getStatus() != PaymentIntentStatus.RECONCILING) {
+        intent.setStatus(PaymentIntentStatus.RECONCILING);
+      }
+      intent.setReviewRequired(true);
+      intent.setReviewReason("PROVIDER_STATE_" + status.getProviderState());
+      intent.setProviderStatusCode(status.getProviderStatusCode());
+      intent = paymentIntentRepository.save(intent);
+      eventLogger.log(
+          "INTENT",
+          intent.getId(),
+          eventPrefix + "_REVIEW",
+          fromStatus,
+          intent.getStatus().name(),
+          actorUserId,
+          null,
+          intent.getIdempotencyKey(),
+          Map.of("providerState", String.valueOf(status.getProviderState())));
+      return intent;
+    }
+    if (status != null
+        && status.getExternalPaymentId() != null
+        && (intent.getExternalPaymentId() == null || intent.getExternalPaymentId().isBlank())) {
+      intent.setExternalPaymentId(status.getExternalPaymentId());
+      intent = paymentIntentRepository.save(intent);
     }
     // else: still PENDING at the gateway — leave as-is; webhook/poll will finalize.
-
-    return mapToResponse(intent);
+    return intent;
   }
+
+  private static String amountOrCurrencyMismatch(
+      PaymentIntent intent, BigDecimal amount, String currency) {
+    if (amount != null && intent.getAmount() != null && intent.getAmount().compareTo(amount) != 0) {
+      return "AMOUNT_MISMATCH";
+    }
+    if (currency != null && !currency.isBlank() && !"KZT".equalsIgnoreCase(currency.trim())) {
+      return "CURRENCY_MISMATCH";
+    }
+    return null;
+  }
+
+  private PaymentIntent markCaptureAnomaly(
+      PaymentIntent intent,
+      String externalPaymentId,
+      String providerStatusCode,
+      String reason,
+      String providerRequestId) {
+    String fromStatus = intent.getStatus().name();
+    log.error("Captured payment for intent {} is inconsistent: {}", intent.getId(), reason);
+    intent.setStatus(PaymentIntentStatus.CAPTURE_ANOMALY);
+    if (externalPaymentId != null && !externalPaymentId.isBlank()) {
+      intent.setExternalPaymentId(externalPaymentId);
+    }
+    intent.setProviderStatusCode(providerStatusCode);
+    intent.setFailureCode(reason);
+    intent.setFailureMessage("Provider-reported payment does not match the intent: " + reason);
+    intent.setReviewRequired(true);
+    intent.setReviewReason(reason);
+    intent.setCompensationRequired(true);
+    intent = paymentIntentRepository.save(intent);
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        "CAPTURE_ANOMALY",
+        fromStatus,
+        intent.getStatus().name(),
+        null,
+        providerRequestId,
+        intent.getIdempotencyKey(),
+        Map.of("reason", reason));
+    return intent;
+  }
+
+  private record ReconcileTarget(
+      Long intentId,
+      String providerName,
+      String externalPaymentId,
+      boolean reconcilable,
+      PaymentIntentResponse response) {}
 
   /**
    * Process a verified webhook event. Caller must have already saved the inbox row (idempotency)
@@ -562,7 +793,10 @@ public class PaymentService {
         return;
       }
       payoutService.applyPayoutWebhook(
-          event.getExternalPaymentId(), "SUCCESS".equals(event.getResultStatus()));
+          event.getExternalPaymentId(),
+          event.getOrderId(),
+          "SUCCESS".equals(event.getResultStatus()),
+          event.getAmount());
       return;
     }
 
@@ -605,6 +839,31 @@ public class PaymentService {
           intent.getIdempotencyKey(),
           Map.of("resultStatus", String.valueOf(event.getResultStatus())));
       paymentIntentRepository.save(intent);
+      return;
+    }
+
+    if ("SUCCESS".equals(event.getResultStatus()) && Boolean.FALSE.equals(event.getCaptured())) {
+      // Two-step authorization (pg_captured=0): money is only held on the card. Not a completed
+      // payment — keep the intent open for status reconciliation instead of activating anything.
+      String fromStatus = intent.getStatus().name();
+      if (OPEN_INTENT_STATUSES.contains(intent.getStatus())) {
+        intent.setStatus(PaymentIntentStatus.RECONCILING);
+      }
+      if (event.getExternalPaymentId() != null) {
+        intent.setExternalPaymentId(event.getExternalPaymentId());
+      }
+      intent.setReviewReason("PROVIDER_STATE_AUTHORIZED");
+      paymentIntentRepository.save(intent);
+      eventLogger.log(
+          "INTENT",
+          intent.getId(),
+          "WEBHOOK_AUTHORIZED_NOT_CAPTURED",
+          fromStatus,
+          intent.getStatus().name(),
+          null,
+          event.getProviderRequestId(),
+          intent.getIdempotencyKey(),
+          Map.of());
       return;
     }
 
@@ -875,6 +1134,14 @@ public class PaymentService {
     }
     if (!isActiveUser(member.getUser())) {
       return SeatConsumptionResult.rejected("MEMBER_USER_NOT_ACTIVE");
+    }
+    if (member.getDeletedAt() != null
+        || (member.getStatus() != MemberStatus.APPLIED
+            && member.getStatus() != MemberStatus.PENDING
+            && member.getStatus() != MemberStatus.ACTIVE)) {
+      // REJECTED / CANCELLED_BEFORE_PAYMENT / BLOCKED_BY_ADMIN cannot be marked paid; without this
+      // the whole finalize would roll back and the captured money would sit in the DLQ.
+      return SeatConsumptionResult.rejected("MEMBERSHIP_NOT_PAYABLE_" + member.getStatus());
     }
 
     PaymentReservation reservation =

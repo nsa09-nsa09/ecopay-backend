@@ -158,16 +158,20 @@ public class AuthService {
             .findByEmail(email)
             .orElseThrow(
                 () -> {
+                  // Burn the same hashing cost as a real check so response time does not reveal
+                  // whether the account exists.
+                  passwordEncoder.matches(request.getPassword(), timingEqualizerHash());
                   rateLimitService.recordLoginAttempt(identifier, false);
                   return new InvalidCredentialsException("Invalid credentials");
                 });
 
-    accountRestrictionService.requireAllowed(user);
-
+    // Password first: ban status and reason are only revealed to someone who knows the password.
     if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
       rateLimitService.recordLoginAttempt(identifier, false);
       throw new InvalidCredentialsException("Invalid credentials");
     }
+
+    accountRestrictionService.requireAllowed(user);
 
     if (!Boolean.TRUE.equals(user.getEmailVerified())) {
       throw new EmailNotVerifiedException(
@@ -189,6 +193,17 @@ public class AuthService {
     }
 
     return issueTokens(user);
+  }
+
+  private volatile String timingEqualizerHash;
+
+  private String timingEqualizerHash() {
+    String hash = timingEqualizerHash;
+    if (hash == null) {
+      hash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
+      timingEqualizerHash = hash;
+    }
+    return hash;
   }
 
   /**
@@ -276,9 +291,10 @@ public class AuthService {
     passwordResetTokenRepository.deleteByUser(user);
 
     String token = UUID.randomUUID().toString();
+    // Only a SHA-256 digest is stored: a database/backup reader cannot use pending reset links.
     PasswordResetToken resetToken =
         PasswordResetToken.builder()
-            .token(token)
+            .token(sha256Hex(token))
             .user(user)
             .expiresAt(LocalDateTime.now().plusMinutes(PASSWORD_RESET_TTL_MINUTES))
             .used(false)
@@ -304,7 +320,7 @@ public class AuthService {
 
     PasswordResetToken resetToken =
         passwordResetTokenRepository
-            .findByToken(request.getToken())
+            .findByToken(sha256Hex(request.getToken() == null ? "" : request.getToken()))
             .orElseThrow(() -> new TokenExpiredException("Invalid or expired reset token"));
 
     if (resetToken.getUsed()) {
@@ -400,10 +416,11 @@ public class AuthService {
             .orElseThrow(
                 () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
 
-    // Already verified — the previous attempt went through. Be idempotent and
-    // just hand back a fresh session rather than erroring the user out.
+    // Already verified: never mint a session here. This endpoint is unauthenticated and the code
+    // is the only credential it checks, so a verified account must go through /login (password,
+    // ban check, staff 2FA). Same generic error as a wrong code, so it reveals nothing.
     if (Boolean.TRUE.equals(user.getEmailVerified())) {
-      return issueTokens(user);
+      throw new InvalidVerificationCodeException("Invalid or expired verification code");
     }
 
     EmailVerificationToken verificationToken =
@@ -438,6 +455,11 @@ public class AuthService {
     verificationToken.setUsed(true);
     emailVerificationTokenRepository.save(verificationToken);
 
+    accountRestrictionService.requireAllowed(user);
+    if (staffTwoFactorService.requiresTwoFactor(user)) {
+      // Staff must complete the regular login with its second factor.
+      return AuthResponse.builder().user(userMapper.toDto(user)).build();
+    }
     return issueTokens(user);
   }
 
@@ -487,5 +509,16 @@ public class AuthService {
 
   private String generate6DigitCode() {
     return String.format("%06d", RANDOM.nextInt(1_000_000));
+  }
+
+  private static String sha256Hex(String value) {
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(
+              java.security.MessageDigest.getInstance("SHA-256")
+                  .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 not available", e);
+    }
   }
 }

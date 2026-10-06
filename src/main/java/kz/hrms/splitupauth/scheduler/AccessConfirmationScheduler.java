@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.scheduler;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import kz.hrms.splitupauth.service.AccessConfirmationService;
 import lombok.RequiredArgsConstructor;
@@ -13,9 +14,13 @@ public class AccessConfirmationScheduler {
 
   private final AccessConfirmationService accessConfirmationService;
   private final Clock clock;
+  private final SchedulerLock schedulerLock;
 
   @Scheduled(fixedDelayString = "${app.access.deemed-confirmation-delay-ms:60000}")
   public void processDueConfirmations() {
-    accessConfirmationService.processDue(LocalDateTime.now(clock), 100);
+    schedulerLock.runExclusive(
+        "access-confirmation",
+        Duration.ofMinutes(5),
+        () -> accessConfirmationService.processDue(LocalDateTime.now(clock), 100));
   }
 }

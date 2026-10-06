@@ -49,9 +49,11 @@ public class RefreshTokenService {
 
   @Transactional
   public RefreshToken validateRefreshToken(String rawToken) {
+    // Locked until the caller's transaction commits the rotation: a concurrent refresh with the
+    // same token waits, then sees it revoked and triggers reuse detection.
     RefreshToken refreshToken =
         refreshTokenRepository
-            .findByToken(hashToken(rawToken))
+            .findWithLockByToken(hashToken(rawToken))
             .orElseThrow(() -> new TokenExpiredException("Invalid refresh token"));
 
     if (refreshToken.getRevoked()) {

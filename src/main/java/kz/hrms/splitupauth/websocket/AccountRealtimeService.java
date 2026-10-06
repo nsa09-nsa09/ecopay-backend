@@ -18,7 +18,11 @@ public class AccountRealtimeService {
   public static final String ACCOUNT_TOPIC_PREFIX = "/topic/users/";
   public static final String ACCOUNT_TOPIC_SUFFIX = "/account";
 
+  /** Time the BANNED event gets to reach the client before its sockets are cut. */
+  static final long BAN_DISCONNECT_DELAY_MILLIS = 2_000;
+
   private final SimpMessagingTemplate messagingTemplate;
+  private final WebSocketSessionRegistry sessionRegistry;
 
   public static String topicFor(Long userId) {
     return ACCOUNT_TOPIC_PREFIX + userId + ACCOUNT_TOPIC_SUFFIX;
@@ -28,6 +32,8 @@ public class AccountRealtimeService {
     AccountEventDto event =
         AccountEventDto.builder().type("BANNED").reason(reason).occurredAt(bannedAt).build();
     messagingTemplate.convertAndSend(topicFor(userId), event);
+    // A banned user must not keep live sockets (and their subscriptions) open.
+    sessionRegistry.closeUserSessions(userId, BAN_DISCONNECT_DELAY_MILLIS);
   }
 
   public void publishUnbanned(Long userId) {

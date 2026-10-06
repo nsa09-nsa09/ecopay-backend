@@ -15,6 +15,7 @@ import kz.hrms.splitupauth.repository.PhoneVerificationRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.sms.SmsProperties;
 import kz.hrms.splitupauth.sms.SmsService;
+import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,7 +35,7 @@ public class PhoneVerificationService {
   private final SmsService smsService;
   private final PasswordEncoder passwordEncoder;
   private final SmsProperties smsProperties;
-  private final InMemoryRateLimiter rateLimiter;
+  private final RateLimiter rateLimiter;
 
   /**
    * Dev/test only: a master code that verifies any phone without the real SMS code (the dev SMS
@@ -191,12 +192,7 @@ public class PhoneVerificationService {
 
   /** Mirrors FeedbackService: trust the left-most X-Forwarded-For hop, else the socket address. */
   private String clientIp(HttpServletRequest request) {
-    String forwarded = request.getHeader("X-Forwarded-For");
-    if (forwarded != null && !forwarded.isBlank()) {
-      int comma = forwarded.indexOf(',');
-      return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-    }
-    return request.getRemoteAddr();
+    return ClientIp.of(request);
   }
 
   private String generate6DigitCode() {

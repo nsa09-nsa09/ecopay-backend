@@ -14,7 +14,10 @@ import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.payment.gateway.GatewayRefundRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayRefundResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayRequestNotSentException;
+import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
+import kz.hrms.splitupauth.payment.gateway.ProviderPaymentState;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.DisputeRepository;
@@ -38,6 +41,7 @@ public class RefundService {
 
   private static final int MAX_REFUND_ATTEMPTS = 3;
   private static final int REFUND_LEASE_MINUTES = 5;
+  private static final int REFUND_REVIEW_AFTER_HOURS = 24;
 
   private final RefundTransactionRepository refundTransactionRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
@@ -427,9 +431,126 @@ public class RefundService {
                   .build());
 
       finalizeRefundDispatch(refund.id(), response, gateway.providerName());
-    } catch (Exception ex) {
-      log.error("Refund dispatch failed for {}: {}", refund.id(), ex.getMessage());
+    } catch (GatewayRequestNotSentException ex) {
+      // Provably never reached the provider: safe to retry with the same idempotency key.
+      log.warn("Refund {} not sent: {}", refund.id(), ex.getMessage());
       recordRefundDispatchFailure(refund.id(), ex);
+    } catch (Exception ex) {
+      // Timeout / unreadable / unsigned answer: the provider may have accepted the refund. A second
+      // revoke could refund twice, so never resend — reconcile against the provider state instead.
+      log.error("Refund {} submission ambiguous: {}", refund.id(), ex.getClass().getSimpleName());
+      markRefundSubmissionAmbiguous(refund.id(), ex);
+    }
+  }
+
+  private void markRefundSubmissionAmbiguous(Long refundId, Exception ex) {
+    tx().executeWithoutResult(
+            status -> {
+              RefundTransaction refund =
+                  refundTransactionRepository.findWithLockById(refundId).orElse(null);
+              if (refund == null || refund.getStatus() != RefundStatus.PENDING) {
+                return;
+              }
+              refund.setStatus(RefundStatus.PENDING_PROVIDER);
+              refund.setProviderSubmittedAt(LocalDateTime.now(clock));
+              refund.setLeaseUntil(null);
+              refund.setNextRetryAt(null);
+              refund.setLastErrorCode("SUBMISSION_AMBIGUOUS");
+              refund.setLastErrorMessage(ex.getClass().getSimpleName());
+              refundTransactionRepository.save(refund);
+            });
+  }
+
+  /**
+   * Settles PENDING_PROVIDER refunds from the provider's own payment state. FreedomPay's
+   * revoke/cancel answer carries no refund id and no documented refund callback exists, so the
+   * refunded total reported by get_status3 for the original payment is the source of truth: once it
+   * covers every provider-confirmed refund of that charge plus this one, the refund succeeds. A
+   * refund still not visible after {@code REFUND_REVIEW_AFTER_HOURS} goes to manual review. A
+   * status query never re-sends anything. Returns the number of refunds examined.
+   */
+  public int reconcilePendingProviderRefunds(int limit) {
+    LocalDateTime now = LocalDateTime.now(clock);
+    List<Long> ids =
+        tx().execute(
+                status ->
+                    refundTransactionRepository.findIdsPendingProviderForReconciliation(
+                        now.minusMinutes(5), PageRequest.of(0, Math.max(1, limit))));
+    int examined = 0;
+    for (Long id : ids) {
+      String externalPaymentId =
+          tx().execute(
+                  status -> {
+                    RefundTransaction refund =
+                        refundTransactionRepository.findWithLockById(id).orElse(null);
+                    if (refund == null || refund.getStatus() != RefundStatus.PENDING_PROVIDER) {
+                      return null;
+                    }
+                    refund.setLastReconciledAt(LocalDateTime.now(clock));
+                    refundTransactionRepository.save(refund);
+                    return refund.getPaymentTransaction().getExternalTransactionId();
+                  });
+      if (externalPaymentId == null || externalPaymentId.isBlank()) {
+        continue;
+      }
+      examined++;
+      GatewayStatusResponse providerStatus;
+      try {
+        providerStatus = gatewayRegistry.defaultGateway().getStatus(externalPaymentId);
+      } catch (Exception ex) {
+        log.warn("Refund {} reconciliation deferred: {}", id, ex.getClass().getSimpleName());
+        continue;
+      }
+      tx().executeWithoutResult(status -> applyProviderRefundState(id, providerStatus));
+    }
+    return examined;
+  }
+
+  private void applyProviderRefundState(Long refundId, GatewayStatusResponse providerStatus) {
+    RefundTransaction refund = refundTransactionRepository.findWithLockById(refundId).orElse(null);
+    if (refund == null || refund.getStatus() != RefundStatus.PENDING_PROVIDER) {
+      return;
+    }
+    PaymentTransaction charge = refund.getPaymentTransaction();
+    BigDecimal alreadyConfirmed = refundTransactionRepository.sumSuccessfulRefundAmounts(charge);
+    BigDecimal expected = alreadyConfirmed.add(refund.getAmount());
+    BigDecimal providerRefunded =
+        providerStatus.getRefundedAmount() == null
+            ? BigDecimal.ZERO
+            : providerStatus.getRefundedAmount();
+    boolean fullyReturned =
+        providerStatus.getProviderState() == ProviderPaymentState.REFUNDED
+            && expected.compareTo(charge.getAmount()) >= 0;
+    if (fullyReturned || providerRefunded.compareTo(expected) >= 0) {
+      refund.setStatus(RefundStatus.SUCCESS);
+      refund.setLastErrorCode(null);
+      refund.setLastErrorMessage(null);
+      applyRefundToParentTransaction(refund);
+      notifyRefundIssued(refund);
+      refundTransactionRepository.save(refund);
+      eventLogger.log(
+          "REFUND",
+          refund.getId(),
+          "PROVIDER_RECONCILED_SUCCESS",
+          RefundStatus.PENDING_PROVIDER.name(),
+          refund.getStatus().name(),
+          null,
+          null,
+          refund.getIdempotencyKey(),
+          java.util.Map.of("providerRefunded", providerRefunded.toPlainString()));
+      return;
+    }
+    LocalDateTime submitted =
+        refund.getProviderSubmittedAt() == null
+            ? refund.getCreatedAt()
+            : refund.getProviderSubmittedAt();
+    if (submitted != null
+        && submitted.plusHours(REFUND_REVIEW_AFTER_HOURS).isBefore(LocalDateTime.now(clock))) {
+      refund.setStatus(RefundStatus.REQUIRES_REVIEW);
+      refund.setLastErrorCode("PROVIDER_REFUND_NOT_VISIBLE");
+      refund.setLastErrorMessage(
+          "Provider refunded total " + providerRefunded + " does not cover " + expected);
+      refundTransactionRepository.save(refund);
     }
   }
 
@@ -454,6 +575,7 @@ public class RefundService {
                 notifyRefundIssued(refund);
               } else if (response.isPending() || response.isSuccess()) {
                 refund.setStatus(RefundStatus.PENDING_PROVIDER);
+                refund.setProviderSubmittedAt(LocalDateTime.now(clock));
                 refund.setProviderRefundId(response.getExternalRefundId());
                 refund.setLeaseUntil(null);
                 refund.setNextRetryAt(null);

@@ -14,7 +14,7 @@ public interface PayoutBatchRepository extends JpaRepository<PayoutBatch, Long> 
 
   @Query(
       "select b from PayoutBatch b where b.status = 'PENDING_PROVIDER' "
-          + "and b.providerPayoutId is not null "
+          + "and (b.providerPayoutId is not null or b.providerOrderId is not null) "
           + "and (b.nextRetryAt is null or b.nextRetryAt <= :now) "
           + "order by b.createdAt asc")
   List<PayoutBatch> findProviderPendingForReconciliation(@Param("now") LocalDateTime now);
@@ -35,4 +35,9 @@ public interface PayoutBatchRepository extends JpaRepository<PayoutBatch, Long> 
   @Query("select b from PayoutBatch b where b.providerPayoutId = :providerPayoutId")
   Optional<PayoutBatch> findWithLockByProviderPayoutId(
       @Param("providerPayoutId") String providerPayoutId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select b from PayoutBatch b where b.providerOrderId = :providerOrderId")
+  Optional<PayoutBatch> findWithLockByProviderOrderId(
+      @Param("providerOrderId") String providerOrderId);
 }

@@ -254,11 +254,43 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     due(owner, "KZT");
     doThrow(new IllegalStateException("timeout")).when(provider).payout(any());
     service.processPendingPayouts();
+    // Ambiguous: the provider may have accepted it. Reconcile by order id, never resend.
+    assertEquals("PENDING_PROVIDER", batch(a).getStatus());
     clock.advance(Duration.ofDays(1));
     service.processPendingPayouts();
     verify(provider, times(1)).payout(any());
+
+    when(provider.getPayoutStatus(any(), any()))
+        .thenReturn(GatewayStatusResponse.builder().status("PENDING").notFound(true).build());
+    service.reconcilePendingProviderPayouts();
+
+    verify(provider, times(1)).payout(any());
     assertEquals("REQUIRES_REVIEW", batch(a).getStatus());
     assertEquals("REQUIRES_REVIEW", reload(a).getStatus());
+  }
+
+  @Test
+  void payoutTimeoutAfterProviderAcceptedRequestSettlesFromStatusWithoutResend() {
+    User owner = owner();
+    Payout a = due(owner, "KZT");
+    due(owner, "KZT");
+    doThrow(new IllegalStateException("read timeout")).when(provider).payout(any());
+    service.processPendingPayouts();
+    assertEquals("PENDING_PROVIDER", batch(a).getStatus());
+
+    clock.advance(Duration.ofMinutes(6));
+    when(provider.getPayoutStatus(any(), any()))
+        .thenReturn(
+            GatewayStatusResponse.builder()
+                .externalPaymentId("provider-late-1")
+                .status("SUCCESS")
+                .build());
+    service.reconcilePendingProviderPayouts();
+
+    verify(provider, times(1)).payout(any());
+    assertEquals("SUCCESS", batch(a).getStatus());
+    assertEquals("provider-late-1", batch(a).getProviderPayoutId());
+    assertEquals("SUCCESS", reload(a).getStatus());
   }
 
   @Test
@@ -358,6 +390,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
             .user(user)
             .providerName("test-provider")
             .providerCardToken("token-" + user.getId())
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
             .isDefault(true)
             .status("ACTIVE")
             .build());

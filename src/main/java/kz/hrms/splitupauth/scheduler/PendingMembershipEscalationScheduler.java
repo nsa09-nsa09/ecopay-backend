@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.scheduler;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import kz.hrms.splitupauth.entity.MemberStatus;
@@ -11,7 +12,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 @RequiredArgsConstructor
@@ -21,10 +23,18 @@ public class PendingMembershipEscalationScheduler {
   private final RoomMemberRepository roomMemberRepository;
   private final SupportTicketService supportTicketService;
   private final ModerationService moderationService;
+  private final SchedulerLock schedulerLock;
+  private final PlatformTransactionManager transactionManager;
 
   @Scheduled(fixedDelay = 300000)
-  @Transactional
   public void escalateStalePendingMemberships() {
+    schedulerLock.runExclusive(
+        "pending-membership-escalation",
+        Duration.ofMinutes(10),
+        () -> new TransactionTemplate(transactionManager).executeWithoutResult(s -> escalate()));
+  }
+
+  private void escalate() {
     List<RoomMember> pendingMembers =
         roomMemberRepository.findByStatusAndDeletedAtIsNull(MemberStatus.PENDING);
 

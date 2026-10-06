@@ -81,6 +81,13 @@ public class RefundTransaction {
   @Column(name = "updated_at")
   private LocalDateTime updatedAt;
 
+  /** When the refund/cancel request was handed to the provider (accepted or ambiguous). */
+  @Column(name = "provider_submitted_at")
+  private LocalDateTime providerSubmittedAt;
+
+  @Column(name = "last_reconciled_at")
+  private LocalDateTime lastReconciledAt;
+
   @PrePersist
   protected void onCreate() {
     if (status == null) {

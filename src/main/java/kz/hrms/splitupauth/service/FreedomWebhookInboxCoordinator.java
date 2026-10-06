@@ -1,10 +1,16 @@
 package kz.hrms.splitupauth.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.TreeMap;
@@ -12,8 +18,10 @@ import java.util.UUID;
 import kz.hrms.splitupauth.entity.FreedomWebhookInbox;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -28,6 +36,7 @@ public class FreedomWebhookInboxCoordinator {
   private final ObjectMapper objectMapper;
   private final FreedomWebhookInboxTransactions transactions;
   private final FreedomWebhookInboxProcessor processor;
+  private final ObjectProvider<MeterRegistry> meterRegistry;
 
   @Value("${app.webhooks.freedom.max-attempts:6}")
   private int maxAttempts;
@@ -44,36 +53,50 @@ public class FreedomWebhookInboxCoordinator {
   @Value("${app.webhooks.freedom.batch-size:100}")
   private int batchSize;
 
+  /** Single-valued convenience overload (tests, legacy callers). */
   public Acceptance acceptAndProcess(String script, Map<String, String> params) {
+    Map<String, List<String>> multi = new LinkedHashMap<>();
+    params.forEach((k, v) -> multi.put(k, v == null ? List.of() : List.of(v)));
+    return acceptAndProcessMulti(script, multi);
+  }
+
+  public Acceptance acceptAndProcessMulti(String script, Map<String, List<String>> params) {
     Boolean signatureValid = null;
     GatewayWebhookEvent event = null;
+    FreedomPayMessage message = null;
     String initialErrorCode = null;
     String initialErrorMessage = null;
 
     try {
-      signatureValid = gateway.verifyWebhookSignature(script, params);
+      message = gateway.callbackMessage(params);
+      signatureValid = gateway.verifyCallback(script, message);
       if (Boolean.TRUE.equals(signatureValid)) {
-        event = gateway.verifyAndParseWebhook(script, params);
+        event = gateway.parseCallback(script, message);
       }
     } catch (RuntimeException ex) {
       initialErrorCode = "ACCEPT_PARSE_FAILED";
-      initialErrorMessage = ex.getMessage();
+      initialErrorMessage = ex.getClass().getSimpleName();
       log.warn(
-          "Freedom webhook accepted for retry after verification/parse failure: {}", ex.toString());
+          "Freedom webhook accepted for retry after verification/parse failure: {}",
+          ex.getClass().getSimpleName());
     }
 
+    boolean invalidSignature = Boolean.FALSE.equals(signatureValid);
+    // A forged callback must never occupy the dedup key of a genuine one, so rows that failed
+    // verification are keyed by their full raw content (salt and signature included).
     String requestId =
         event != null && event.getProviderRequestId() != null
             ? event.getProviderRequestId()
-            : rawRequestId(script, params);
+            : invalidSignature || message == null
+                ? rawRequestId(script, params)
+                : gateway.callbackRequestId(script, message);
     LocalDateTime now = LocalDateTime.now();
-    boolean invalidSignature = Boolean.FALSE.equals(signatureValid);
 
     FreedomWebhookInbox inbox =
         FreedomWebhookInbox.builder()
             .providerRequestId(requestId)
             .callbackScript(script)
-            .rawBody(objectMapper.valueToTree(params))
+            .rawBody(toJson(params))
             .signatureValid(signatureValid)
             .processingStatus(invalidSignature ? "DEAD_LETTER" : "PENDING")
             .attemptCount(invalidSignature ? 1 : 0)
@@ -85,13 +108,16 @@ public class FreedomWebhookInboxCoordinator {
             .build();
 
     FreedomWebhookInbox stored;
+    boolean duplicate = false;
     try {
       stored = transactions.insert(inbox);
     } catch (DataIntegrityViolationException duplicateOrFailure) {
       stored =
           transactions.findByProviderRequestId(requestId).orElseThrow(() -> duplicateOrFailure);
-      log.info("Duplicate Freedom Pay webhook for {}", requestId);
+      duplicate = true;
+      log.info("Duplicate Freedom Pay webhook for script {}", script);
     }
+    count(invalidSignature ? "invalid_signature" : duplicate ? "duplicate" : "accepted", script);
 
     boolean storedInvalidSignature =
         "DEAD_LETTER".equals(stored.getProcessingStatus())
@@ -100,6 +126,31 @@ public class FreedomWebhookInboxCoordinator {
       processInbox(stored.getId());
     }
     return new Acceptance(stored.getId(), storedInvalidSignature);
+  }
+
+  private JsonNode toJson(Map<String, List<String>> params) {
+    ObjectNode node = objectMapper.createObjectNode();
+    params.forEach(
+        (k, values) -> {
+          if (values == null || values.isEmpty()) {
+            node.put(k, "");
+          } else if (values.size() == 1) {
+            node.put(k, values.get(0));
+          } else {
+            ArrayNode array = node.putArray(k);
+            values.forEach(array::add);
+          }
+        });
+    return node;
+  }
+
+  private void count(String outcome, String script) {
+    MeterRegistry registry = meterRegistry == null ? null : meterRegistry.getIfAvailable();
+    if (registry != null) {
+      registry
+          .counter("ecopay.freedompay.webhook", "outcome", outcome, "callback", script)
+          .increment();
+    }
   }
 
   public void retryDueWebhooks() {
@@ -148,7 +199,9 @@ public class FreedomWebhookInboxCoordinator {
           LocalDateTime.now().plusSeconds(delay));
       if (!retryable || attempt >= Math.max(1, maxAttempts)) {
         log.error("Freedom webhook inbox {} moved to DEAD_LETTER: {}", inboxId, errorCode);
+        count("dead_letter", "any");
       } else {
+        count("retry_scheduled", "any");
         log.warn(
             "Freedom webhook inbox {} failed on attempt {}; retry in {}s: {}",
             inboxId,
@@ -175,16 +228,19 @@ public class FreedomWebhookInboxCoordinator {
     return Math.min(cap, base * multiplier);
   }
 
-  private static String rawRequestId(String script, Map<String, String> params) {
+  private static String rawRequestId(String script, Map<String, List<String>> params) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       digest.update(script.getBytes(StandardCharsets.UTF_8));
-      for (Map.Entry<String, String> entry : new TreeMap<>(params).entrySet()) {
-        digest.update((byte) 0);
-        digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
-        digest.update((byte) '=');
-        if (entry.getValue() != null) {
-          digest.update(entry.getValue().getBytes(StandardCharsets.UTF_8));
+      for (Map.Entry<String, List<String>> entry : new TreeMap<>(params).entrySet()) {
+        List<String> values = entry.getValue() == null ? List.of() : entry.getValue();
+        for (String value : values) {
+          digest.update((byte) 0);
+          digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
+          digest.update((byte) '=');
+          if (value != null) {
+            digest.update(value.getBytes(StandardCharsets.UTF_8));
+          }
         }
       }
       return "freedompay:raw:" + HexFormat.of().formatHex(digest.digest());

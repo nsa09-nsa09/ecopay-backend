@@ -242,11 +242,8 @@ public class SafeOutboundUrlPolicy {
     }
     if (address instanceof Inet6Address) {
       if (bytes.length == 16) {
-        boolean ipv4Mapped = true;
-        for (int i = 0; i < 10; i++) ipv4Mapped &= bytes[i] == 0;
-        ipv4Mapped &= (bytes[10] & 0xff) == 0xff && (bytes[11] & 0xff) == 0xff;
-        if (ipv4Mapped) {
-          byte[] v4 = {bytes[12], bytes[13], bytes[14], bytes[15]};
+        byte[] v4 = embeddedIpv4(bytes);
+        if (v4 != null) {
           try {
             return isBlockedAddress(InetAddress.getByAddress(v4));
           } catch (UnknownHostException ignored) {
@@ -259,6 +256,30 @@ public class SafeOutboundUrlPolicy {
       }
     }
     return false;
+  }
+
+  /**
+   * IPv4 address carried inside an IPv6 one, so a private v4 target cannot be reached through an
+   * IPv6 spelling: IPv4-mapped (::ffff:a.b.c.d), IPv4-compatible (::a.b.c.d), NAT64 (64:ff9b::/96
+   * and 64:ff9b:1::/48) and 6to4 (2002:aabb:ccdd::/16).
+   */
+  private static byte[] embeddedIpv4(byte[] b) {
+    boolean firstTenZero = true;
+    for (int i = 0; i < 10; i++) firstTenZero &= b[i] == 0;
+    boolean mapped = firstTenZero && (b[10] & 0xff) == 0xff && (b[11] & 0xff) == 0xff;
+    boolean compatible = firstTenZero && b[10] == 0 && b[11] == 0;
+    boolean nat64 =
+        (b[0] & 0xff) == 0x00
+            && (b[1] & 0xff) == 0x64
+            && (b[2] & 0xff) == 0xff
+            && (b[3] & 0xff) == 0x9b;
+    if (mapped || compatible || nat64) {
+      return new byte[] {b[12], b[13], b[14], b[15]};
+    }
+    if ((b[0] & 0xff) == 0x20 && (b[1] & 0xff) == 0x02) {
+      return new byte[] {b[2], b[3], b[4], b[5]};
+    }
+    return null;
   }
 
   private static Set<Integer> parsePorts(String raw) {
