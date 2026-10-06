@@ -24,6 +24,7 @@ import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
 import kz.hrms.splitupauth.entity.PayoutBatch;
 import kz.hrms.splitupauth.entity.PayoutMethod;
+import kz.hrms.splitupauth.entity.PayoutStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.payment.gateway.GatewayPayoutResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
@@ -92,38 +93,38 @@ class PayoutServiceTest {
   @Test
   void reverse_pendingPayout_fullRefund_marksReversed() {
     PaymentIntent intent = new PaymentIntent();
-    Payout payout = Payout.builder().status("PENDING").idempotencyKey("k").build();
+    Payout payout = Payout.builder().status(PayoutStatus.PENDING).idempotencyKey("k").build();
     when(payoutRepository.findByTriggeringPaymentIntent(intent)).thenReturn(Optional.of(payout));
 
     payoutService.reverseOwnerPayoutForRefund(intent, true);
 
-    assertEquals("REVERSED", payout.getStatus());
+    assertEquals(PayoutStatus.REVERSED, payout.getStatus());
     verify(payoutRepository).save(payout);
   }
 
   @Test
   void reverse_alreadyPaidPayout_isNotReversed_flaggedInstead() {
     PaymentIntent intent = new PaymentIntent();
-    Payout payout = Payout.builder().status("SUCCESS").idempotencyKey("k").build();
+    Payout payout = Payout.builder().status(PayoutStatus.SUCCESS).idempotencyKey("k").build();
     when(payoutRepository.findByTriggeringPaymentIntent(intent)).thenReturn(Optional.of(payout));
 
     payoutService.reverseOwnerPayoutForRefund(intent, true);
 
     // Already dispatched/paid: must NOT silently flip status; left for manual clawback.
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     verify(payoutRepository, never()).save(any());
   }
 
   @Test
   void reverse_partialRefund_onPendingPayout_isNotAutoReversed() {
     PaymentIntent intent = new PaymentIntent();
-    Payout payout = Payout.builder().status("PENDING").idempotencyKey("k").build();
+    Payout payout = Payout.builder().status(PayoutStatus.PENDING).idempotencyKey("k").build();
     when(payoutRepository.findByTriggeringPaymentIntent(intent)).thenReturn(Optional.of(payout));
 
     payoutService.reverseOwnerPayoutForRefund(intent, false);
 
     // Partial refund needs an accounting decision — flagged, not auto-reversed.
-    assertEquals("PENDING", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING, payout.getStatus());
     verify(payoutRepository, never()).save(any());
   }
 
@@ -137,7 +138,7 @@ class PayoutServiceTest {
     Payout payout =
         Payout.builder()
             .id(123L)
-            .status("FROZEN")
+            .status(PayoutStatus.FROZEN)
             .amount(new BigDecimal("5000.00"))
             .originalAmount(new BigDecimal("5000.00"))
             .payableAmount(new BigDecimal("5000.00"))
@@ -151,7 +152,7 @@ class PayoutServiceTest {
     assertEquals(0, new BigDecimal("2500.00").compareTo(payout.getRefundedShareAmount()));
     assertEquals(0, new BigDecimal("2500.00").compareTo(payout.getPayableAmount()));
     assertEquals(0, new BigDecimal("2500.00").compareTo(payout.getAmount()));
-    assertEquals("FROZEN", payout.getStatus());
+    assertEquals(PayoutStatus.FROZEN, payout.getStatus());
     verify(payoutRepository).save(payout);
   }
 
@@ -164,7 +165,7 @@ class PayoutServiceTest {
             .user(owner)
             .amount(new BigDecimal("1000.00"))
             .currency("KZT")
-            .status("PENDING")
+            .status(PayoutStatus.PENDING)
             .idempotencyKey("payout-124")
             .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
             .build();
@@ -187,7 +188,7 @@ class PayoutServiceTest {
 
     payoutService.dispatchPayout(124L);
 
-    assertEquals("PENDING_PROVIDER", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING_PROVIDER, payout.getStatus());
     verify(moneyLedgerService, never())
         .append(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
   }
@@ -201,7 +202,7 @@ class PayoutServiceTest {
             .user(owner)
             .amount(new BigDecimal("1000.00"))
             .currency("KZT")
-            .status("PENDING_PROVIDER")
+            .status(PayoutStatus.PENDING_PROVIDER)
             .providerPayoutId("FP-125")
             .build();
     when(payoutRepository.findProviderPendingForReconciliation(any())).thenReturn(List.of(payout));
@@ -213,7 +214,7 @@ class PayoutServiceTest {
 
     payoutService.reconcilePendingProviderPayouts();
 
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     assertNotNull(payout.getProcessedAt());
     verify(paymentGateway, never()).payout(any());
     verify(payoutRepository).save(payout);
@@ -226,7 +227,7 @@ class PayoutServiceTest {
             .id(126L)
             .amount(new BigDecimal("1000.00"))
             .currency("KZT")
-            .status("PENDING_PROVIDER")
+            .status(PayoutStatus.PENDING_PROVIDER)
             .providerPayoutId("FP-126")
             .build();
     when(payoutRepository.findProviderPendingForReconciliation(any())).thenReturn(List.of(payout));
@@ -242,7 +243,7 @@ class PayoutServiceTest {
 
     payoutService.reconcilePendingProviderPayouts();
 
-    assertEquals("REQUIRES_REVIEW", payout.getStatus());
+    assertEquals(PayoutStatus.REQUIRES_REVIEW, payout.getStatus());
     assertEquals("declined", payout.getFailureReason());
     verify(paymentGateway, never()).payout(any());
   }
@@ -301,7 +302,7 @@ class PayoutServiceTest {
             .user(owner)
             .amount(new BigDecimal("1000.00"))
             .currency("KZT")
-            .status("PENDING")
+            .status(PayoutStatus.PENDING)
             .idempotencyKey("payout-77")
             .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
             .build();
@@ -324,7 +325,7 @@ class PayoutServiceTest {
 
     payoutService.processPendingPayouts();
 
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     assertEquals("MOCK-OUT-77", payout.getProviderPayoutId());
     assertEquals(null, payout.getLeaseUntil());
     assertNotNull(payout.getProcessedAt());
@@ -384,14 +385,14 @@ class PayoutServiceTest {
                         && request.getIdempotencyKey().startsWith("payout-batch-")
                         && new BigDecimal("3000.00").compareTo(request.getAmount()) == 0));
     assertEquals("SUCCESS", savedBatch.get().getStatus());
-    assertEquals("SUCCESS", p1.getStatus());
-    assertEquals("SUCCESS", p2.getStatus());
-    assertEquals("SUCCESS", p3.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, p1.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, p2.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, p3.getStatus());
   }
 
   @Test
   void dispatchPayout_activeProcessingLease_isNotSentAgain() {
-    Payout payout = Payout.builder().id(88L).status("PROCESSING").build();
+    Payout payout = Payout.builder().id(88L).status(PayoutStatus.PROCESSING).build();
     when(payoutRepository.findWithLockById(88L)).thenReturn(Optional.of(payout));
 
     payoutService.dispatchPayout(88L);
@@ -408,7 +409,7 @@ class PayoutServiceTest {
             .user(owner)
             .amount(new BigDecimal("1000.00"))
             .currency("KZT")
-            .status("PROCESSING")
+            .status(PayoutStatus.PROCESSING)
             .idempotencyKey("payout-89")
             .leaseUntil(LocalDateTime.now(clock).minusMinutes(1))
             .build();
@@ -430,7 +431,7 @@ class PayoutServiceTest {
 
     payoutService.dispatchPayout(89L);
 
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     verify(paymentGateway, times(1)).payout(any());
   }
 
@@ -443,7 +444,7 @@ class PayoutServiceTest {
             .user(owner)
             .amount(new BigDecimal("1000.00"))
             .currency("KZT")
-            .status("PENDING")
+            .status(PayoutStatus.PENDING)
             .idempotencyKey("payout-99")
             .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
             .build();
@@ -466,7 +467,7 @@ class PayoutServiceTest {
     payoutService.dispatchPayout(99L);
     payoutService.dispatchPayout(99L);
 
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     verify(paymentGateway, times(1)).payout(any());
   }
 
@@ -477,7 +478,7 @@ class PayoutServiceTest {
         .amount(new BigDecimal(amount))
         .payableAmount(new BigDecimal(amount))
         .currency("KZT")
-        .status("PENDING")
+        .status(PayoutStatus.PENDING)
         .idempotencyKey("payout-" + id)
         .releaseAt(releaseAt)
         .build();
@@ -490,7 +491,7 @@ class PayoutServiceTest {
         .amount(new BigDecimal("1000.00"))
         .payableAmount(new BigDecimal("1000.00"))
         .currency("KZT")
-        .status("PENDING")
+        .status(PayoutStatus.PENDING)
         .idempotencyKey("payout-" + id)
         .releaseAt(LocalDateTime.now(clock).minusSeconds(1))
         .build();
@@ -513,7 +514,7 @@ class PayoutServiceTest {
 
     payoutService.dispatchPayout(301L);
 
-    assertEquals("PENDING_METHOD", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING_METHOD, payout.getStatus());
     verify(paymentGateway, never()).payout(any());
   }
 
@@ -537,7 +538,7 @@ class PayoutServiceTest {
     when(paymentGateway.payout(any())).thenThrow(new IllegalStateException("read timeout"));
 
     payoutService.dispatchPayout(302L);
-    assertEquals("PENDING_PROVIDER", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING_PROVIDER, payout.getStatus());
     assertEquals(null, payout.getProviderPayoutId());
     assertEquals(LocalDateTime.now(clock), payout.getSubmittedAt());
 
@@ -555,7 +556,7 @@ class PayoutServiceTest {
                 .build());
     payoutService.reconcilePendingProviderPayouts();
 
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     assertEquals("FP-302", payout.getProviderPayoutId());
     verify(paymentGateway, times(1)).payout(any());
   }
@@ -564,7 +565,7 @@ class PayoutServiceTest {
   void duplicatePayoutCallbackSettlesOnceAndWritesLedgerOnce() {
     User owner = User.builder().id(42L).build();
     Payout payout = duePayout(303L, owner);
-    payout.setStatus("PENDING_PROVIDER");
+    payout.setStatus(PayoutStatus.PENDING_PROVIDER);
     payout.setSubmittedAmount(new BigDecimal("1000.00"));
     payout.setProviderPayoutId("FP-303");
     when(payoutRepository.findWithLockByProviderPayoutId("FP-303")).thenReturn(Optional.of(payout));
@@ -575,7 +576,7 @@ class PayoutServiceTest {
     payoutService.applyPayoutWebhook(
         "FP-303", "ecopay-payout-303", true, new BigDecimal("1000.00"));
 
-    assertEquals("SUCCESS", payout.getStatus());
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
     verify(moneyLedgerService, times(2))
         .append(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
   }
@@ -584,7 +585,7 @@ class PayoutServiceTest {
   void payoutCallbackWithDifferentAmountGoesToReview() {
     User owner = User.builder().id(42L).build();
     Payout payout = duePayout(304L, owner);
-    payout.setStatus("PENDING_PROVIDER");
+    payout.setStatus(PayoutStatus.PENDING_PROVIDER);
     payout.setSubmittedAmount(new BigDecimal("1000.00"));
     when(payoutRepository.findWithLockByProviderPayoutId("FP-304")).thenReturn(Optional.empty());
     when(payoutRepository.findWithLockByProviderOrderId("ecopay-payout-304"))
@@ -598,7 +599,7 @@ class PayoutServiceTest {
     payoutService.applyPayoutWebhook(
         "FP-304", "ecopay-payout-304", true, new BigDecimal("9999.00"));
 
-    assertEquals("REQUIRES_REVIEW", payout.getStatus());
+    assertEquals(PayoutStatus.REQUIRES_REVIEW, payout.getStatus());
     assertEquals("FP-304", payout.getProviderPayoutId());
     verify(moneyLedgerService, never())
         .append(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -628,6 +629,6 @@ class PayoutServiceTest {
 
     assertEquals(capturedAt.plusDays(30), payout.getReleaseAt());
     assertEquals(new BigDecimal("1822.50"), payout.getAmount());
-    assertEquals("PENDING", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING, payout.getStatus());
   }
 }

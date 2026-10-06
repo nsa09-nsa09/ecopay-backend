@@ -111,7 +111,7 @@ class AuthServiceTest {
     assertNull(response.getRequiresTwoFactor());
     assertNull(response.getChallengeId());
     verify(staffTwoFactorService, never()).createChallenge(any());
-    verify(rateLimitService).recordLoginAttempt(user.getEmail(), true);
+    verify(rateLimitService).recordLoginAttempt(user.getEmail(), true, null);
   }
 
   @Test
@@ -159,7 +159,7 @@ class AuthServiceTest {
         InvalidCredentialsException.class,
         () -> authService.login(loginRequestWithPassword(user.getEmail(), "wrong")));
 
-    verify(rateLimitService).recordLoginAttempt(user.getEmail(), false);
+    verify(rateLimitService).recordLoginAttempt(user.getEmail(), false, null);
     verify(staffTwoFactorService, never()).requiresTwoFactor(any());
     verify(staffTwoFactorService, never()).createChallenge(any());
   }

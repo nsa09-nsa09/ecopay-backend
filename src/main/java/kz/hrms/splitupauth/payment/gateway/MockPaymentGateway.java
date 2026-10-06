@@ -1,5 +1,7 @@
 package kz.hrms.splitupauth.payment.gateway;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,6 +35,13 @@ public class MockPaymentGateway implements PaymentGateway {
    * finalized only by a callback or status reconciliation. Default false (synchronous capture).
    */
   private final AtomicBoolean asyncCapture = new AtomicBoolean();
+
+  /** Representative card-acquiring rate (~2.9%) so dev/test exercises the provider-fee path. */
+  private static final BigDecimal MOCK_FEE_RATE = new BigDecimal("0.029");
+
+  private static BigDecimal mockProviderFee(BigDecimal amount) {
+    return amount == null ? null : amount.multiply(MOCK_FEE_RATE).setScale(2, RoundingMode.HALF_UP);
+  }
 
   private static String newId(String prefix) {
     // UUID keeps external ids unique even across app restarts (no in-memory counter
@@ -86,6 +95,7 @@ public class MockPaymentGateway implements PaymentGateway {
         .captureConfirmed(true)
         .externalPaymentId(ext)
         .providerStatusCode("ok")
+        .providerFeeAmount(mockProviderFee(request.getAmount()))
         .build();
   }
 
@@ -106,6 +116,7 @@ public class MockPaymentGateway implements PaymentGateway {
         .captureConfirmed(true)
         .externalPaymentId(ext)
         .providerStatusCode("ok")
+        .providerFeeAmount(mockProviderFee(request.getAmount()))
         .build();
   }
 

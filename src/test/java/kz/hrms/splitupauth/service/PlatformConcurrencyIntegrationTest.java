@@ -189,7 +189,7 @@ class PlatformConcurrencyIntegrationTest extends AbstractIntegrationTest {
         () -> rateLimitService.checkLoginAttempts("fresh-" + UUID.randomUUID() + "@x.kz"));
     Integer withIp =
         jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM login_attempts WHERE ip_address = ?",
+            "SELECT COUNT(*) FROM login_attempts WHERE ip = ?",
             Integer.class,
             request.getRemoteAddr());
     assertEquals(30, withIp);
@@ -207,6 +207,6 @@ class PlatformConcurrencyIntegrationTest extends AbstractIntegrationTest {
         TooManyLoginAttemptsException.class, () -> rateLimitService.checkLoginAttempts(email));
     assertNull(
         jdbcTemplate.queryForObject(
-            "SELECT MAX(ip_address) FROM login_attempts WHERE email = ?", String.class, email));
+            "SELECT MAX(ip) FROM login_attempts WHERE email = ?", String.class, email));
   }
 }

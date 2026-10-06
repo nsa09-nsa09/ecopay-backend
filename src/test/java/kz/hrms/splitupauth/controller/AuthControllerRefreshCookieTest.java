@@ -47,7 +47,7 @@ class AuthControllerRefreshCookieTest {
 
   @Test
   void loginSetsRefreshCookieButDoesNotExposeRefreshTokenInJsonBody() throws Exception {
-    when(authService.login(any()))
+    when(authService.login(any(), any()))
         .thenReturn(
             AuthResponse.builder()
                 .accessToken("access-token")

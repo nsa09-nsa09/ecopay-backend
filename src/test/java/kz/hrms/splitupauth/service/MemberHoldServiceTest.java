@@ -18,6 +18,7 @@ import java.util.Optional;
 import kz.hrms.splitupauth.dto.MemberHoldDto;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.PayoutStatus;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.User;
@@ -56,13 +57,13 @@ class MemberHoldServiceTest {
     RoomMember membership = RoomMember.builder().id(20L).room(room).user(member).build();
     LocalDateTime firstRelease = LocalDateTime.of(2026, 10, 10, 0, 0);
     LocalDateTime secondRelease = LocalDateTime.of(2026, 10, 22, 0, 0);
-    Payout pending = payout(membership, "PENDING", "9000.00", "5000.25", secondRelease);
-    Payout frozen = payout(membership, "FROZEN", "4000.00", "831.42", firstRelease);
+    Payout pending = payout(membership, PayoutStatus.PENDING, "9000.00", "5000.25", secondRelease);
+    Payout frozen = payout(membership, PayoutStatus.FROZEN, "4000.00", "831.42", firstRelease);
     stubMembership(room, member, membership);
     when(payoutRepository.findHeldByRoomMember(
             eq(membership),
             eq("KZT"),
-            eq(List.of("PENDING", "PENDING_METHOD", "FROZEN")),
+            eq(List.of(PayoutStatus.PENDING, PayoutStatus.PENDING_METHOD, PayoutStatus.FROZEN)),
             eq(LocalDateTime.of(2026, 10, 1, 0, 0))))
         .thenReturn(List.of(pending, frozen));
 
@@ -79,7 +80,7 @@ class MemberHoldServiceTest {
         .findHeldByRoomMember(
             membership,
             "KZT",
-            List.of("PENDING", "PENDING_METHOD", "FROZEN"),
+            List.of(PayoutStatus.PENDING, PayoutStatus.PENDING_METHOD, PayoutStatus.FROZEN),
             LocalDateTime.of(2026, 10, 1, 0, 0));
   }
 
@@ -93,7 +94,7 @@ class MemberHoldServiceTest {
     when(payoutRepository.findHeldByRoomMember(
             eq(membership),
             eq("KZT"),
-            eq(List.of("PENDING", "PENDING_METHOD", "FROZEN")),
+            eq(List.of(PayoutStatus.PENDING, PayoutStatus.PENDING_METHOD, PayoutStatus.FROZEN)),
             eq(LocalDateTime.of(2026, 10, 1, 0, 0))))
         .thenReturn(List.of());
 
@@ -126,7 +127,7 @@ class MemberHoldServiceTest {
 
   private Payout payout(
       RoomMember membership,
-      String status,
+      PayoutStatus status,
       String originalAmount,
       String payableAmount,
       LocalDateTime releaseAt) {

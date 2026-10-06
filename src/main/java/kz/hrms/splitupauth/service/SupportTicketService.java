@@ -357,8 +357,7 @@ public class SupportTicketService {
     notificationService.notify(
         ticket.getUser(),
         NotificationType.TICKET_REPLY,
-        "Ответ поддержки",
-        "Поддержка ответила на вашу заявку «" + ticket.getSubject() + "».",
+        java.util.Map.of(),
         "/support",
         java.util.Map.of("ticketId", ticket.getId()));
 

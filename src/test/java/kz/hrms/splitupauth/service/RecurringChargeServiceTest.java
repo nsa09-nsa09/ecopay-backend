@@ -119,6 +119,11 @@ class RecurringChargeServiceTest {
     lenient()
         .when(savedCardRepository.findByUserAndIsDefaultTrueAndStatus(user, SavedCardStatus.ACTIVE))
         .thenReturn(Optional.of(card));
+    lenient()
+        .when(paymentService.currentChargeBreakdown(room))
+        .thenReturn(
+            new PaymentService.ChargeBreakdown(
+                new BigDecimal("1822.50"), new BigDecimal("500.00"), new BigDecimal("2322.50")));
     lenient().when(gatewayRegistry.defaultGateway()).thenReturn(gateway);
     lenient().when(gateway.providerName()).thenReturn("freedompay");
     lenient()
@@ -172,6 +177,28 @@ class RecurringChargeServiceTest {
     assertEquals(before, member.getNextBillingAt());
     verify(paymentService, never())
         .finalizeSuccessfulPayment(any(), any(), any(), any(), any(), any(), any(), anyString());
+  }
+
+  @Test
+  void recurringChargeUsesCurrentRoomPrice_notLastSuccessAmount() {
+    // The owner raised the price after the last successful payment (2322.50).
+    when(paymentService.currentChargeBreakdown(member.getRoom()))
+        .thenReturn(
+            new PaymentService.ChargeBreakdown(
+                new BigDecimal("3000.00"), new BigDecimal("700.00"), new BigDecimal("3700.00")));
+    when(gateway.chargeWithToken(any(), eq("profile-1")))
+        .thenReturn(
+            GatewayChargeResponse.builder()
+                .success(true)
+                .externalPaymentId("ext")
+                .providerStatusCode("ok")
+                .build());
+
+    service.tryAutoCharge(3L);
+
+    PaymentIntent created = intentsByKey.values().iterator().next();
+    assertEquals(0, new BigDecimal("3700.00").compareTo(created.getAmount()));
+    assertEquals(0, new BigDecimal("700.00").compareTo(created.getCommissionAmount()));
   }
 
   @Test

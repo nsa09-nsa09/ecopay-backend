@@ -10,6 +10,7 @@ import kz.hrms.splitupauth.entity.DeletedUserIdentityArchive;
 import kz.hrms.splitupauth.entity.DisputeStatus;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
+import kz.hrms.splitupauth.entity.PayoutStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -279,7 +280,12 @@ public class UserService {
     }
     if (payoutRepository.countByUserAndStatusIn(
             user,
-            List.of("PENDING", "PENDING_METHOD", "PROCESSING", "ON_HOLD", "CLAWBACK_REQUIRED"))
+            List.of(
+                PayoutStatus.PENDING,
+                PayoutStatus.PENDING_METHOD,
+                PayoutStatus.PROCESSING,
+                PayoutStatus.ON_HOLD,
+                PayoutStatus.CLAWBACK_REQUIRED))
         > 0) {
       throw deletionConflict("pending payout");
     }

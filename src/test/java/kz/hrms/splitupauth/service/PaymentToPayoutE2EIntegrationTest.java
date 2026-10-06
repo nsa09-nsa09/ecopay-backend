@@ -43,6 +43,7 @@ import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.Payout;
+import kz.hrms.splitupauth.entity.PayoutStatus;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
@@ -275,7 +276,7 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
         0,
         expectedPayout.compareTo(payout.getAmount()),
         "host payout should be the share (charge minus EcoPay commission)");
-    assertEquals("PENDING", payout.getStatus());
+    assertEquals(PayoutStatus.PENDING, payout.getStatus());
     assertNotNull(payout.getReleaseAt(), "payout must carry a hold/release timestamp");
     assertTrue(
         payout.getReleaseAt().isAfter(LocalDateTime.now(mutableClock).plusDays(29)),
@@ -284,7 +285,7 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     // dispatcher must NOT pay a held payout early
     payoutService.processPendingPayouts();
     assertEquals(
-        "PENDING",
+        PayoutStatus.PENDING,
         reload(payoutId).getStatus(),
         "held payout must not be dispatched before its release time");
 
@@ -301,7 +302,7 @@ class PaymentToPayoutE2EIntegrationTest extends AbstractIntegrationTest {
     entityManager.clear();
     Payout paid = reload(payoutId);
     assertEquals(
-        "SUCCESS",
+        PayoutStatus.SUCCESS,
         paid.getStatus(),
         "after the hold elapses the payout should be dispatched to the host");
     assertNotNull(paid.getProviderPayoutId(), "a settled payout must carry the provider payout id");

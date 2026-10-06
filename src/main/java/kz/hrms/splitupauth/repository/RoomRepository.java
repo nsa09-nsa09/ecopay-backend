@@ -10,6 +10,8 @@ import kz.hrms.splitupauth.entity.RoomType;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
@@ -19,6 +21,19 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificationExecutor<Room> {
+
+  /**
+   * Specification-based paged scan used by the busy public room list ({@code RoomService.getRooms}
+   * / {@code getMyRooms}). The summary mapper dereferences the LAZY {@code owner} and {@code
+   * service} on every row, so without this graph a 20-row page fired up to 40 extra SELECTs (N+1).
+   * The entity graph fetch-joins both to-one associations, keeping the per-page query count
+   * constant. Both are {@code @ManyToOne}, so the join-fetch is pagination-safe (no in-memory
+   * paging). The separate COUNT query Spring issues for the page total ignores the graph.
+   */
+  @Override
+  @EntityGraph(attributePaths = {"owner", "service"})
+  Page<Room> findAll(Specification<Room> spec, Pageable pageable);
+
   List<Room> findByDeletedAtIsNullOrderByCreatedAtDesc();
 
   Page<Room> findByDeletedAtIsNull(Pageable pageable);

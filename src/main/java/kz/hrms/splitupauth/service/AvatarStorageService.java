@@ -80,7 +80,7 @@ public class AvatarStorageService {
    */
   public String store(MultipartFile file) {
     if (file == null || file.isEmpty()) {
-      throw new InvalidRequestException("Файл не передан");
+      throw new InvalidRequestException("UPLOAD_FILE_MISSING", "Файл не передан");
     }
     if (file.getSize() > properties.getAvatar().getMaxSizeBytes()) {
       throw new InvalidRequestException(
@@ -94,7 +94,8 @@ public class AvatarStorageService {
     // We allowlist by extension first so a corrupted/oversized text file
     // doesn't reach the image decoder under "image/png" disguise.
     if (!isExtensionAllowed(extension)) {
-      throw new InvalidRequestException("Разрешены только файлы png, jpg, jpeg");
+      throw new InvalidRequestException(
+          "UPLOAD_TYPE_NOT_ALLOWED", "Разрешены только файлы png, jpg, jpeg");
     }
 
     byte[] bytes;
@@ -105,7 +106,8 @@ public class AvatarStorageService {
     }
 
     if (!magicBytesMatch(bytes)) {
-      throw new InvalidRequestException("Файл не похож на изображение (неверная сигнатура)");
+      throw new InvalidRequestException(
+          "UPLOAD_INVALID_IMAGE", "Файл не похож на изображение (неверная сигнатура)");
     }
 
     BufferedImage decoded;

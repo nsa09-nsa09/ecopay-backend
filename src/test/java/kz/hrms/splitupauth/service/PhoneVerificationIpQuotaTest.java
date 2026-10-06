@@ -59,7 +59,7 @@ class PhoneVerificationIpQuotaTest {
             smsService,
             passwordEncoder,
             smsProperties,
-            new InMemoryRateLimiter());
+            new InMemoryRateLimiter(200000, 86400));
 
     lenient().when(userRepository.findByPhone(anyString())).thenReturn(Optional.empty());
     lenient()

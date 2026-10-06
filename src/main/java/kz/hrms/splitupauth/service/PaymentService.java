@@ -245,10 +245,10 @@ public class PaymentService {
     }
 
     PaymentGateway gateway = gatewayRegistry.defaultGateway();
-    BigDecimal share = resolveShareAmount(lockedRoom);
-    BigDecimal commission =
-        commissionCalculator.commissionFor(share, RoomSeatMath.existingMembersCount(lockedRoom));
-    BigDecimal amount = share.add(commission);
+    ChargeBreakdown breakdown = currentChargeBreakdown(lockedRoom);
+    BigDecimal share = breakdown.share();
+    BigDecimal commission = breakdown.commission();
+    BigDecimal amount = breakdown.amount();
 
     long paidSeats =
         roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
@@ -336,6 +336,11 @@ public class PaymentService {
       intent.setExternalPaymentId(chargeResp.getExternalPaymentId());
       intent.setPaymentUrl(chargeResp.getPaymentUrl());
       intent.setProviderStatusCode(chargeResp.getProviderStatusCode());
+      // Carry the provider's acquiring fee (when reported) so the committed transaction can record
+      // it for net-revenue reporting. Null means "not reported"; leave any prior value untouched.
+      if (chargeResp.getProviderFeeAmount() != null) {
+        intent.setProviderFeeAmount(chargeResp.getProviderFeeAmount());
+      }
     }
     intent = paymentIntentRepository.save(intent);
     return intent;
@@ -352,50 +357,20 @@ public class PaymentService {
     if (intent == null || intent.getId() == null) {
       return;
     }
-    if (intent.getId() != null) {
-      finalizeSuccessfulPayment(
-          intent.getId(),
-          intent.getExternalPaymentId(),
-          intent.getProviderStatusCode(),
-          cardPanMask,
-          providerSignature,
-          null,
-          null,
-          "DIRECT_SUCCESS");
-      return;
-    }
-    recordSuccessTransaction(intent, cardPanMask, providerSignature, true);
-    roomMemberService.markMembershipAsPaid(intent.getRoomMember());
-    payoutService.createOwnerPayoutForSuccessfulPayment(intent);
-
-    RoomMember member = intent.getRoomMember();
-    roomEventLogger.log(
-        member == null ? null : member.getRoom(),
-        member,
-        intent.getUser(),
-        "MEMBER",
-        "payment_success",
-        Map.of(
-            "intentId",
-            String.valueOf(intent.getId()),
-            "amount",
-            String.valueOf(intent.getAmount())));
-
-    // Notify the payer that the charge succeeded. Single point covers the
-    // synchronous, redirect-reconcile, and webhook success paths.
-    Room room = member == null ? null : member.getRoom();
-    notificationService.notify(
-        intent.getUser(),
-        NotificationType.PAYMENT_SUCCESS,
-        "Оплата подтверждена",
-        "Оплата"
-            + (room == null ? "" : " за участие в комнате «" + room.getTitle() + "»")
-            + " на сумму "
-            + intent.getAmount()
-            + (room == null ? "" : " " + room.getCurrency())
-            + " прошла успешно.",
-        room == null ? null : "/rooms/member/" + room.getId(),
-        Map.of("intentId", intent.getId(), "roomId", room == null ? 0L : room.getId()));
+    // finalizeSuccessfulPayment is the single source of truth for every side effect of a
+    // successful charge (record transaction, advance membership, create owner payout, event log,
+    // notify) and is idempotent on the intent's terminal status. The code that previously followed
+    // the early return below was UNREACHABLE (the id is guaranteed non-null here) and re-did those
+    // same side effects — a double-charge trap if ever reached. Removed; finalize covers it all.
+    finalizeSuccessfulPayment(
+        intent.getId(),
+        intent.getExternalPaymentId(),
+        intent.getProviderStatusCode(),
+        cardPanMask,
+        providerSignature,
+        null,
+        null,
+        "DIRECT_SUCCESS");
   }
 
   /**
@@ -1096,13 +1071,10 @@ public class PaymentService {
     notificationService.notify(
         intent.getUser(),
         NotificationType.PAYMENT_SUCCESS,
-        "Оплата подтверждена",
-        "Оплата"
-            + (room == null ? "" : " за участие в комнате «" + room.getTitle() + "»")
-            + " на сумму "
-            + intent.getAmount()
-            + (room == null || room.getCurrency() == null ? " KZT" : " " + room.getCurrency())
-            + " прошла успешно.",
+        Map.of(
+            "roomTitle", room == null || room.getTitle() == null ? "" : room.getTitle(),
+            "amount", String.valueOf(intent.getAmount()),
+            "currency", room == null || room.getCurrency() == null ? "KZT" : room.getCurrency()),
         room == null ? null : "/rooms/member/" + room.getId(),
         Map.of("intentId", intent.getId(), "roomId", room == null ? 0L : room.getId()));
 
@@ -1331,6 +1303,7 @@ public class PaymentService {
             .type(PaymentTransactionType.CHARGE)
             .externalTransactionId(intent.getExternalPaymentId())
             .amount(intent.getAmount())
+            .providerFeeAmount(intent.getProviderFeeAmount())
             .currency("KZT")
             .status(PaymentTransactionStatus.SUCCESS)
             .providerName(intent.getProviderName())
@@ -1438,14 +1411,35 @@ public class PaymentService {
     }
   }
 
+  /**
+   * The member share, EcoPay commission, and total charge for a room, computed from its CURRENT
+   * price snapshot and commission config.
+   */
+  public record ChargeBreakdown(BigDecimal share, BigDecimal commission, BigDecimal amount) {}
+
+  /**
+   * Single source of truth for what a member is charged for a room right now: the per-member share
+   * plus the current tiered commission. Used by the initial intent AND by recurring auto-charges,
+   * so an owner price change or a commission-config change is picked up on the next charge instead
+   * of being frozen at the first payment's numbers.
+   */
+  public ChargeBreakdown currentChargeBreakdown(Room room) {
+    BigDecimal share = resolveShareAmount(room);
+    BigDecimal commission =
+        commissionCalculator.commissionFor(share, RoomSeatMath.existingMembersCount(room));
+    return new ChargeBreakdown(share, commission, share.add(commission));
+  }
+
   private void ensurePaymentAllowedUnderRoomLock(
       Room lockedRoom, RoomMember roomMember, User currentUser) {
     if (!isRoomPayable(lockedRoom)) {
-      throw new InvalidRequestException("Room is not payable in status " + lockedRoom.getStatus());
+      throw new InvalidRequestException(
+          "ROOM_NOT_PAYABLE", "Room is not payable in status " + lockedRoom.getStatus());
     }
     if (lockedRoom.getStartDate() != null
         && !LocalDateTime.now().isBefore(lockedRoom.getStartDate())) {
-      throw new InvalidRequestException("Payment window is closed for this room");
+      throw new InvalidRequestException(
+          "PAYMENT_WINDOW_CLOSED", "Payment window is closed for this room");
     }
     if (!isActiveUser(currentUser) || !isActiveUser(roomMember.getUser())) {
       throw new InvalidRequestException("Inactive users cannot create payments");

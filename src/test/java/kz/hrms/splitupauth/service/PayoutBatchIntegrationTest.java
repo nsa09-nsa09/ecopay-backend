@@ -87,7 +87,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     Payout p = due(owner(), "KZT");
     service.processPendingPayouts();
     assertTrue(sent.isEmpty());
-    assertEquals("PENDING", reload(p).getStatus());
+    assertEquals(PayoutStatus.PENDING, reload(p).getStatus());
     clock.advance(Duration.ofHours(24).minusSeconds(1));
     service.processPendingPayouts();
     assertTrue(sent.isEmpty());
@@ -95,7 +95,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     service.processPendingPayouts();
     service.processPendingPayouts();
     assertEquals(1, sent.size());
-    assertEquals("SUCCESS", reload(p).getStatus());
+    assertEquals(PayoutStatus.SUCCESS, reload(p).getStatus());
     assertEquals("ecopay-payout-" + p.getId(), sent.get(0).getProviderOrderId());
   }
 
@@ -195,7 +195,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     refund(a, "1950.00");
     service.applyPayoutWebhook(pendingId, true);
     assertTrue(reload(a).getClawbackRequired());
-    assertEquals("SUCCESS", reload(a).getStatus());
+    assertEquals(PayoutStatus.SUCCESS, reload(a).getStatus());
     assertLedgerMatches(sent.get(0), 2);
   }
 
@@ -266,7 +266,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
 
     verify(provider, times(1)).payout(any());
     assertEquals("REQUIRES_REVIEW", batch(a).getStatus());
-    assertEquals("REQUIRES_REVIEW", reload(a).getStatus());
+    assertEquals(PayoutStatus.REQUIRES_REVIEW, reload(a).getStatus());
   }
 
   @Test
@@ -290,7 +290,7 @@ class PayoutBatchIntegrationTest extends AbstractIntegrationTest {
     verify(provider, times(1)).payout(any());
     assertEquals("SUCCESS", batch(a).getStatus());
     assertEquals("provider-late-1", batch(a).getProviderPayoutId());
-    assertEquals("SUCCESS", reload(a).getStatus());
+    assertEquals(PayoutStatus.SUCCESS, reload(a).getStatus());
   }
 
   @Test

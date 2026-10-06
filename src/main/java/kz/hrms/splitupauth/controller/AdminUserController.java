@@ -296,16 +296,7 @@ public class AdminUserController {
     // Push the live-ban notification to the user's personal account topic.
     accountRealtimeService.publishBanned(u.getId(), u.getBanReason(), u.getBannedAt());
     // Persisted + email notification (the realtime push above is forced-logout only).
-    notificationService.notify(
-        u,
-        kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_BANNED,
-        "Аккаунт заблокирован",
-        "Ваш аккаунт был заблокирован."
-            + (request.getReason() == null || request.getReason().isBlank()
-                ? ""
-                : " Причина: " + request.getReason()),
-        null,
-        null);
+    notificationService.notify(u, kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_BANNED);
 
     return ResponseEntity.ok(buildDetailDto(u));
   }
@@ -342,13 +333,7 @@ public class AdminUserController {
 
     if (prev == UserStatus.BANNED) {
       accountRealtimeService.publishUnbanned(u.getId());
-      notificationService.notify(
-          u,
-          kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_UNBANNED,
-          "Аккаунт разблокирован",
-          "Ваш аккаунт снова активен. Добро пожаловать обратно!",
-          null,
-          null);
+      notificationService.notify(u, kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_UNBANNED);
     }
 
     return ResponseEntity.ok(buildDetailDto(u));
@@ -395,13 +380,7 @@ public class AdminUserController {
     if (!scheduled) {
       tokenRevocationService.revokeAllUserTokens(u);
       accountRealtimeService.publishBanned(id, u.getBanReason(), u.getBannedAt());
-      notificationService.notify(
-          u,
-          kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_BANNED,
-          "Аккаунт заблокирован",
-          "Ваш аккаунт был заблокирован. Причина: " + request.reason(),
-          null,
-          null);
+      notificationService.notify(u, kz.hrms.splitupauth.entity.NotificationType.ACCOUNT_BANNED);
     }
     return ResponseEntity.ok(buildDetailDto(u));
   }

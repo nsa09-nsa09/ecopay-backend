@@ -104,6 +104,7 @@
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
+
         <!-- AWS S3 (object storage for avatars / uploads). Version managed by the BOM below. -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

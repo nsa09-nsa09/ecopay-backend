@@ -247,14 +247,19 @@ public class RecurringChargeService {
     }
 
     PaymentGateway gateway = gatewayRegistry.defaultGateway();
+    // Charge from the CURRENT room price and commission tiers (same math as the first payment), so
+    // a
+    // price change applies from the next cycle instead of being frozen at the first payment.
+    PaymentService.ChargeBreakdown breakdown =
+        paymentService.currentChargeBreakdown(member.getRoom());
     PaymentIntent intent =
         paymentIntentRepository.save(
             PaymentIntent.builder()
                 .idempotencyKey(idempotencyKey(member, attemptNo))
                 .roomMember(member)
                 .user(member.getUser())
-                .amount(lastSuccess.getAmount())
-                .commissionAmount(lastSuccess.getCommissionAmount())
+                .amount(breakdown.amount())
+                .commissionAmount(breakdown.commission())
                 .status(PaymentIntentStatus.PENDING)
                 .providerName(gateway.providerName())
                 .saveCardRequested(false)
@@ -288,6 +293,11 @@ public class RecurringChargeService {
     }
     String event;
     if (resp.isSuccess() && resp.isCaptureConfirmed()) {
+      // Record the provider's acquiring fee (when reported) for net-revenue reporting.
+      if (resp.getProviderFeeAmount() != null) {
+        intent.setProviderFeeAmount(resp.getProviderFeeAmount());
+        paymentIntentRepository.save(intent);
+      }
       paymentService.finalizeSuccessfulPayment(
           intent.getId(),
           resp.getExternalPaymentId(),

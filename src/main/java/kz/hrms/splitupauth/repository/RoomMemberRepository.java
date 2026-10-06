@@ -35,6 +35,15 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
 
   List<RoomMember> findByStatusAndDeletedAtIsNull(MemberStatus status);
 
+  /**
+   * Bounded, stable-ordered page of member IDs in a status — for paged schedulers that must not
+   * load the whole ACTIVE set into memory.
+   */
+  @Query(
+      "select m.id from RoomMember m where m.status = :status and m.deletedAt is null order by m.id")
+  List<Long> findIdsByStatusAndDeletedAtIsNull(
+      @Param("status") MemberStatus status, Pageable pageable);
+
   @Query(
       "select m.id from RoomMember m where m.status = kz.hrms.splitupauth.entity.MemberStatus.PENDING "
           + "and m.deletedAt is null and m.ownerAccessConfirmedAt is not null "

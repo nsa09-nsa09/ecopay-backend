@@ -39,13 +39,7 @@ public class AccountRestrictionTransitions {
     userRepository.save(user);
     tokenRevocationService.revokeAllUserTokens(user);
     realtimeService.publishBanned(userId, user.getBanReason(), now);
-    notificationService.notify(
-        user,
-        NotificationType.ACCOUNT_BANNED,
-        "Аккаунт заблокирован",
-        "Ваш аккаунт был заблокирован. Причина: " + user.getBanReason(),
-        null,
-        null);
+    notificationService.notify(user, NotificationType.ACCOUNT_BANNED);
     audit(user, AdminActionType.USER_RESTRICTION_ACTIVATED);
   }
 
@@ -68,13 +62,7 @@ public class AccountRestrictionTransitions {
     userRepository.save(user);
     if (wasBanned) {
       realtimeService.publishUnbanned(user.getId());
-      notificationService.notify(
-          user,
-          NotificationType.ACCOUNT_UNBANNED,
-          "Аккаунт разблокирован",
-          "Срок блокировки истёк.",
-          null,
-          null);
+      notificationService.notify(user, NotificationType.ACCOUNT_UNBANNED);
     }
     audit(user, AdminActionType.USER_RESTRICTION_EXPIRED);
   }

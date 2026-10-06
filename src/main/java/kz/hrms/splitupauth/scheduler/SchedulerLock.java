@@ -32,6 +32,43 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class SchedulerLock {
 
+  /**
+   * Named jobs with their lease. Kept for call sites that prefer a typed key; the lock itself is
+   * the {@code scheduler_locks} lease row (advisory locks are not available on CockroachDB, where a
+   * {@code pg_try_advisory_lock} call fails and would silently skip every run).
+   */
+  public enum Key {
+    ACCESS_CONFIRMATION("access-confirmation", Duration.ofMinutes(5)),
+    ACCOUNT_RESTRICTION("account-restrictions", Duration.ofMinutes(5)),
+    CLEANUP_EXPIRED_TOKENS("cleanup-expired-tokens", Duration.ofMinutes(30)),
+    CLEANUP_OLD_LOGIN_ATTEMPTS("cleanup-login-attempts", Duration.ofMinutes(30)),
+    CLEANUP_STAFF_2FA("cleanup-staff-2fa", Duration.ofMinutes(30)),
+    EXPIRE_STALE_PAYMENT_INTENTS("expire-stale-payment-intents", Duration.ofMinutes(10)),
+    FREEDOM_WEBHOOK_RETRY("freedom-webhook-retry", Duration.ofMinutes(5)),
+    FX_REFRESH_INTRADAY("fx-refresh-intraday", Duration.ofMinutes(10)),
+    FX_REFRESH_DAILY("fx-refresh-daily", Duration.ofMinutes(10)),
+    PENDING_MEMBERSHIP_ESCALATION("pending-membership-escalation", Duration.ofMinutes(10)),
+    PRICE_WATCH("price-watch", Duration.ofMinutes(30)),
+    ROOM_VERIFICATION("room-verification", Duration.ofMinutes(5)),
+    PAYOUT_DISPATCH("payout-dispatch", Duration.ofMinutes(15)),
+    REFUND_DISPATCH("refund-dispatch", Duration.ofMinutes(15)),
+    RECURRING_CHARGES("recurring-charges", Duration.ofHours(3)),
+    /** Reserved for the single-runner integration test; never used by a real job. */
+    TEST_ONLY("test-only", Duration.ofMinutes(1));
+
+    private final String jobName;
+    private final Duration lockAtMostFor;
+
+    Key(String jobName, Duration lockAtMostFor) {
+      this.jobName = jobName;
+      this.lockAtMostFor = lockAtMostFor;
+    }
+
+    public String jobName() {
+      return jobName;
+    }
+  }
+
   private static final String ACQUIRE =
       "INSERT INTO scheduler_locks (name, locked_until, locked_at, locked_by) VALUES (?, ?, ?, ?) "
           + "ON CONFLICT (name) DO UPDATE SET locked_until = EXCLUDED.locked_until, "
@@ -62,6 +99,10 @@ public class SchedulerLock {
    * @param lockAtMostFor upper bound for a run; must exceed the job's worst-case duration so a slow
    *     but alive run is not overlapped. A crashed holder blocks the job for at most this long.
    */
+  public boolean runExclusive(Key key, Runnable task) {
+    return runExclusive(key.jobName, key.lockAtMostFor, task);
+  }
+
   public boolean runExclusive(String name, Duration lockAtMostFor, Runnable task) {
     LocalDateTime now = LocalDateTime.now(clock);
     boolean acquired;

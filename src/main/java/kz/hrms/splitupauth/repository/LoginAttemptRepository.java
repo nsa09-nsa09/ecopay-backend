@@ -13,10 +13,11 @@ import org.springframework.stereotype.Repository;
 public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long> {
   List<LoginAttempt> findByEmailAndAttemptTimeAfter(String email, LocalDateTime afterTime);
 
+  /** Indexed COUNT of failed attempts for one identifier in the window (idx_email_attempt). */
   long countByEmailAndSuccessfulFalseAndAttemptTimeAfter(String email, LocalDateTime afterTime);
 
-  long countByIpAddressAndSuccessfulFalseAndAttemptTimeAfter(
-      String ipAddress, LocalDateTime afterTime);
+  /** Indexed COUNT of failed attempts from one source IP in the window (idx_login_attempt_ip). */
+  long countByIpAndSuccessfulFalseAndAttemptTimeAfter(String ip, LocalDateTime afterTime);
 
   /** Account deletion: keeps the security counters but drops the login identifier. */
   @Modifying

@@ -73,10 +73,13 @@ public class Payout {
   @Builder.Default
   private String currency = "KZT";
 
-  /** PENDING | PROCESSING | SUCCESS | FAILED | PENDING_METHOD | CANCELED */
+  /**
+   * Lifecycle status. Stored as text (the enum name) via the converter — see {@link PayoutStatus}.
+   */
+  @Convert(converter = kz.hrms.splitupauth.entity.converter.PayoutStatusConverter.class)
   @Column(nullable = false, length = 20)
   @Builder.Default
-  private String status = "PENDING";
+  private PayoutStatus status = PayoutStatus.PENDING;
 
   @Column(name = "provider_payout_id", length = 150)
   private String providerPayoutId;
@@ -128,7 +131,7 @@ public class Payout {
   @PrePersist
   protected void onCreate() {
     if (createdAt == null) createdAt = LocalDateTime.now();
-    if (status == null) status = "PENDING";
+    if (status == null) status = PayoutStatus.PENDING;
     if (currency == null) currency = "KZT";
     if (retryCount == null) retryCount = 0;
     if (originalAmount == null) originalAmount = amount;

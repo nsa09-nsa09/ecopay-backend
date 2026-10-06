@@ -25,7 +25,7 @@ public class PayoutDto {
         .id(p.getId())
         .amount(p.getAmount())
         .currency(p.getCurrency())
-        .status(p.getStatus())
+        .status(p.getStatus() == null ? null : p.getStatus().name())
         .providerPayoutId(p.getProviderPayoutId())
         .failureReason(p.getFailureReason())
         .roomId(p.getRoom() == null ? null : p.getRoom().getId())

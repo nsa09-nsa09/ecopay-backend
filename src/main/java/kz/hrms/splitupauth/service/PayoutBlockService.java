@@ -14,8 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PayoutBlockService {
 
-  private static final List<String> BLOCKABLE_STATUSES =
-      List.of("PENDING", "PENDING_METHOD", "FROZEN");
+  private static final List<PayoutStatus> BLOCKABLE_STATUSES =
+      List.of(PayoutStatus.PENDING, PayoutStatus.PENDING_METHOD, PayoutStatus.FROZEN);
 
   private final PayoutRepository payoutRepository;
   private final PayoutBlockRepository payoutBlockRepository;
@@ -61,12 +61,13 @@ public class PayoutBlockService {
     payoutBlockRepository.saveAndFlush(block);
 
     if (!payoutBlockRepository.existsByPayoutAndStatus(locked, PayoutBlockStatus.ACTIVE)
-        && "FROZEN".equals(locked.getStatus())) {
+        && locked.getStatus() == PayoutStatus.FROZEN) {
       if (locked.getPayableAmount() != null
           && locked.getPayableAmount().compareTo(BigDecimal.ZERO) <= 0) {
-        locked.setStatus("REVERSED");
+        locked.setStatus(PayoutStatus.REVERSED);
       } else {
-        locked.setStatus(locked.getPayoutMethod() == null ? "PENDING_METHOD" : "PENDING");
+        locked.setStatus(
+            locked.getPayoutMethod() == null ? PayoutStatus.PENDING_METHOD : PayoutStatus.PENDING);
       }
       locked.setFailureReason(null);
       payoutRepository.save(locked);
@@ -88,8 +89,9 @@ public class PayoutBlockService {
             .reasonCode(reasonCode)
             .status(PayoutBlockStatus.ACTIVE)
             .build());
-    if ("PENDING".equals(payout.getStatus()) || "PENDING_METHOD".equals(payout.getStatus())) {
-      payout.setStatus("FROZEN");
+    if (payout.getStatus() == PayoutStatus.PENDING
+        || payout.getStatus() == PayoutStatus.PENDING_METHOD) {
+      payout.setStatus(PayoutStatus.FROZEN);
       payout.setFailureReason("Blocked: " + reasonCode);
       payoutRepository.save(payout);
     }
