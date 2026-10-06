@@ -7,7 +7,7 @@ import lombok.Data;
 @Data
 public class CreateSupportMessageRequest {
 
-    @NotBlank(message = "Message is required")
-    @Size(max = 5000, message = "Message must be at most 5000 characters")
-    private String message;
+  @NotBlank(message = "Message is required")
+  @Size(max = 5000, message = "Message must be at most 5000 characters")
+  private String message;
 }

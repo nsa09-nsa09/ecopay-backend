@@ -1,5 +1,10 @@
 package kz.hrms.splitupauth.service;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
@@ -7,149 +12,420 @@ import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.SavedCard;
 import kz.hrms.splitupauth.entity.SavedCardStatus;
+import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeResponse;
+import kz.hrms.splitupauth.payment.gateway.GatewayRequestNotSentException;
+import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
-import lombok.RequiredArgsConstructor;
+import kz.hrms.splitupauth.scheduler.SchedulerLock;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.List;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Daily scheduler for monthly subscription auto-charges.
+ * Monthly auto-renewal with a saved purchase profile.
  *
- * Picks ACTIVE members in MONTHLY rooms whose next billing date is within
- * the lead window, attempts a recurring charge through the saved default
- * card, and creates a new PaymentIntent.
+ * <p><b>Production status:</b> disabled for the MVP launch — {@code ProductionStartupGuard} refuses
+ * {@code app.recurring.enabled=true} under the prod profile until FreedomPay confirms the recurring
+ * contract (make_recurring_payment semantics, pg_recurring_lifetime limits, callback delivery) for
+ * this merchant. The flow below is nevertheless kept correct for dev/stage:
+ *
+ * <ul>
+ *   <li>members are scanned in bounded id-ordered batches, never all at once;
+ *   <li>each attempt has a deterministic idempotency key per billing period and attempt number;
+ *   <li>the provider call happens OUTSIDE any database transaction;
+ *   <li>a synchronous provider "ok" is acceptance, not captured money: the intent stays PENDING and
+ *       is settled by the signed result callback or by status reconciliation, and the billing
+ *       period only advances once a captured payment exists;
+ *   <li>an ambiguous answer (timeout/unsigned) leaves the intent UNKNOWN for reconciliation and is
+ *       never retried blindly; an open intent blocks any further attempt for that member;
+ *   <li>retries are capped ({@value #MAX_RETRY_COUNT}) and spaced one day apart.
+ * </ul>
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class RecurringChargeService {
 
-    private final RoomMemberRepository roomMemberRepository;
-    private final PaymentIntentRepository paymentIntentRepository;
-    private final SavedCardRepository savedCardRepository;
-    private final PaymentGatewayRegistry gatewayRegistry;
-    private final PaymentEventLogger eventLogger;
-    private final PaymentService paymentService;
+  private static final long LEAD_DAYS = 2;
+  static final int MAX_RETRY_COUNT = 3;
+  private static final int BATCH_SIZE = 200;
 
-    /** Runs every day at 03:30 server time. */
-    @Scheduled(cron = "0 30 3 * * *")
-    public void runDailyAutoCharges() {
-        log.info("RecurringChargeService: starting daily run");
-        List<RoomMember> activeMembers = roomMemberRepository
-                .findByStatusAndDeletedAtIsNull(MemberStatus.ACTIVE);
-        for (RoomMember member : activeMembers) {
-            try {
-                tryAutoCharge(member.getId());
-            } catch (Exception ex) {
-                log.warn("Auto-charge failed for member {}: {}", member.getId(), ex.getMessage());
-            }
+  private static final List<PaymentIntentStatus> OPEN_STATUSES =
+      List.of(
+          PaymentIntentStatus.PENDING,
+          PaymentIntentStatus.UNKNOWN,
+          PaymentIntentStatus.RECONCILING);
+
+  private static final List<PaymentIntentStatus> CAPTURED_STATUSES =
+      List.of(
+          PaymentIntentStatus.SUCCESS,
+          PaymentIntentStatus.REFUND_REQUIRED,
+          PaymentIntentStatus.REFUND_PENDING,
+          PaymentIntentStatus.REFUNDED,
+          PaymentIntentStatus.REQUIRES_REVIEW,
+          PaymentIntentStatus.CAPTURE_ANOMALY);
+
+  private final RoomMemberRepository roomMemberRepository;
+  private final PaymentIntentRepository paymentIntentRepository;
+  private final SavedCardRepository savedCardRepository;
+  private final PaymentGatewayRegistry gatewayRegistry;
+  private final PaymentEventLogger eventLogger;
+  private final PaymentService paymentService;
+  private final LiveMoneyGuard liveMoneyGuard;
+  private final SchedulerLock schedulerLock;
+  private final Clock clock;
+  private final TransactionTemplate tx;
+
+  @Value("${app.recurring.enabled:false}")
+  private boolean recurringEnabled;
+
+  public RecurringChargeService(
+      RoomMemberRepository roomMemberRepository,
+      PaymentIntentRepository paymentIntentRepository,
+      SavedCardRepository savedCardRepository,
+      PaymentGatewayRegistry gatewayRegistry,
+      PaymentEventLogger eventLogger,
+      PaymentService paymentService,
+      LiveMoneyGuard liveMoneyGuard,
+      SchedulerLock schedulerLock,
+      Clock clock,
+      PlatformTransactionManager transactionManager) {
+    this.roomMemberRepository = roomMemberRepository;
+    this.paymentIntentRepository = paymentIntentRepository;
+    this.savedCardRepository = savedCardRepository;
+    this.gatewayRegistry = gatewayRegistry;
+    this.eventLogger = eventLogger;
+    this.paymentService = paymentService;
+    this.liveMoneyGuard = liveMoneyGuard;
+    this.schedulerLock = schedulerLock;
+    this.clock = clock;
+    this.tx = new TransactionTemplate(transactionManager);
+  }
+
+  /** Runs every day at 03:30 server time, on one replica at a time. */
+  @Scheduled(cron = "0 30 3 * * *")
+  public void runDailyAutoCharges() {
+    if (!recurringEnabled) {
+      log.info("RecurringChargeService: disabled, skipping daily run");
+      return;
+    }
+    schedulerLock.runExclusive("recurring-charges", Duration.ofHours(3), this::runAllBatches);
+  }
+
+  /** Scans ACTIVE members in id order, {@value #BATCH_SIZE} at a time. */
+  public int runAllBatches() {
+    long lastId = 0;
+    int scanned = 0;
+    while (true) {
+      long cursor = lastId;
+      List<Long> ids =
+          tx.execute(
+              status ->
+                  roomMemberRepository.findActiveIdsAfter(
+                      MemberStatus.ACTIVE, cursor, PageRequest.of(0, BATCH_SIZE)));
+      if (ids == null || ids.isEmpty()) {
+        break;
+      }
+      for (Long memberId : ids) {
+        try {
+          tryAutoCharge(memberId);
+        } catch (RuntimeException ex) {
+          log.warn("Auto-charge failed for member {}: {}", memberId, ex.getClass().getSimpleName());
         }
-        log.info("RecurringChargeService: done, scanned {} active members", activeMembers.size());
+      }
+      scanned += ids.size();
+      lastId = ids.get(ids.size() - 1);
+    }
+    log.info("RecurringChargeService: done, scanned {} active members", scanned);
+    return scanned;
+  }
+
+  /**
+   * One member: decide and record the attempt (transaction 1), call the provider without holding
+   * any lock, then record the provider's answer (transaction 2).
+   */
+  public void tryAutoCharge(Long memberId) {
+    if (!recurringEnabled) {
+      return;
+    }
+    try {
+      liveMoneyGuard.requireEnabledForNewCharge();
+    } catch (RuntimeException disabled) {
+      return;
+    }
+    Attempt attempt = tx.execute(status -> prepareAttempt(memberId));
+    if (attempt == null) {
+      return;
     }
 
-    @Transactional
-    public void tryAutoCharge(Long memberId) {
-        RoomMember member = roomMemberRepository.findById(memberId).orElse(null);
-        if (member == null || member.getStatus() != MemberStatus.ACTIVE) return;
+    GatewayChargeResponse resp;
+    try {
+      resp = attempt.gateway().chargeWithToken(attempt.request(), attempt.cardToken());
+    } catch (GatewayRequestNotSentException ex) {
+      tx.executeWithoutResult(status -> recordNotSent(attempt, ex));
+      return;
+    } catch (RuntimeException ex) {
+      tx.executeWithoutResult(status -> recordAmbiguous(attempt, ex));
+      return;
+    }
+    tx.executeWithoutResult(status -> recordResponse(attempt, resp));
+  }
 
-        var room = member.getRoom();
-        if (room == null) return;
-        if (room.getPeriodType() != PeriodType.MONTHLY) return;
+  private Attempt prepareAttempt(Long memberId) {
+    RoomMember member = roomMemberRepository.findWithLockById(memberId).orElse(null);
+    if (member == null
+        || member.getStatus() != MemberStatus.ACTIVE
+        || member.getDeletedAt() != null
+        || member.getUser() == null
+        || member.getUser().getDeletedAt() != null
+        || member.getUser().getStatus() != UserStatus.ACTIVE
+        || member.getRoom() == null
+        || member.getRoom().getPeriodType() != PeriodType.MONTHLY) {
+      return null;
+    }
 
-        // Find latest successful charge — assume it covers a 30-day period.
-        PaymentIntent lastSuccess = paymentIntentRepository
-                .findFirstByRoomMemberOrderByCreatedAtDesc(member)
-                .filter(pi -> pi.getStatus() == PaymentIntentStatus.SUCCESS)
-                .orElse(null);
-        if (lastSuccess == null) return;
+    PaymentIntent lastSuccess =
+        paymentIntentRepository
+            .findFirstByRoomMemberAndStatusOrderByCreatedAtDesc(member, PaymentIntentStatus.SUCCESS)
+            .orElse(null);
+    if (lastSuccess == null) {
+      return null;
+    }
 
-        LocalDateTime nextBilling = lastSuccess.getCreatedAt().plusDays(30);
-        LocalDateTime now = LocalDateTime.now();
-        // Charge 1-2 days before the next billing date.
-        if (now.isBefore(nextBilling.minusDays(2)) || now.isAfter(nextBilling)) return;
+    LocalDateTime now = LocalDateTime.now(clock);
+    initializeBillingSchedule(member, lastSuccess, now);
 
-        SavedCard card = savedCardRepository
-                .findByUserAndIsDefaultTrueAndStatus(member.getUser(), SavedCardStatus.ACTIVE)
-                .orElse(null);
-        if (card == null) {
-            log.info("Member {} has no default saved card, skipping auto-charge", memberId);
-            return;
-        }
+    // Settle the current period first: a captured attempt advances it, a definitively failed one
+    // consumes a retry. An open attempt blocks everything until the provider answers.
+    int attemptNo = member.getRecurringRetryCount() == null ? 0 : member.getRecurringRetryCount();
+    PaymentIntent current =
+        paymentIntentRepository
+            .findByIdempotencyKey(idempotencyKey(member, attemptNo))
+            .orElse(null);
+    if (current != null) {
+      if (CAPTURED_STATUSES.contains(current.getStatus())) {
+        advancePeriod(member);
+        roomMemberRepository.save(member);
+        return null;
+      }
+      if (OPEN_STATUSES.contains(current.getStatus())) {
+        roomMemberRepository.save(member);
+        return null;
+      }
+      scheduleRetry(member, now);
+      roomMemberRepository.save(member);
+      return null;
+    }
 
-        String idempotencyKey = "recurring-" + memberId + "-" + nextBilling.toLocalDate();
-        if (paymentIntentRepository.findByIdempotencyKey(idempotencyKey).isPresent()) {
-            return; // already attempted this period
-        }
+    if (now.isBefore(member.getNextBillingAt().minusDays(LEAD_DAYS))
+        || (member.getRecurringNextRetryAt() != null
+            && now.isBefore(member.getRecurringNextRetryAt()))
+        || attemptNo >= MAX_RETRY_COUNT
+        || paymentIntentRepository
+            .findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(memberId, OPEN_STATUSES)
+            .isPresent()) {
+      roomMemberRepository.save(member);
+      return null;
+    }
 
-        var gateway = gatewayRegistry.defaultGateway();
-        PaymentIntent intent = PaymentIntent.builder()
-                .idempotencyKey(idempotencyKey)
+    SavedCard card =
+        savedCardRepository
+            .findByUserAndIsDefaultTrueAndStatus(member.getUser(), SavedCardStatus.ACTIVE)
+            .orElse(null);
+    if (card == null) {
+      log.info("Member {} has no default saved card, skipping auto-charge", memberId);
+      roomMemberRepository.save(member);
+      return null;
+    }
+
+    PaymentGateway gateway = gatewayRegistry.defaultGateway();
+    // Charge from the CURRENT room price and commission tiers (same math as the first payment), so
+    // a
+    // price change applies from the next cycle instead of being frozen at the first payment.
+    PaymentService.ChargeBreakdown breakdown =
+        paymentService.currentChargeBreakdown(member.getRoom());
+    PaymentIntent intent =
+        paymentIntentRepository.save(
+            PaymentIntent.builder()
+                .idempotencyKey(idempotencyKey(member, attemptNo))
                 .roomMember(member)
                 .user(member.getUser())
-                .amount(lastSuccess.getAmount())
+                .amount(breakdown.amount())
+                .commissionAmount(breakdown.commission())
                 .status(PaymentIntentStatus.PENDING)
                 .providerName(gateway.providerName())
                 .saveCardRequested(false)
                 .savedCard(card)
                 .expiresAt(now.plusMinutes(30))
-                .build();
-        intent = paymentIntentRepository.save(intent);
+                .build());
+    roomMemberRepository.save(member);
 
-        try {
-            GatewayChargeResponse resp = gateway.chargeWithToken(
-                    GatewayChargeRequest.builder()
-                            .intentId(intent.getId())
-                            .idempotencyKey(intent.getIdempotencyKey())
-                            .amount(intent.getAmount())
-                            .currency("KZT")
-                            .description("Ecopay recurring " + member.getRoom().getTitle())
-                            .userEmail(member.getUser().getEmail())
-                            .userPhone(member.getUser().getPhone())
-                            .build(),
-                    card.getProviderToken()
-            );
+    GatewayChargeRequest request =
+        GatewayChargeRequest.builder()
+            .intentId(intent.getId())
+            .roomMemberId(member.getId())
+            .roomId(member.getRoom().getId())
+            .idempotencyKey(intent.getIdempotencyKey())
+            .amount(intent.getAmount())
+            .currency("KZT")
+            .description("EcoPay recurring " + member.getRoom().getTitle())
+            .userEmail(member.getUser().getEmail())
+            .userPhone(member.getUser().getPhone())
+            .build();
+    return new Attempt(
+        memberId, intent.getId(), card.getId(), card.getProviderToken(), gateway, request);
+  }
 
-            if (resp.isSuccess()) {
-                intent.setStatus(PaymentIntentStatus.SUCCESS);
-                intent.setExternalPaymentId(resp.getExternalPaymentId());
-                paymentIntentRepository.save(intent);
-                // Record the transaction + create the owner payout for this renewal
-                // (previously missing → owner was never paid for recurring periods).
-                paymentService.applySuccessfulCharge(intent, null, null);
-            } else {
-                intent.setStatus(PaymentIntentStatus.FAILED);
-                intent.setFailureCode(resp.getFailureCode());
-                intent.setFailureMessage(resp.getFailureMessage());
-                if ("EXPIRED_CARD".equalsIgnoreCase(resp.getFailureCode())
-                        || (resp.getFailureMessage() != null
-                                && resp.getFailureMessage().toLowerCase().contains("expired"))) {
-                    card.setStatus(SavedCardStatus.EXPIRED);
-                    savedCardRepository.save(card);
-                }
-            }
-            paymentIntentRepository.save(intent);
-
-            eventLogger.log("INTENT", intent.getId(),
-                    intent.getStatus() == PaymentIntentStatus.SUCCESS
-                            ? "RECURRING_SUCCESS" : "RECURRING_FAILED",
-                    "PENDING", intent.getStatus().name(),
-                    null, null, idempotencyKey,
-                    java.util.Map.of("memberId", String.valueOf(memberId)));
-        } catch (Exception ex) {
-            log.error("Recurring charge call failed for member {}: {}", memberId, ex.getMessage());
-            intent.setStatus(PaymentIntentStatus.FAILED);
-            intent.setFailureMessage(ex.getMessage());
-            paymentIntentRepository.save(intent);
-        }
+  private void recordResponse(Attempt attempt, GatewayChargeResponse resp) {
+    PaymentIntent intent =
+        paymentIntentRepository.findWithLockById(attempt.intentId()).orElse(null);
+    RoomMember member = roomMemberRepository.findWithLockById(attempt.memberId()).orElse(null);
+    if (intent == null || member == null) {
+      return;
     }
+    String event;
+    if (resp.isSuccess() && resp.isCaptureConfirmed()) {
+      // Record the provider's acquiring fee (when reported) for net-revenue reporting.
+      if (resp.getProviderFeeAmount() != null) {
+        intent.setProviderFeeAmount(resp.getProviderFeeAmount());
+        paymentIntentRepository.save(intent);
+      }
+      paymentService.finalizeSuccessfulPayment(
+          intent.getId(),
+          resp.getExternalPaymentId(),
+          resp.getProviderStatusCode(),
+          null,
+          null,
+          null,
+          null,
+          "RECURRING_SUCCESS");
+      advancePeriod(member);
+      event = "RECURRING_SUCCESS";
+    } else if (resp.isSuccess()) {
+      // Accepted, not yet captured: wait for the callback / status reconciliation.
+      if (intent.getStatus() == PaymentIntentStatus.PENDING) {
+        intent.setExternalPaymentId(resp.getExternalPaymentId());
+        intent.setProviderStatusCode(resp.getProviderStatusCode());
+        paymentIntentRepository.save(intent);
+      }
+      event = "RECURRING_ACCEPTED";
+    } else {
+      intent.setStatus(PaymentIntentStatus.FAILED);
+      intent.setFailureCode(resp.getFailureCode());
+      intent.setFailureMessage(resp.getFailureMessage());
+      paymentIntentRepository.save(intent);
+      scheduleRetry(member, LocalDateTime.now(clock));
+      if ("EXPIRED_CARD".equalsIgnoreCase(resp.getFailureCode())
+          || (resp.getFailureMessage() != null
+              && resp.getFailureMessage().toLowerCase().contains("expired"))) {
+        savedCardRepository
+            .findById(attempt.cardId())
+            .ifPresent(
+                card -> {
+                  card.setStatus(SavedCardStatus.EXPIRED);
+                  savedCardRepository.save(card);
+                });
+      }
+      event = "RECURRING_FAILED";
+    }
+    roomMemberRepository.save(member);
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        event,
+        "PENDING",
+        intent.getStatus().name(),
+        null,
+        null,
+        intent.getIdempotencyKey(),
+        Map.of("memberId", String.valueOf(attempt.memberId())));
+  }
+
+  private void recordNotSent(Attempt attempt, RuntimeException ex) {
+    PaymentIntent intent =
+        paymentIntentRepository.findWithLockById(attempt.intentId()).orElse(null);
+    RoomMember member = roomMemberRepository.findWithLockById(attempt.memberId()).orElse(null);
+    if (intent == null || member == null) {
+      return;
+    }
+    intent.setStatus(PaymentIntentStatus.FAILED);
+    intent.setFailureCode("GATEWAY_NOT_SENT");
+    intent.setFailureMessage(ex.getClass().getSimpleName());
+    paymentIntentRepository.save(intent);
+    scheduleRetry(member, LocalDateTime.now(clock));
+    roomMemberRepository.save(member);
+  }
+
+  private void recordAmbiguous(Attempt attempt, RuntimeException ex) {
+    log.error(
+        "Recurring charge for member {} has an ambiguous outcome: {}",
+        attempt.memberId(),
+        ex.getClass().getSimpleName());
+    PaymentIntent intent =
+        paymentIntentRepository.findWithLockById(attempt.intentId()).orElse(null);
+    if (intent == null || intent.getStatus() != PaymentIntentStatus.PENDING) {
+      return;
+    }
+    intent.setStatus(PaymentIntentStatus.UNKNOWN);
+    intent.setFailureCode("GATEWAY_INIT_UNKNOWN");
+    intent.setFailureMessage(ex.getClass().getSimpleName());
+    paymentIntentRepository.save(intent);
+  }
+
+  private static String idempotencyKey(RoomMember member, int attempt) {
+    return "recurring-"
+        + member.getId()
+        + "-"
+        + member.getNextBillingAt().toLocalDate()
+        + "-attempt-"
+        + attempt;
+  }
+
+  private static void advancePeriod(RoomMember member) {
+    member.setBillingPeriodStart(member.getNextBillingAt());
+    member.setNextBillingAt(member.getNextBillingAt().plusMonths(1));
+    member.setRecurringRetryCount(0);
+    member.setRecurringNextRetryAt(null);
+  }
+
+  private void initializeBillingSchedule(
+      RoomMember member, PaymentIntent lastSuccess, LocalDateTime now) {
+    LocalDateTime anchor = member.getBillingAnchorAt();
+    if (anchor == null) {
+      anchor = lastSuccess.getCreatedAt() == null ? now : lastSuccess.getCreatedAt();
+      member.setBillingAnchorAt(anchor);
+    }
+    if (member.getBillingPeriodStart() == null) {
+      member.setBillingPeriodStart(anchor);
+    }
+    if (member.getNextBillingAt() == null) {
+      member.setNextBillingAt(member.getBillingPeriodStart().plusMonths(1));
+    }
+    if (member.getRecurringRetryCount() == null) {
+      member.setRecurringRetryCount(0);
+    }
+  }
+
+  private void scheduleRetry(RoomMember member, LocalDateTime now) {
+    int nextRetryCount =
+        (member.getRecurringRetryCount() == null ? 0 : member.getRecurringRetryCount()) + 1;
+    member.setRecurringRetryCount(nextRetryCount);
+    member.setRecurringNextRetryAt(nextRetryCount >= MAX_RETRY_COUNT ? null : now.plusDays(1));
+  }
+
+  private record Attempt(
+      Long memberId,
+      Long intentId,
+      Long cardId,
+      String cardToken,
+      PaymentGateway gateway,
+      GatewayChargeRequest request) {}
 }

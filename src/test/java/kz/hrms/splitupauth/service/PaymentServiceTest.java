@@ -1,195 +1,310 @@
 package kz.hrms.splitupauth.service;
 
-import kz.hrms.splitupauth.entity.PaymentIntent;
-import kz.hrms.splitupauth.entity.PaymentIntentStatus;
-import kz.hrms.splitupauth.entity.Room;
-import kz.hrms.splitupauth.entity.RoomMember;
-import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
-import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
-import kz.hrms.splitupauth.repository.PaymentIntentRepository;
-import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
-import kz.hrms.splitupauth.repository.RoomMemberRepository;
-import kz.hrms.splitupauth.repository.SavedCardRepository;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.math.BigDecimal;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.util.Optional;
+import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.PaymentIntent;
+import kz.hrms.splitupauth.entity.PaymentIntentStatus;
+import kz.hrms.splitupauth.entity.RefundStatus;
+import kz.hrms.splitupauth.entity.RefundTransaction;
+import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomMember;
+import kz.hrms.splitupauth.entity.RoomStatus;
+import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
+import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
+import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PaymentReservationRepository;
+import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.RoomRepository;
+import kz.hrms.splitupauth.repository.SavedCardRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+
 @ExtendWith(MockitoExtension.class)
 class PaymentServiceTest {
 
-    @Mock private PaymentIntentRepository paymentIntentRepository;
-    @Mock private PaymentTransactionRepository paymentTransactionRepository;
-    @Mock private RoomMemberRepository roomMemberRepository;
-    @Mock private SavedCardRepository savedCardRepository;
-    @Mock private RoomMemberService roomMemberService;
-    @Mock private PaymentGatewayRegistry gatewayRegistry;
-    @Mock private SavedCardService savedCardService;
-    @Mock private PaymentEventLogger eventLogger;
-    @Mock private PayoutService payoutService;
-    @Mock private RefundService refundService;
-    @Mock private RoomEventLogger roomEventLogger;
+  @Mock private PaymentIntentRepository paymentIntentRepository;
+  @Mock private PaymentReservationRepository paymentReservationRepository;
+  @Mock private PaymentTransactionRepository paymentTransactionRepository;
+  @Mock private RoomMemberRepository roomMemberRepository;
+  @Mock private RoomRepository roomRepository;
+  @Mock private SavedCardRepository savedCardRepository;
+  @Mock private RoomMemberService roomMemberService;
+  @Mock private PaymentGatewayRegistry gatewayRegistry;
+  @Mock private SavedCardService savedCardService;
+  @Mock private PaymentEventLogger eventLogger;
+  @Mock private PayoutService payoutService;
+  @Mock private RefundService refundService;
+  @Mock private RoomEventLogger roomEventLogger;
+  @Mock private NotificationService notificationService;
+  @Mock private CommissionCalculator commissionCalculator;
+  @Mock private MoneyLedgerService moneyLedgerService;
+  @Mock private LiveMoneyGuard liveMoneyGuard;
+  @Mock private PlatformTransactionManager transactionManager;
 
-    private PaymentService paymentService;
+  private PaymentService paymentService;
 
-    @BeforeEach
-    void setUp() {
-        paymentService = new PaymentService(
-                paymentIntentRepository,
-                paymentTransactionRepository,
-                roomMemberRepository,
-                savedCardRepository,
-                roomMemberService,
-                gatewayRegistry,
-                savedCardService,
-                eventLogger,
-                payoutService,
-                refundService,
-                roomEventLogger
-        );
-    }
+  @BeforeEach
+  void setUp() {
+    paymentService =
+        new PaymentService(
+            paymentIntentRepository,
+            paymentReservationRepository,
+            paymentTransactionRepository,
+            roomMemberRepository,
+            roomRepository,
+            savedCardRepository,
+            roomMemberService,
+            gatewayRegistry,
+            savedCardService,
+            eventLogger,
+            payoutService,
+            refundService,
+            roomEventLogger,
+            notificationService,
+            commissionCalculator,
+            moneyLedgerService,
+            liveMoneyGuard,
+            Clock.systemUTC(),
+            transactionManager);
+  }
 
-    private PaymentIntent pendingIntent(BigDecimal amount) {
-        User user = User.builder().id(1L).email("m@test.kz").build();
-        Room room = Room.builder().id(2L).build();
-        RoomMember member = RoomMember.builder().id(3L).user(user).room(room).build();
-        return PaymentIntent.builder()
-                .id(100L)
-                .idempotencyKey("k-100")
-                .roomMember(member)
-                .user(user)
-                .amount(amount)
-                .status(PaymentIntentStatus.PENDING)
-                .providerName("mock")
-                .build();
-    }
+  private PaymentIntent pendingIntent(BigDecimal amount) {
+    User user = User.builder().id(1L).email("m@test.kz").build();
+    Room room = Room.builder().id(2L).maxMembers(2).status(RoomStatus.OPEN).build();
+    RoomMember member =
+        RoomMember.builder().id(3L).user(user).room(room).status(MemberStatus.APPLIED).build();
+    return PaymentIntent.builder()
+        .id(100L)
+        .idempotencyKey("k-100")
+        .roomMember(member)
+        .user(user)
+        .amount(amount)
+        .status(PaymentIntentStatus.PENDING)
+        .providerName("mock")
+        .build();
+  }
 
-    @Test
-    void webhookSuccessWithMatchingAmount_marksPaidAndCreatesPayout() {
-        PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
-        when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
-        when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+  private void stubFreeCapacity(PaymentIntent intent) {
+    when(roomMemberRepository.findWithLockById(intent.getRoomMember().getId()))
+        .thenReturn(Optional.of(intent.getRoomMember()));
+    when(roomRepository.findByIdForUpdate(intent.getRoomMember().getRoom().getId()))
+        .thenReturn(Optional.of(intent.getRoomMember().getRoom()));
+    when(paymentTransactionRepository.findFirstByPaymentIntentAndTypeAndStatus(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(paymentTransactionRepository.save(any()))
+        .thenAnswer(
+            i -> {
+              var tx = (kz.hrms.splitupauth.entity.PaymentTransaction) i.getArgument(0);
+              tx.setId(200L);
+              return tx;
+            });
+  }
 
-        GatewayWebhookEvent event = GatewayWebhookEvent.builder()
-                .intentId(100L)
-                .resultStatus("SUCCESS")
-                .amount(new BigDecimal("1822.50"))
-                .currency("KZT")
-                .externalPaymentId("EXT-1")
-                .providerRequestId("req-1")
-                .build();
+  @Test
+  void webhookSuccessWithMatchingAmount_marksPaidAndCreatesPayout() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    stubFreeCapacity(intent);
 
-        paymentService.applyWebhookEvent(event);
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("SUCCESS")
+            .amount(new BigDecimal("1822.50"))
+            .currency("KZT")
+            .externalPaymentId("EXT-1")
+            .providerRequestId("req-1")
+            .build();
 
-        assertEquals(PaymentIntentStatus.SUCCESS, intent.getStatus());
-        verify(roomMemberService, times(1)).markMembershipAsPaid(any());
-        verify(payoutService, times(1)).createOwnerPayoutForSuccessfulPayment(intent);
-        verify(paymentTransactionRepository, times(1)).save(any());
-    }
+    paymentService.applyWebhookEvent(event);
 
-    @Test
-    void webhookSuccessWithMismatchedAmount_isRejectedAsFailed_andDoesNotPay() {
-        PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
-        when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
-        when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    assertEquals(PaymentIntentStatus.SUCCESS, intent.getStatus());
+    verify(roomMemberService, times(1)).markMembershipAsPaid(any());
+    verify(payoutService, times(1)).createOwnerPayoutForSuccessfulPayment(intent);
+    verify(paymentTransactionRepository, times(1)).save(any());
+  }
 
-        GatewayWebhookEvent event = GatewayWebhookEvent.builder()
-                .intentId(100L)
-                .resultStatus("SUCCESS")
-                .amount(new BigDecimal("1.00")) // tampered / wrong amount
-                .currency("KZT")
-                .externalPaymentId("EXT-2")
-                .providerRequestId("req-2")
-                .build();
+  @Test
+  void webhookSuccessWithMismatchedAmount_isCaptureAnomaly_andDoesNotPay() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        paymentService.applyWebhookEvent(event);
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("SUCCESS")
+            .amount(new BigDecimal("1.00")) // tampered / wrong amount
+            .currency("KZT")
+            .externalPaymentId("EXT-2")
+            .providerRequestId("req-2")
+            .build();
 
-        assertEquals(PaymentIntentStatus.FAILED, intent.getStatus());
-        assertEquals("AMOUNT_MISMATCH", intent.getFailureCode());
-        // Critically: no membership advancement and no payout on a mismatched amount.
-        verify(roomMemberService, never()).markMembershipAsPaid(any());
-        verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
-        verify(paymentTransactionRepository, never()).save(any());
-    }
+    paymentService.applyWebhookEvent(event);
 
-    @Test
-    void payoutWebhook_isRoutedToPayoutService_notTheChargePath() {
-        GatewayWebhookEvent event = GatewayWebhookEvent.builder()
-                .kind("PAYOUT")
-                .resultStatus("SUCCESS")
-                .externalPaymentId("MOCK-OUT-9")
-                .providerRequestId("req-payout")
-                .build();
+    assertEquals(PaymentIntentStatus.CAPTURE_ANOMALY, intent.getStatus());
+    assertEquals("AMOUNT_MISMATCH", intent.getFailureCode());
+    // Critically: no membership advancement and no payout on a mismatched amount.
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
+    verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
+    verify(paymentTransactionRepository, never()).save(any());
+  }
 
-        paymentService.applyWebhookEvent(event);
+  @Test
+  void payoutWebhook_isRoutedToPayoutService_notTheChargePath() {
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .kind("PAYOUT")
+            .resultStatus("SUCCESS")
+            .externalPaymentId("MOCK-OUT-9")
+            .providerRequestId("req-payout")
+            .build();
 
-        verify(payoutService, times(1)).applyPayoutWebhook("MOCK-OUT-9", true);
-        // Not a charge — no intent lookup / membership / charge-payout side effects.
-        verify(roomMemberService, never()).markMembershipAsPaid(any());
-        verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
-    }
+    paymentService.applyWebhookEvent(event);
 
-    @Test
-    void refundWebhook_isRoutedToRefundService() {
-        GatewayWebhookEvent event = GatewayWebhookEvent.builder()
-                .kind("REFUND")
-                .resultStatus("FAILED")
-                .externalPaymentId("MOCK-REF-7")
-                .providerRequestId("req-refund")
-                .build();
+    verify(payoutService, times(1)).applyPayoutWebhook("MOCK-OUT-9", null, true, null);
+    // Not a charge — no intent lookup / membership / charge-payout side effects.
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
+    verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
+  }
 
-        paymentService.applyWebhookEvent(event);
+  @Test
+  void pendingPayoutWebhookDoesNotBecomeFailure() {
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .kind("PAYOUT")
+            .resultStatus("PENDING")
+            .externalPaymentId("MOCK-OUT-9")
+            .build();
 
-        verify(refundService, times(1)).applyRefundWebhook("MOCK-REF-7", false);
-        verify(roomMemberService, never()).markMembershipAsPaid(any());
-    }
+    paymentService.applyWebhookEvent(event);
 
-    @Test
-    void expireStalePendingIntents_marksThemFailed() {
-        PaymentIntent stale = pendingIntent(new BigDecimal("1822.50"));
-        stale.setExpiresAt(java.time.LocalDateTime.now().minusMinutes(31));
-        when(paymentIntentRepository.findByStatusAndExpiresAtBefore(
-                org.mockito.ArgumentMatchers.eq(PaymentIntentStatus.PENDING),
-                any())).thenReturn(java.util.List.of(stale));
-        when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    verify(payoutService, never()).applyPayoutWebhook(any(), any(Boolean.class));
+  }
 
-        int expired = paymentService.expireStalePendingIntents();
+  @Test
+  void refundWebhook_isRoutedToRefundService() {
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .kind("REFUND")
+            .resultStatus("FAILED")
+            .externalPaymentId("MOCK-REF-7")
+            .providerRequestId("req-refund")
+            .build();
 
-        assertEquals(1, expired);
-        assertEquals(PaymentIntentStatus.FAILED, stale.getStatus());
-        assertEquals("EXPIRED", stale.getFailureCode());
-    }
+    paymentService.applyWebhookEvent(event);
 
-    @Test
-    void webhookForAlreadySuccessfulIntent_isTreatedAsDuplicate_noDoublePay() {
-        PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
-        intent.setStatus(PaymentIntentStatus.SUCCESS); // already terminal
-        when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
-        when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    verify(refundService, times(1)).applyRefundWebhook("MOCK-REF-7", false);
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
+  }
 
-        GatewayWebhookEvent event = GatewayWebhookEvent.builder()
-                .intentId(100L)
-                .resultStatus("SUCCESS")
-                .amount(new BigDecimal("1822.50"))
-                .currency("KZT")
-                .providerRequestId("req-dup")
-                .build();
+  @Test
+  void expireStalePendingIntents_marksThemExpired() {
+    PaymentIntent stale = pendingIntent(new BigDecimal("1822.50"));
+    stale.setExpiresAt(java.time.LocalDateTime.now().minusMinutes(31));
+    when(paymentIntentRepository.findByStatusAndExpiresAtBefore(
+            org.mockito.ArgumentMatchers.eq(PaymentIntentStatus.PENDING), any()))
+        .thenReturn(java.util.List.of(stale));
+    when(paymentIntentRepository.findWithLockById(stale.getId())).thenReturn(Optional.of(stale));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        paymentService.applyWebhookEvent(event);
+    int expired = paymentService.expireStalePendingIntents();
 
-        verify(roomMemberService, never()).markMembershipAsPaid(any());
-        verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
-    }
+    assertEquals(1, expired);
+    assertEquals(PaymentIntentStatus.EXPIRED, stale.getStatus());
+    assertEquals("EXPIRED", stale.getFailureCode());
+  }
+
+  @Test
+  void webhookForAlreadySuccessfulIntent_isTreatedAsDuplicate_noDoublePay() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
+    intent.setStatus(PaymentIntentStatus.SUCCESS); // already terminal
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("SUCCESS")
+            .amount(new BigDecimal("1822.50"))
+            .currency("KZT")
+            .providerRequestId("req-dup")
+            .build();
+
+    paymentService.applyWebhookEvent(event);
+
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
+    verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
+  }
+
+  @Test
+  void webhookForUnknownIntent_isRetryableInsteadOfBeingSilentlyDropped() {
+    when(paymentIntentRepository.findWithLockById(404L)).thenReturn(Optional.empty());
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .kind("CHARGE")
+            .intentId(404L)
+            .resultStatus("SUCCESS")
+            .providerRequestId("req-late-intent")
+            .build();
+
+    FreedomWebhookProcessingException error =
+        assertThrows(
+            FreedomWebhookProcessingException.class, () -> paymentService.applyWebhookEvent(event));
+
+    assertEquals("INTENT_NOT_FOUND", error.getErrorCode());
+    assertTrue(error.isRetryable());
+  }
+
+  @Test
+  void finalizer_whenRoomIsFull_marksCompensationRequiredWithoutSideEffects() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(roomMemberRepository.findWithLockById(3L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(roomRepository.findByIdForUpdate(2L))
+        .thenReturn(Optional.of(intent.getRoomMember().getRoom()));
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(any(), any()))
+        .thenReturn(1L);
+    when(paymentTransactionRepository.findFirstByPaymentIntentAndTypeAndStatus(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(paymentTransactionRepository.save(any()))
+        .thenAnswer(
+            i -> {
+              var tx = (kz.hrms.splitupauth.entity.PaymentTransaction) i.getArgument(0);
+              tx.setId(200L);
+              return tx;
+            });
+    when(refundService.createAutomaticCompensationRefund(any(), any()))
+        .thenReturn(RefundTransaction.builder().id(300L).status(RefundStatus.PENDING).build());
+
+    PaymentIntent result =
+        paymentService.finalizeSuccessfulPayment(
+            100L, "EXT-1", "ok", null, null, "req-1", null, "WEBHOOK_SUCCESS");
+
+    assertEquals(PaymentIntentStatus.REFUND_PENDING, result.getStatus());
+    assertEquals(true, result.getCompensationRequired());
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
+    verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
+    verify(paymentTransactionRepository, times(1)).save(any());
+    verify(refundService, times(1)).createAutomaticCompensationRefund(any(), any());
+  }
 }

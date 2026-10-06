@@ -5,14 +5,14 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.2</version>
+        <version>4.0.8</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>kz.hrms</groupId>
     <artifactId>ecopay-backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>ecopay-backend</name>
-    <description>Ecopay backend service</description>
+    <description>EcoPay backend service</description>
     <url/>
     <licenses>
         <license/>
@@ -28,13 +28,18 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+        <!-- Patched Jackson lines (Trivy HIGH CVEs in 3.1.0 / 2.20.2); keep core, databind and xml aligned. -->
+        <jackson-bom.version>3.1.7</jackson-bom.version>
+        <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+        <!-- Boot 4.0.8 ships 11.0.24; 11.0.25+ fixes a HIGH Tomcat CVE. -->
+        <tomcat.version>11.0.26</tomcat.version>
     </properties>
     <dependencies>
         <!-- Source: https://mvnrepository.com/artifact/tools.jackson.core/jackson-core -->
         <dependency>
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
-            <version>3.1.0</version>
+            <version>${jackson-bom.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
@@ -44,6 +49,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Prometheus scrape format for Micrometer metrics (version managed by Spring Boot).
+             The endpoint is restricted to private-network peers in SecurityConfig. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -60,6 +71,14 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
         </dependency>
         <!-- Source: https://mvnrepository.com/artifact/org.flywaydb/flyway-core -->
         <dependency>
@@ -85,6 +104,7 @@
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
+
         <!-- AWS S3 (object storage for avatars / uploads). Version managed by the BOM below. -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -95,7 +115,14 @@
         <dependency>
             <groupId>tools.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-xml</artifactId>
-            <version>3.1.0</version>
+            <version>${jackson-bom.version}</version>
+        </dependency>
+
+        <!-- HTML/DOM/CSS/JSON-LD extraction for the Price Watch module. -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.23.2</version>
         </dependency>
 
         <!-- Source: https://mvnrepository.com/artifact/org.springdoc/springdoc-openapi-starter-webmvc-ui -->
@@ -128,7 +155,7 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-configuration-processor</artifactId>
-            <version>4.0.2</version>
+            <version>4.0.8</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
@@ -188,6 +215,47 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!--
+                  Pin the test JVM to Asia/Almaty. Production does this in
+                  SplitUpAuthApplication.main() before Spring starts, but tests
+                  boot via @SpringBootTest and never call main(), so they would
+                  otherwise inherit the CI runner's UTC clock. That mismatch made
+                  the dashboard-metrics test flaky: a row written with
+                  created_at = LocalDateTime.now() during the 18:00-24:00 UTC
+                  window lands on the next Almaty day and fell outside the
+                  metrics range. Running tests in the same zone the data is
+                  written in keeps date-bucketing deterministic.
+                -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-Duser.timezone=Asia/Almaty</argLine>
+                    <!--
+                      live-dns tests query the public internet and assert on records
+                      we do not control, so they must not gate a normal build. Run
+                      them deliberately when touching EmailDomainService:
+                        ./mvnw test -Dtest=EmailDomainServiceLiveDnsTest -Dgroups=live-dns
+                    -->
+                    <excludedGroups>live-dns</excludedGroups>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>2.44.5</version>
+                <configuration>
+                    <java>
+                        <includes>
+                            <include>src/main/java/**/*.java</include>
+                            <include>src/test/java/**/*.java</include>
+                        </includes>
+                        <googleJavaFormat>
+                            <version>1.25.2</version>
+                        </googleJavaFormat>
+                    </java>
+                </configuration>
             </plugin>
         </plugins>
     </build>

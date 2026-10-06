@@ -1,0 +1,21 @@
+title = "EcoPay secret scan"
+
+[extend]
+useDefault = true
+
+# Template files only contain placeholders ("<live mobizon key>", "YOUR_ACCESS_TOKEN").
+# Real secrets live in the deployment secret store, never in the repository.
+[allowlist]
+description = "Documentation and env templates with placeholder values"
+paths = [
+  '''^\.env(\.prod)?\.example$''',
+  '''^QUICKSTART\.md$''',
+]
+
+# The default ruleset missed a FreedomPay sandbox key hard-coded as a fallback value.
+[[rules]]
+id = "freedompay-secret-literal"
+description = "FreedomPay merchant/payout secret written as a literal"
+regex = '''(?i)freedompay[a-z_]*(secret|key)[a-z_]*["']?\s*(\?\?|=|:)\s*["']([A-Za-z0-9]{12,})["']'''
+secretGroup = 3
+keywords = ["freedompay"]

@@ -1,13 +1,46 @@
 package kz.hrms.splitupauth.repository;
 
+import jakarta.persistence.LockModeType;
+import java.util.List;
+import java.util.Optional;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentTransaction;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
+import kz.hrms.splitupauth.entity.PaymentTransactionType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
-import java.util.List;
+public interface PaymentTransactionRepository
+    extends JpaRepository<PaymentTransaction, Long>, JpaSpecificationExecutor<PaymentTransaction> {
+  List<PaymentTransaction> findByPaymentIntentOrderByCreatedAtAsc(PaymentIntent paymentIntent);
 
-public interface PaymentTransactionRepository extends JpaRepository<PaymentTransaction, Long> {
-    List<PaymentTransaction> findByPaymentIntentOrderByCreatedAtAsc(PaymentIntent paymentIntent);
-    boolean existsByRoomMember_IdAndStatus(Long roomMemberId, PaymentTransactionStatus status);
+  Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeAndStatus(
+      PaymentIntent paymentIntent, PaymentTransactionType type, PaymentTransactionStatus status);
+
+  Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeAndStatusIn(
+      PaymentIntent paymentIntent,
+      PaymentTransactionType type,
+      List<PaymentTransactionStatus> statuses);
+
+  Optional<PaymentTransaction> findFirstByPaymentIntentAndTypeOrderByCreatedAtDesc(
+      PaymentIntent paymentIntent, PaymentTransactionType type);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select t from PaymentTransaction t where t.id = :id")
+  Optional<PaymentTransaction> findWithLockById(@Param("id") Long id);
+
+  boolean existsByRoomMember_IdAndStatus(Long roomMemberId, PaymentTransactionStatus status);
+
+  boolean existsByPaymentIntent_User_IdAndTypeAndStatus(
+      Long userId, PaymentTransactionType type, PaymentTransactionStatus status);
+
+  List<PaymentTransaction> findByRoomMember_IdAndStatusAndTypeOrderByCreatedAtDesc(
+      Long roomMemberId, PaymentTransactionStatus status, PaymentTransactionType type);
+
+  /** Captured member charges in a room, used after a confirmed owner breach. */
+  List<PaymentTransaction> findByRoom_IdAndStatusAndTypeOrderByCreatedAtAsc(
+      Long roomId, PaymentTransactionStatus status, PaymentTransactionType type);
 }

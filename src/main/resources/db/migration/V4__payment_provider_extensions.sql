@@ -42,17 +42,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_saved_cards_user_default
     ON saved_cards (user_id) WHERE is_default = TRUE AND status = 'ACTIVE';
 
 -- Late FK from payment_intents to saved_cards (column was added above without ref).
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_payment_intents_saved_card'
-    ) THEN
-        ALTER TABLE payment_intents
-            ADD CONSTRAINT fk_payment_intents_saved_card
-            FOREIGN KEY (saved_card_id) REFERENCES saved_cards(id) ON DELETE SET NULL;
-    END IF;
-END $$;
+-- CockroachDB does not support anonymous DO blocks; add the constraint directly.
+ALTER TABLE payment_intents
+    ADD CONSTRAINT fk_payment_intents_saved_card
+    FOREIGN KEY (saved_card_id) REFERENCES saved_cards(id) ON DELETE SET NULL;
 
 -- Webhook inbox guarantees idempotency: every Freedom Pay callback
 -- is recorded once and only once.

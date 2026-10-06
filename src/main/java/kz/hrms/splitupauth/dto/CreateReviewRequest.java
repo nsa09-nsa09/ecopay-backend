@@ -9,17 +9,20 @@ import lombok.Data;
 @Data
 public class CreateReviewRequest {
 
-    @NotNull(message = "Recipient id is required")
-    private Long recipientId;
+  @NotNull(message = "Recipient id is required")
+  private Long recipientId;
 
-    @NotNull(message = "Room id is required")
-    private Long roomId;
+  /**
+   * Optional anchor room. When present the review is attributed to that room; when {@code null} it
+   * is treated as a profile-level rating.
+   */
+  private Long roomId;
 
-    @NotNull
-    @Min(1)
-    @Max(5)
-    private Integer rating;
+  @NotNull
+  @Min(1)
+  @Max(10)
+  private Integer rating;
 
-    @Size(max = 2000, message = "Text must be at most 2000 characters")
-    private String text;
+  @Size(max = 2000, message = "Text must be at most 2000 characters")
+  private String text;
 }
