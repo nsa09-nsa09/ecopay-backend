@@ -152,6 +152,11 @@ public class ProductionStartupGuard implements ApplicationRunner, SmartInitializ
     boolean postPayoutRefundEnabled = boolProp("app.money.post-payout-refund-enabled");
     boolean ownerReceivableEnabled = boolProp("app.money.owner-receivable-enabled");
 
+    reject(
+        intProp("app.payout.hold-minutes", 0) > 0,
+        violations,
+        "payout hold-minutes test override is set");
+
     if (!liveMoneyEnabled) {
       reject(
           payoutDispatchEnabled || refundDispatchEnabled,

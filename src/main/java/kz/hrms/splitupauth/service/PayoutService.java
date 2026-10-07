@@ -74,6 +74,13 @@ public class PayoutService {
   @Value("${app.payout.hold-days:30}")
   private int payoutHoldDays;
 
+  /**
+   * Test-only override: when positive, the hold is this many minutes and {@code hold-days} is
+   * ignored. Rejected in prod by ProductionStartupGuard.
+   */
+  @Value("${app.payout.hold-minutes:0}")
+  private int payoutHoldMinutes;
+
   @Value("${app.payout.batch-coalesce-hours:24}")
   private int payoutBatchCoalesceHours;
 
@@ -105,7 +112,10 @@ public class PayoutService {
     // window elapses. The dispatcher skips payouts until releaseAt is reached.
     LocalDateTime now = LocalDateTime.now(clock);
     LocalDateTime capturedAt = intent.getCapturedAt() == null ? now : intent.getCapturedAt();
-    LocalDateTime releaseAt = capturedAt.plusDays(payoutHoldDays);
+    LocalDateTime releaseAt =
+        payoutHoldMinutes > 0
+            ? capturedAt.plusMinutes(payoutHoldMinutes)
+            : capturedAt.plusDays(payoutHoldDays);
 
     Payout payout =
         Payout.builder()
@@ -153,7 +163,9 @@ public class PayoutService {
             "releaseAt",
             releaseAt.toString(),
             "holdDays",
-            String.valueOf(payoutHoldDays)));
+            String.valueOf(payoutHoldDays),
+            "holdMinutes",
+            String.valueOf(payoutHoldMinutes)));
 
     return payout;
   }
