@@ -56,7 +56,7 @@ jobs:
       # Dependency vulnerabilities (pom.xml + transitive). CRITICAL/HIGH with a known fix block;
       # lower severities and unfixed CVEs are reported only — see docs/security/dependency-policy.md.
       - name: Dependency scan (Trivy fs)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -76,7 +76,7 @@ jobs:
           tags: ecopay-backend:scan
 
       - name: Container scan (Trivy image)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ecopay-backend:scan
           scanners: vuln
