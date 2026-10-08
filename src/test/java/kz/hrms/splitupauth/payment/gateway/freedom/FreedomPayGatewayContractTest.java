@@ -265,6 +265,67 @@ class FreedomPayGatewayContractTest {
   }
 
   @Test
+  void initPaymentSendsReturnMethodsAndOmitsEmptyContactsWithValidSignature() {
+    when(client.call(
+            eq("init_payment"), anyString(), anyString(), anyMap(), anyString(), eq(false)))
+        .thenReturn(
+            signed(
+                Map.of("pg_status", "ok", "pg_payment_id", "1", "pg_redirect_url", "https://p")));
+
+    gateway.initCharge(
+        GatewayChargeRequest.builder()
+            .intentId(1L)
+            .amount(new BigDecimal("1.00"))
+            .userPhone("+7 (701) 123-45-67")
+            .userEmail("  ")
+            .build());
+
+    ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
+    verify(client)
+        .call(
+            eq("init_payment"), anyString(), anyString(), params.capture(), anyString(), eq(false));
+    Map<String, String> sent = params.getValue();
+    assertEquals("GET", sent.get("pg_success_url_method"));
+    assertEquals("GET", sent.get("pg_failure_url_method"));
+    // Blank email is dropped entirely, phone is normalized to 11 digits starting with 7.
+    assertFalse(sent.containsKey("pg_user_contact_email"));
+    assertEquals("77011234567", sent.get("pg_user_phone"));
+
+    // The signature is computed over exactly what is sent, and no empty contact leaked into it.
+    String sig = signatures.sign("init_payment.php", sent, "merchant-secret");
+    Map<String, String> withSig = new LinkedHashMap<>(sent);
+    withSig.put("pg_sig", sig);
+    assertTrue(signatures.verify("init_payment.php", withSig, "merchant-secret"));
+  }
+
+  @Test
+  void initPaymentDropsUnparseablePhoneAndPostMethodIsHonoured() {
+    properties.setSuccessUrlMethod("POST");
+    properties.setFailureUrlMethod("post");
+    when(client.call(
+            eq("init_payment"), anyString(), anyString(), anyMap(), anyString(), eq(false)))
+        .thenReturn(
+            signed(
+                Map.of("pg_status", "ok", "pg_payment_id", "1", "pg_redirect_url", "https://p")));
+
+    gateway.initCharge(
+        GatewayChargeRequest.builder()
+            .intentId(1L)
+            .amount(new BigDecimal("1.00"))
+            .userPhone("12345")
+            .build());
+
+    ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
+    verify(client)
+        .call(
+            eq("init_payment"), anyString(), anyString(), params.capture(), anyString(), eq(false));
+    Map<String, String> sent = params.getValue();
+    assertFalse(sent.containsKey("pg_user_phone"), "too-short phone must not be sent");
+    assertEquals("POST", sent.get("pg_success_url_method"));
+    assertEquals("POST", sent.get("pg_failure_url_method"));
+  }
+
+  @Test
   void initPaymentWithoutRedirectUrlIsNotSuccess() {
     when(client.call(
             eq("init_payment"), anyString(), anyString(), anyMap(), anyString(), eq(false)))

@@ -20,6 +20,20 @@ public class FreedomPayProperties {
   private String successUrl = "";
   private String failureUrl = "";
 
+  /**
+   * HTTP method FreedomPay uses when returning the browser to {@code pg_success_url} ({@code
+   * pg_success_url_method}). docs.freedompay.kz "Create payment" lists only {@code GET} and {@code
+   * POST} (default {@code GET}); the frontend's /payment/confirmation route is only reachable by
+   * GET (a POST return is answered 405 by the SPA's nginx), so the default stays {@code GET}.
+   */
+  private String successUrlMethod = "GET";
+
+  /**
+   * HTTP method for the failure return ({@code pg_failure_url_method}); see {@link
+   * #successUrlMethod}.
+   */
+  private String failureUrlMethod = "GET";
+
   /** "1" = sandbox/test mode, "0" = real charges. */
   private String testMode = "1";
 

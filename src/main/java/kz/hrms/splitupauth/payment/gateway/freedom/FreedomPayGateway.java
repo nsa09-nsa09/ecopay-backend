@@ -133,8 +133,10 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_idempotency_key", request.getIdempotencyKey());
     params.put("pg_currency", request.getCurrency() != null ? request.getCurrency() : "KZT");
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay payment"));
-    params.put("pg_user_phone", nonNull(request.getUserPhone(), ""));
-    params.put("pg_user_contact_email", nonNull(request.getUserEmail(), ""));
+    // Empty contact params are rejected/ignored by FreedomPay and still get signed, so only send
+    // them when present. Phone is normalized to the 11-digit 7XXXXXXXXXX form the gateway expects.
+    putIfNotBlank(params, "pg_user_phone", normalizePhone(request.getUserPhone()));
+    putIfNotBlank(params, "pg_user_contact_email", trimToNull(request.getUserEmail()));
     // One-step: FreedomPay's default is two-step (hold, auto-cleared after up to 5 days), but a
     // successful EcoPay member payment must mean captured money.
     params.put("pg_auto_clearing", properties.isAutoClearing() ? "1" : "0");
@@ -148,6 +150,11 @@ public class FreedomPayGateway implements PaymentGateway {
         "pg_failure_url",
         appendPaymentContext(urlResolver.failureUrl(request.getFailureUrl()), request));
     params.put("pg_request_method", "POST");
+    // Return-redirect method: without it FreedomPay may POST the browser back, and the SPA's
+    // /payment/confirmation route answers POST with 405. docs.freedompay.kz "Create payment"
+    // documents pg_success_url_method / pg_failure_url_method (GET|POST, default GET) — VERIFIED.
+    putIfNotBlank(params, "pg_success_url_method", returnMethod(properties.getSuccessUrlMethod()));
+    putIfNotBlank(params, "pg_failure_url_method", returnMethod(properties.getFailureUrlMethod()));
     if (request.isSaveCardRequested()) {
       params.put("pg_recurring_start", "1");
       // Mandatory with pg_recurring_start=1; unit is MONTHS, current docs allow 1..12.
@@ -808,6 +815,52 @@ public class FreedomPayGateway implements PaymentGateway {
 
   private static String nonNull(String value, String fallback) {
     return value == null || value.isBlank() ? fallback : value;
+  }
+
+  private static void putIfNotBlank(Map<String, String> target, String key, String value) {
+    if (value != null && !value.isBlank()) {
+      target.put(key, value);
+    }
+  }
+
+  private static String trimToNull(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  /** Only GET/POST are documented; anything else is dropped so FreedomPay applies its default. */
+  private static String returnMethod(String value) {
+    if (value == null) {
+      return null;
+    }
+    String v = value.trim().toUpperCase(Locale.ROOT);
+    return (v.equals("GET") || v.equals("POST")) ? v : null;
+  }
+
+  /**
+   * Normalizes a KZ phone to the {@code 7XXXXXXXXXX} (11 digit) form FreedomPay expects: strips
+   * everything but digits, rewrites a leading {@code 8} to {@code 7}. Returns null unless the
+   * result is exactly 11 digits starting with {@code 7}, so a malformed number is simply not sent.
+   */
+  static String normalizePhone(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    StringBuilder digits = new StringBuilder();
+    for (int i = 0; i < raw.length(); i++) {
+      char c = raw.charAt(i);
+      if (c >= '0' && c <= '9') {
+        digits.append(c);
+      }
+    }
+    if (digits.length() == 11 && digits.charAt(0) == '8') {
+      digits.setCharAt(0, '7');
+    }
+    String normalized = digits.toString();
+    return (normalized.length() == 11 && normalized.charAt(0) == '7') ? normalized : null;
   }
 
   private static boolean notBlank(String value) {
