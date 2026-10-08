@@ -80,7 +80,7 @@ public class StoryService {
             .ctaLabelKz(clean(req.getCtaLabelKz()))
             .ctaLabelRu(clean(req.getCtaLabelRu()))
             .ctaLabelEn(clean(req.getCtaLabelEn()))
-            .ctaUrl(clean(req.getCtaUrl()))
+            .ctaUrl(cleanCtaUrl(req.getCtaUrl()))
             .emoji(clean(req.getEmoji()))
             .gradient(clean(req.getGradient()))
             .status(status)
@@ -263,7 +263,7 @@ public class StoryService {
     if (req.getCtaLabelKz() != null) story.setCtaLabelKz(clean(req.getCtaLabelKz()));
     if (req.getCtaLabelRu() != null) story.setCtaLabelRu(clean(req.getCtaLabelRu()));
     if (req.getCtaLabelEn() != null) story.setCtaLabelEn(clean(req.getCtaLabelEn()));
-    if (req.getCtaUrl() != null) story.setCtaUrl(clean(req.getCtaUrl()));
+    if (req.getCtaUrl() != null) story.setCtaUrl(cleanCtaUrl(req.getCtaUrl()));
     if (req.getEmoji() != null) story.setEmoji(clean(req.getEmoji()));
     if (req.getGradient() != null) story.setGradient(clean(req.getGradient()));
     if (req.getSortOrder() != null) story.setSortOrder(req.getSortOrder());
@@ -271,6 +271,36 @@ public class StoryService {
 
   private String clean(String value) {
     return TextSanitizer.sanitize(value);
+  }
+
+  /**
+   * Sanitizes and validates a story CTA target. The frontend uses this value directly — {@code
+   * navigate(url)} for in-app paths and {@code window.open(url)} for everything else — so only a
+   * same-origin relative path or an explicit {@code https://} URL is allowed. A {@code javascript:}
+   * payload, a protocol-relative {@code //host} or a backslash-smuggled {@code /\host} are rejected
+   * with {@code INVALID_CTA_URL}, closing the stored-XSS/open-redirect path that a malicious or
+   * hijacked admin account would otherwise push to every user.
+   */
+  private String cleanCtaUrl(String value) {
+    String cleaned = clean(value);
+    if (cleaned == null || cleaned.isBlank()) {
+      return cleaned;
+    }
+    String trimmed = cleaned.trim();
+    if (isSafeCtaUrl(trimmed)) {
+      return trimmed;
+    }
+    throw new InvalidRequestException(
+        "INVALID_CTA_URL", "CTA URL must be a relative path (/...) or an https:// URL");
+  }
+
+  private static boolean isSafeCtaUrl(String url) {
+    if (url.startsWith("/")) {
+      // A real in-app path only. Reject protocol-relative ("//evil.com") and the backslash variant
+      // ("/\evil.com") that browsers normalize to a scheme-relative navigation.
+      return !url.startsWith("//") && !url.startsWith("/\\");
+    }
+    return url.toLowerCase(java.util.Locale.ROOT).startsWith("https://");
   }
 
   private void requireAnyTitle(Story story) {
