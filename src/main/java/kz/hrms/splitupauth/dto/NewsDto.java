@@ -37,6 +37,13 @@ public class NewsDto {
   private String imageUrlRu;
   private String imageUrlEn;
 
+  /** Card-sized preview URLs (640px); {@code null} when the matching original is absent. */
+  private String imageThumbUrl;
+
+  private String imageThumbUrlKz;
+  private String imageThumbUrlRu;
+  private String imageThumbUrlEn;
+
   private NewsStatus status;
   private LocalDateTime publishedAt;
   private Integer sortOrder;

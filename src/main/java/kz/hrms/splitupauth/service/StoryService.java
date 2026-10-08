@@ -321,6 +321,16 @@ public class StoryService {
   }
 
   private StoryDto toDto(Story story) {
+    String primaryKey =
+        Stream.of(
+                story.getImageKey(),
+                story.getImageKeyRu(),
+                story.getImageKeyKz(),
+                story.getImageKeyEn())
+            .filter(Objects::nonNull)
+            .filter(key -> !key.isBlank())
+            .findFirst()
+            .orElse(null);
     return StoryDto.builder()
         .id(story.getId())
         .titleKz(story.getTitleKz())
@@ -338,20 +348,14 @@ public class StoryService {
         .ctaUrl(story.getCtaUrl())
         .emoji(story.getEmoji())
         .gradient(story.getGradient())
-        .imageUrl(
-            imageStorage.publicUrl(
-                Stream.of(
-                        story.getImageKey(),
-                        story.getImageKeyRu(),
-                        story.getImageKeyKz(),
-                        story.getImageKeyEn())
-                    .filter(Objects::nonNull)
-                    .filter(key -> !key.isBlank())
-                    .findFirst()
-                    .orElse(null)))
+        .imageUrl(imageStorage.publicUrl(primaryKey))
         .imageUrlKz(imageStorage.publicUrl(story.getImageKeyKz()))
         .imageUrlRu(imageStorage.publicUrl(story.getImageKeyRu()))
         .imageUrlEn(imageStorage.publicUrl(story.getImageKeyEn()))
+        .imageThumbUrl(imageStorage.thumbUrl(primaryKey))
+        .imageThumbUrlKz(imageStorage.thumbUrl(story.getImageKeyKz()))
+        .imageThumbUrlRu(imageStorage.thumbUrl(story.getImageKeyRu()))
+        .imageThumbUrlEn(imageStorage.thumbUrl(story.getImageKeyEn()))
         .status(story.getStatus())
         .publishedAt(story.getPublishedAt())
         .sortOrder(story.getSortOrder())

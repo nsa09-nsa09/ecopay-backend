@@ -9,7 +9,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import kz.hrms.splitupauth.config.NewsImageUploadProperties;
 import kz.hrms.splitupauth.config.S3Properties;
@@ -25,9 +24,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
@@ -38,14 +34,18 @@ public class StoryImageStorageService {
 
   private static final String STORY_PREFIX = "stories/";
   private static final String STORY_URL_PATH = "/api/v1/stories/images/";
-  private static final Pattern ALLOWED_FILENAME = Pattern.compile("^[a-zA-Z0-9._-]+\\.jpg$");
 
   private final NewsImageUploadProperties properties;
   private final S3Properties s3Properties;
   private final S3Client s3Client;
+  private final MediaImageStore mediaStore;
 
   @Value("${app.base-url:http://localhost:8080}")
   private String baseUrl;
+
+  /** Preview width for story cards (narrower than news cards). */
+  @Value("${app.media.story-thumb-width:480}")
+  private int thumbWidth;
 
   public String store(MultipartFile file) {
     if (file == null || file.isEmpty()) {
@@ -104,6 +104,10 @@ public class StoryImageStorageService {
       throw new InvalidRequestException("Failed to store image");
     }
 
+    // Pre-generate the card-sized preview; lazily regenerated on first read if this best-effort
+    // step fails.
+    mediaStore.storeThumbFromOriginal(toThumbKey(key), jpeg, thumbWidth);
+
     return key;
   }
 
@@ -115,42 +119,50 @@ public class StoryImageStorageService {
     return resolveHost() + STORY_URL_PATH + filename;
   }
 
+  /**
+   * Card-preview link: {@code {host}/api/v1/stories/images/thumb/<file>.jpg}; null if unmanaged.
+   */
+  public String thumbUrl(String storedValue) {
+    if (!isManaged(storedValue)) {
+      return null;
+    }
+    String filename = storedValue.substring(STORY_PREFIX.length());
+    return resolveHost() + STORY_URL_PATH + MediaImageStore.THUMB_SEGMENT + filename;
+  }
+
+  /** True when {@code filename} is a servable story image name (UUID-hex + {@code .jpg}). */
+  public boolean servable(String filename) {
+    return mediaStore.servable(filename);
+  }
+
   public byte[] loadImageBytes(String filename) {
-    if (filename == null || !ALLOWED_FILENAME.matcher(filename).matches()) {
+    if (!mediaStore.servable(filename)) {
       throw new ResourceNotFoundException("Story image not found");
     }
-    String key = STORY_PREFIX + filename;
-    try {
-      return s3Client
-          .getObjectAsBytes(
-              GetObjectRequest.builder().bucket(s3Properties.getBucket()).key(key).build())
-          .asByteArray();
-    } catch (NoSuchKeyException ex) {
-      throw new ResourceNotFoundException("Story image not found");
-    } catch (S3Exception ex) {
-      log.warn(
-          "Failed to read story image {} from bucket {}: {}",
-          key,
-          s3Properties.getBucket(),
-          ex.getMessage());
+    return mediaStore.loadOriginal(STORY_PREFIX + filename);
+  }
+
+  public byte[] loadThumbBytes(String filename) {
+    if (!mediaStore.servable(filename)) {
       throw new ResourceNotFoundException("Story image not found");
     }
+    return mediaStore.loadThumb(
+        STORY_PREFIX + MediaImageStore.THUMB_SEGMENT + filename,
+        STORY_PREFIX + filename,
+        thumbWidth);
   }
 
   public void deleteIfManaged(String storedValue) {
     if (!isManaged(storedValue)) {
       return;
     }
-    try {
-      s3Client.deleteObject(
-          DeleteObjectRequest.builder().bucket(s3Properties.getBucket()).key(storedValue).build());
-    } catch (S3Exception ex) {
-      log.warn(
-          "Failed to delete story image {} from bucket {}: {}",
-          storedValue,
-          s3Properties.getBucket(),
-          ex.getMessage());
-    }
+    mediaStore.delete(storedValue);
+    mediaStore.delete(toThumbKey(storedValue));
+  }
+
+  private String toThumbKey(String originalKey) {
+    String filename = originalKey.substring(STORY_PREFIX.length());
+    return STORY_PREFIX + MediaImageStore.THUMB_SEGMENT + filename;
   }
 
   private boolean isManaged(String storedValue) {

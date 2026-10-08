@@ -38,6 +38,13 @@ public class StoryDto {
   private String imageUrlRu;
   private String imageUrlEn;
 
+  /** Card-sized preview URLs (480px); {@code null} when the matching original is absent. */
+  private String imageThumbUrl;
+
+  private String imageThumbUrlKz;
+  private String imageThumbUrlRu;
+  private String imageThumbUrlEn;
+
   private StoryStatus status;
   private LocalDateTime publishedAt;
   private Integer sortOrder;

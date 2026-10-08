@@ -9,7 +9,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import kz.hrms.splitupauth.config.NewsImageUploadProperties;
 import kz.hrms.splitupauth.config.S3Properties;
@@ -25,9 +24,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
@@ -53,16 +49,18 @@ public class NewsImageStorageService {
   /** Public path the backend serves news images from; pairs with {@link #NEWS_PREFIX}. */
   public static final String NEWS_URL_PATH = "/api/v1/news/images/";
 
-  /** Filenames are UUID hex + ".jpg"; anything else can't be one of ours. */
-  private static final Pattern ALLOWED_FILENAME = Pattern.compile("^[a-zA-Z0-9._-]+\\.jpg$");
-
   private final NewsImageUploadProperties properties;
   private final S3Properties s3Properties;
   private final S3Client s3Client;
+  private final MediaImageStore mediaStore;
 
   /** Fallback base URL when an image link is built outside an HTTP request. */
   @Value("${app.base-url:http://localhost:8080}")
   private String baseUrl;
+
+  /** Preview width for news cards (originals are up to 1600px). */
+  @Value("${app.media.news-thumb-width:640}")
+  private int thumbWidth;
 
   /**
    * Validates the upload, normalises it to a width-bounded JPEG and stores it in the bucket.
@@ -130,6 +128,11 @@ public class NewsImageStorageService {
       throw new InvalidRequestException("Не удалось сохранить файл в хранилище");
     }
 
+    // Pre-generate the card-sized preview so the feed never serves the 1600px original.
+    // Best-effort:
+    // if this fails the preview endpoint regenerates it lazily on first request.
+    mediaStore.storeThumbFromOriginal(toThumbKey(key), jpeg, thumbWidth);
+
     return key;
   }
 
@@ -147,50 +150,63 @@ public class NewsImageStorageService {
   }
 
   /**
-   * Streams a stored image's bytes from the bucket for the public serving endpoint. The filename is
-   * validated so it can only resolve to a key under our news prefix. Throws {@link
-   * ResourceNotFoundException} when missing.
+   * Card-preview link for a stored image: {@code {host}/api/v1/news/images/thumb/<file>.jpg} (same
+   * filename as the original). Non-managed values yield {@code null}.
    */
-  public byte[] loadImageBytes(String filename) {
-    if (filename == null || !ALLOWED_FILENAME.matcher(filename).matches()) {
-      throw new ResourceNotFoundException("News image not found");
+  public String thumbUrl(String storedValue) {
+    if (!isManaged(storedValue)) {
+      return null;
     }
-    String key = NEWS_PREFIX + filename;
-    try {
-      return s3Client
-          .getObjectAsBytes(
-              GetObjectRequest.builder().bucket(s3Properties.getBucket()).key(key).build())
-          .asByteArray();
-    } catch (NoSuchKeyException ex) {
-      throw new ResourceNotFoundException("News image not found");
-    } catch (S3Exception ex) {
-      log.warn(
-          "Failed to read news image {} from bucket {}: {}",
-          key,
-          s3Properties.getBucket(),
-          ex.getMessage());
-      throw new ResourceNotFoundException("News image not found");
-    }
+    String filename = storedValue.substring(NEWS_PREFIX.length());
+    return resolveHost() + NEWS_URL_PATH + MediaImageStore.THUMB_SEGMENT + filename;
+  }
+
+  /** True when {@code filename} is a servable news image name (UUID-hex + {@code .jpg}). */
+  public boolean servable(String filename) {
+    return mediaStore.servable(filename);
   }
 
   /**
-   * Deletes a previously stored news image from the bucket. Non-managed values (null, or leftover
-   * legacy strings) are ignored.
+   * Returns a stored image's bytes for the public serving endpoint, via the shared byte cache. The
+   * filename is validated so it can only resolve to a key under our news prefix. Throws {@link
+   * ResourceNotFoundException} when missing.
+   */
+  public byte[] loadImageBytes(String filename) {
+    if (!mediaStore.servable(filename)) {
+      throw new ResourceNotFoundException("News image not found");
+    }
+    return mediaStore.loadOriginal(NEWS_PREFIX + filename);
+  }
+
+  /**
+   * Returns the card-preview bytes, generating (and caching) the preview from the original on first
+   * request for legacy images that have none. Throws {@link ResourceNotFoundException} when neither
+   * the preview nor the original exists.
+   */
+  public byte[] loadThumbBytes(String filename) {
+    if (!mediaStore.servable(filename)) {
+      throw new ResourceNotFoundException("News image not found");
+    }
+    return mediaStore.loadThumb(
+        NEWS_PREFIX + MediaImageStore.THUMB_SEGMENT + filename, NEWS_PREFIX + filename, thumbWidth);
+  }
+
+  /**
+   * Deletes a previously stored news image (and its preview) from the bucket. Non-managed values
+   * (null, or leftover legacy strings) are ignored.
    */
   public void deleteIfManaged(String storedValue) {
     if (!isManaged(storedValue)) {
       return;
     }
-    try {
-      s3Client.deleteObject(
-          DeleteObjectRequest.builder().bucket(s3Properties.getBucket()).key(storedValue).build());
-    } catch (S3Exception ex) {
-      log.warn(
-          "Failed to delete news image {} from bucket {}: {}",
-          storedValue,
-          s3Properties.getBucket(),
-          ex.getMessage());
-    }
+    mediaStore.delete(storedValue);
+    mediaStore.delete(toThumbKey(storedValue));
+  }
+
+  /** Maps an original key {@code news/<f>.jpg} to its preview key {@code news/thumb/<f>.jpg}. */
+  private String toThumbKey(String originalKey) {
+    String filename = originalKey.substring(NEWS_PREFIX.length());
+    return NEWS_PREFIX + MediaImageStore.THUMB_SEGMENT + filename;
   }
 
   private boolean isManaged(String storedValue) {

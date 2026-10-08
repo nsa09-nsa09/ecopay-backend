@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,6 +45,7 @@ class NewsImageStorageServiceTest {
   private NewsImageUploadProperties properties;
   private S3Properties s3Properties;
   private S3Client s3Client;
+  private MediaImageStore mediaStore;
 
   @BeforeEach
   void setUp() {
@@ -56,9 +58,11 @@ class NewsImageStorageServiceTest {
     s3Properties.setBucket("test-bucket");
 
     s3Client = mock(S3Client.class);
+    mediaStore = new MediaImageStore(s3Client, s3Properties, 64L * 1024 * 1024, 86400, 60);
 
-    service = new NewsImageStorageService(properties, s3Properties, s3Client);
+    service = new NewsImageStorageService(properties, s3Properties, s3Client, mediaStore);
     ReflectionTestUtils.setField(service, "baseUrl", "http://localhost:8080");
+    ReflectionTestUtils.setField(service, "thumbWidth", 128);
   }
 
   private byte[] makePng(int width, int height) throws Exception {
@@ -92,11 +96,17 @@ class NewsImageStorageServiceTest {
     assertTrue(key.startsWith("news/"), "key is under the news prefix");
     assertTrue(key.endsWith(".jpg"), "stored object is normalised to JPEG");
 
+    // Two puts now: the original, plus a pre-generated card preview under news/thumb/.
     ArgumentCaptor<PutObjectRequest> req = ArgumentCaptor.forClass(PutObjectRequest.class);
-    verify(s3Client).putObject(req.capture(), any(RequestBody.class));
-    assertEquals("test-bucket", req.getValue().bucket());
-    assertEquals(key, req.getValue().key());
-    assertEquals("image/jpeg", req.getValue().contentType());
+    verify(s3Client, times(2)).putObject(req.capture(), any(RequestBody.class));
+    PutObjectRequest original =
+        req.getAllValues().stream().filter(r -> r.key().equals(key)).findFirst().orElseThrow();
+    assertEquals("test-bucket", original.bucket());
+    assertEquals("image/jpeg", original.contentType());
+    String filename = key.substring("news/".length());
+    assertTrue(
+        req.getAllValues().stream().anyMatch(r -> r.key().equals("news/thumb/" + filename)),
+        "a preview must be stored under news/thumb/");
   }
 
   @Test
@@ -191,10 +201,12 @@ class NewsImageStorageServiceTest {
     service.deleteIfManaged("/api/v1/news/images/old.jpg");
     verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
 
+    // Deleting a managed key removes both the original and its preview.
     service.deleteIfManaged("news/abc.jpg");
     ArgumentCaptor<DeleteObjectRequest> req = ArgumentCaptor.forClass(DeleteObjectRequest.class);
-    verify(s3Client).deleteObject(req.capture());
-    assertEquals("test-bucket", req.getValue().bucket());
-    assertEquals("news/abc.jpg", req.getValue().key());
+    verify(s3Client, times(2)).deleteObject(req.capture());
+    assertTrue(req.getAllValues().stream().allMatch(r -> r.bucket().equals("test-bucket")));
+    assertTrue(req.getAllValues().stream().anyMatch(r -> r.key().equals("news/abc.jpg")));
+    assertTrue(req.getAllValues().stream().anyMatch(r -> r.key().equals("news/thumb/abc.jpg")));
   }
 }

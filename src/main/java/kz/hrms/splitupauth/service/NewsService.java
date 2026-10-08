@@ -328,6 +328,12 @@ public class NewsService {
   }
 
   private NewsDto toDto(News n) {
+    String primaryKey =
+        Stream.of(n.getImageKey(), n.getImageKeyRu(), n.getImageKeyKz(), n.getImageKeyEn())
+            .filter(Objects::nonNull)
+            .filter(key -> !key.isBlank())
+            .findFirst()
+            .orElse(null);
     return NewsDto.builder()
         .id(n.getId())
         .titleKz(n.getTitleKz())
@@ -336,16 +342,14 @@ public class NewsService {
         .bodyKz(n.getBodyKz())
         .bodyRu(n.getBodyRu())
         .bodyEn(n.getBodyEn())
-        .imageUrl(
-            imageStorage.publicUrl(
-                Stream.of(n.getImageKey(), n.getImageKeyRu(), n.getImageKeyKz(), n.getImageKeyEn())
-                    .filter(Objects::nonNull)
-                    .filter(key -> !key.isBlank())
-                    .findFirst()
-                    .orElse(null)))
+        .imageUrl(imageStorage.publicUrl(primaryKey))
         .imageUrlKz(imageStorage.publicUrl(n.getImageKeyKz()))
         .imageUrlRu(imageStorage.publicUrl(n.getImageKeyRu()))
         .imageUrlEn(imageStorage.publicUrl(n.getImageKeyEn()))
+        .imageThumbUrl(imageStorage.thumbUrl(primaryKey))
+        .imageThumbUrlKz(imageStorage.thumbUrl(n.getImageKeyKz()))
+        .imageThumbUrlRu(imageStorage.thumbUrl(n.getImageKeyRu()))
+        .imageThumbUrlEn(imageStorage.thumbUrl(n.getImageKeyEn()))
         .status(n.getStatus())
         .publishedAt(n.getPublishedAt())
         .sortOrder(n.getSortOrder())
