@@ -16,6 +16,13 @@ RUN groupadd --system spring && useradd --system --gid spring --home /app spring
     apt-get update && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
+# The Ubuntu base that eclipse-temurin:21-jre now ships on (24.04/26.04) bundles Canonical's Pebble
+# service manager at /usr/bin/pebble — a ~10MB Go binary built against the Go stdlib that Trivy flags
+# HIGH (CVE-2026-78667, CVE-2026-97031). We never use Pebble: the container's ENTRYPOINT runs
+# `java -jar` directly, so it is dead weight. Remove it (and its empty state dir) so the final image
+# carries no vulnerable gobinary.
+RUN rm -rf /usr/bin/pebble /var/lib/pebble
+
 COPY --from=build --chown=spring:spring /app/app.jar app.jar
 
 USER spring
