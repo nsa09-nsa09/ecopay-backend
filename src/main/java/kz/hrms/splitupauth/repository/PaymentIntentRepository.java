@@ -22,6 +22,10 @@ public interface PaymentIntentRepository extends JpaRepository<PaymentIntent, Lo
   Optional<PaymentIntent> findFirstByRoomMemberAndStatusOrderByCreatedAtDesc(
       RoomMember roomMember, PaymentIntentStatus status);
 
+  /** Earliest intent of a given status — the billing anchor is the first successful payment. */
+  Optional<PaymentIntent> findFirstByRoomMemberAndStatusOrderByCreatedAtAsc(
+      RoomMember roomMember, PaymentIntentStatus status);
+
   Optional<PaymentIntent> findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
       Long roomMemberId, List<PaymentIntentStatus> statuses);
 

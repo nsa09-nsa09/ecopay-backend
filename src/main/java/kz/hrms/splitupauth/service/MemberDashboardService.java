@@ -5,8 +5,11 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import kz.hrms.splitupauth.dto.MemberDashboardDto;
 import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.PaymentIntent;
+import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionType;
 import kz.hrms.splitupauth.entity.PeriodType;
@@ -15,6 +18,7 @@ import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +39,8 @@ public class MemberDashboardService {
   private final RoomMemberRepository roomMemberRepository;
   private final ReviewRepository reviewRepository;
   private final DisputeRepository disputeRepository;
+  private final PaymentIntentRepository paymentIntentRepository;
+  private final PaymentService paymentService;
 
   @Transactional(readOnly = true)
   public MemberDashboardDto getMyDashboard(User user) {
@@ -105,48 +111,57 @@ public class MemberDashboardService {
   }
 
   /**
-   * Earliest upcoming billing date across all ACTIVE memberships. Approximated as room.startDate +
-   * 1 cycle (monthly = 30 days, yearly = 365). Members whose start date is already in the past also
-   * produce a projection by rolling the cycle forward until it sits in the future.
+   * Earliest upcoming billing date across all ACTIVE memberships. The date is the member's actual
+   * {@code nextBillingAt} (set on the first successful payment); for a legacy member that predates
+   * that field it is derived from the first successful payment via {@link BillingSchedule}, without
+   * persisting. The amount is the real next charge — tariff share + EcoPay commission ({@link
+   * PaymentService#currentChargeBreakdown}) — not the bare per-member price. OTHER-period plans
+   * have no renewal and are skipped.
    */
   private NextPayment projectNextPayment(List<RoomMember> memberships) {
     LocalDateTime soonest = null;
     BigDecimal soonestAmount = null;
-    LocalDateTime now = LocalDateTime.now();
 
     for (RoomMember m : memberships) {
       if (m.getStatus() != MemberStatus.ACTIVE || m.getRoom() == null) continue;
       Room r = m.getRoom();
-      LocalDateTime base = r.getStartDate();
-      if (base == null) continue;
-      LocalDateTime candidate = nextCycleAfter(base, r.getPeriodType(), now);
-      if (candidate == null) continue;
-      if (soonest == null || candidate.isBefore(soonest)) {
-        soonest = candidate;
-        soonestAmount = nullSafe(r.getPricePerMemberKzt());
+      PeriodType period = r.getPeriodType();
+      if (!BillingSchedule.isSupported(period)) continue; // OTHER (and nulls) have no schedule
+
+      LocalDateTime nextBilling = m.getNextBillingAt();
+      if (nextBilling == null) {
+        LocalDateTime anchor = firstSuccessfulAnchor(m);
+        if (anchor == null) continue;
+        nextBilling = BillingSchedule.nextAfter(anchor, period);
+      }
+
+      if (soonest == null || nextBilling.isBefore(soonest)) {
+        soonest = nextBilling;
+        soonestAmount = safeChargeAmount(r);
       }
     }
     return new NextPayment(soonest, soonestAmount);
   }
 
-  private LocalDateTime nextCycleAfter(LocalDateTime base, PeriodType period, LocalDateTime now) {
-    LocalDateTime cursor = base;
-    int safety = 0;
-    while (cursor.isBefore(now) && safety++ < 1000) {
-      cursor = advance(cursor, period);
-    }
-    return cursor;
+  /** The first successful payment's capture time (anchor), or null when none exists. */
+  private LocalDateTime firstSuccessfulAnchor(RoomMember member) {
+    Optional<PaymentIntent> first =
+        paymentIntentRepository.findFirstByRoomMemberAndStatusOrderByCreatedAtAsc(
+            member, PaymentIntentStatus.SUCCESS);
+    return first
+        .map(p -> p.getCapturedAt() != null ? p.getCapturedAt() : p.getCreatedAt())
+        .orElse(null);
   }
 
-  private LocalDateTime advance(LocalDateTime moment, PeriodType period) {
-    if (period == null) {
-      return moment.plusMonths(1);
+  /**
+   * share + commission for the next cycle; falls back to the per-member price if pricing is absent.
+   */
+  private BigDecimal safeChargeAmount(Room room) {
+    try {
+      return paymentService.currentChargeBreakdown(room).amount();
+    } catch (RuntimeException ex) {
+      return nullSafe(room.getPricePerMemberKzt());
     }
-    return switch (period) {
-      case MONTHLY -> moment.plusMonths(1);
-      case YEARLY -> moment.plusYears(1);
-      case OTHER -> moment.plusMonths(1);
-    };
   }
 
   private BigDecimal nullSafe(BigDecimal v) {
