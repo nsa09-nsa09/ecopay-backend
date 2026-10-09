@@ -8,6 +8,10 @@ All items stay unchecked until verified against the real production environment 
 - [ ] FreedomPay LIVE merchant id, payment secret, and payout secret are configured.
 - [ ] FreedomPay callbacks are public HTTPS URLs: result, payout-result, success, and failure.
 - [ ] FreedomPay webhook delivery test completed against the public production callback.
+- [ ] Live: оплата → возврат на /payment/confirmation методом GET (без 405) проверена на живом мерчанте.
+- [ ] Live: продление (renewal-intent) оплачено, период сдвинулся, выплата владельцу создана.
+- [ ] Комиссия app.commission.* утверждена с учётом эквайринга и комиссии за выплату FreedomPay (unit-экономика по каждому тарифу).
+- [ ] Цены тарифов в каталоге сверены с текущими ценами сервисов (USD-подписки пересчитаны по курсу).
 - [ ] Refund test completed with the live provider flow.
 - [ ] Payout card binding and payout dispatch test completed with the live provider flow.
 - [ ] Real SMS provider is configured with `SMS_PROVIDER=mobizon`; `APP_PHONE_DEV_BYPASS_CODE` is empty.
