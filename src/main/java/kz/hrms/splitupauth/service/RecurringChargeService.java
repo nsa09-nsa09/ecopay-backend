@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntent;
+import kz.hrms.splitupauth.entity.PaymentIntentPurpose;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.RoomMember;
@@ -203,6 +204,27 @@ public class RecurringChargeService {
     LocalDateTime now = LocalDateTime.now(clock);
     initializeBillingSchedule(member, lastSuccess, now);
 
+    // If this period is already covered by ANY intent (e.g. the member paid a manual renewal), do
+    // not auto-charge it. A captured one advances the period (finalize usually already did, but
+    // this
+    // is the safety net for a capture that landed via a renewal); an open one just blocks.
+    List<PaymentIntent> forPeriod =
+        nullToEmpty(
+            paymentIntentRepository
+                .findByRoomMember_IdAndBillingPeriodStartAndStatusInOrderByCreatedAtDesc(
+                    memberId, member.getNextBillingAt(), openOrCaptured()));
+    if (!forPeriod.isEmpty()) {
+      boolean captured =
+          forPeriod.stream().anyMatch(p -> CAPTURED_STATUSES.contains(p.getStatus()));
+      if (captured
+          && member.getBillingPeriodStart() != null
+          && member.getBillingPeriodStart().isBefore(member.getNextBillingAt())) {
+        BillingSchedule.advance(member, member.getRoom().getPeriodType());
+      }
+      roomMemberRepository.save(member);
+      return null;
+    }
+
     // Settle the current period first: a captured attempt advances it, a definitively failed one
     // consumes a retry. An open attempt blocks everything until the provider answers.
     int attemptNo = member.getRecurringRetryCount() == null ? 0 : member.getRecurringRetryCount();
@@ -212,7 +234,7 @@ public class RecurringChargeService {
             .orElse(null);
     if (current != null) {
       if (CAPTURED_STATUSES.contains(current.getStatus())) {
-        advancePeriod(member);
+        BillingSchedule.advance(member, member.getRoom().getPeriodType());
         roomMemberRepository.save(member);
         return null;
       }
@@ -264,6 +286,8 @@ public class RecurringChargeService {
                 .providerName(gateway.providerName())
                 .saveCardRequested(false)
                 .savedCard(card)
+                .purpose(PaymentIntentPurpose.RECURRING)
+                .billingPeriodStart(member.getNextBillingAt())
                 .expiresAt(now.plusMinutes(30))
                 .build());
     roomMemberRepository.save(member);
@@ -298,6 +322,8 @@ public class RecurringChargeService {
         intent.setProviderFeeAmount(resp.getProviderFeeAmount());
         paymentIntentRepository.save(intent);
       }
+      // finalizeSuccessfulPayment advances the billing period for a RECURRING intent exactly once
+      // (idempotent on the intent's terminal status), so recordResponse must NOT advance again.
       paymentService.finalizeSuccessfulPayment(
           intent.getId(),
           resp.getExternalPaymentId(),
@@ -307,7 +333,6 @@ public class RecurringChargeService {
           null,
           null,
           "RECURRING_SUCCESS");
-      advancePeriod(member);
       event = "RECURRING_SUCCESS";
     } else if (resp.isSuccess()) {
       // Accepted, not yet captured: wait for the callback / status reconciliation.
@@ -380,6 +405,16 @@ public class RecurringChargeService {
     paymentIntentRepository.save(intent);
   }
 
+  private static List<PaymentIntentStatus> openOrCaptured() {
+    List<PaymentIntentStatus> all = new java.util.ArrayList<>(OPEN_STATUSES);
+    all.addAll(CAPTURED_STATUSES);
+    return all;
+  }
+
+  private static <T> List<T> nullToEmpty(List<T> list) {
+    return list == null ? List.of() : list;
+  }
+
   private static String idempotencyKey(RoomMember member, int attempt) {
     return "recurring-"
         + member.getId()
@@ -389,29 +424,13 @@ public class RecurringChargeService {
         + attempt;
   }
 
-  private static void advancePeriod(RoomMember member) {
-    member.setBillingPeriodStart(member.getNextBillingAt());
-    member.setNextBillingAt(member.getNextBillingAt().plusMonths(1));
-    member.setRecurringRetryCount(0);
-    member.setRecurringNextRetryAt(null);
-  }
-
   private void initializeBillingSchedule(
       RoomMember member, PaymentIntent lastSuccess, LocalDateTime now) {
-    LocalDateTime anchor = member.getBillingAnchorAt();
-    if (anchor == null) {
-      anchor = lastSuccess.getCreatedAt() == null ? now : lastSuccess.getCreatedAt();
-      member.setBillingAnchorAt(anchor);
-    }
-    if (member.getBillingPeriodStart() == null) {
-      member.setBillingPeriodStart(anchor);
-    }
-    if (member.getNextBillingAt() == null) {
-      member.setNextBillingAt(member.getBillingPeriodStart().plusMonths(1));
-    }
-    if (member.getRecurringRetryCount() == null) {
-      member.setRecurringRetryCount(0);
-    }
+    LocalDateTime anchor =
+        member.getBillingAnchorAt() != null
+            ? member.getBillingAnchorAt()
+            : (lastSuccess.getCreatedAt() == null ? now : lastSuccess.getCreatedAt());
+    BillingSchedule.initialize(member, anchor, member.getRoom().getPeriodType());
   }
 
   private void scheduleRetry(RoomMember member, LocalDateTime now) {

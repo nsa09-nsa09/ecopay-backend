@@ -26,4 +26,7 @@ public class MyRoomMembershipDto {
   private LocalDateTime accessConfirmationDeadlineAt;
   private LocalDateTime accessDeemedConfirmedAt;
   private LocalDateTime activatedAt;
+
+  /** Renewal/billing state for ACTIVE members; null otherwise. */
+  private MemberBillingDto billing;
 }

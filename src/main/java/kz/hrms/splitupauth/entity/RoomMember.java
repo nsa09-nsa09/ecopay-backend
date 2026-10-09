@@ -94,6 +94,18 @@ public class RoomMember {
   @Column(name = "recurring_next_retry_at")
   private LocalDateTime recurringNextRetryAt;
 
+  /**
+   * Set when a period lapsed past its grace window with no payment; cleared when a period is paid.
+   */
+  @Column(name = "renewal_overdue_since")
+  private LocalDateTime renewalOverdueSince;
+
+  /**
+   * The {@code nextBillingAt} a RENEWAL_DUE reminder was last sent for (one reminder per period).
+   */
+  @Column(name = "renewal_reminded_for")
+  private LocalDateTime renewalRemindedFor;
+
   @Column(name = "consent_accepted_at")
   private LocalDateTime consentAcceptedAt;
 

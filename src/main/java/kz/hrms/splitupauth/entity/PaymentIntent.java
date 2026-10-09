@@ -122,11 +122,28 @@ public class PaymentIntent {
   @Builder.Default
   private Integer reconcileAttempts = 0;
 
+  /** What this intent pays for: the first payment, a manual renewal, or an auto-renewal charge. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "purpose", nullable = false, length = 16)
+  @Builder.Default
+  private PaymentIntentPurpose purpose = PaymentIntentPurpose.INITIAL;
+
+  /**
+   * For RENEWAL/RECURRING intents, the {@code nextBillingAt} of the period being paid. Lets a
+   * finalize advance the member's period exactly once and dedup a second renewal for the same
+   * period.
+   */
+  @Column(name = "billing_period_start")
+  private LocalDateTime billingPeriodStart;
+
   @PrePersist
   protected void onCreate() {
     createdAt = LocalDateTime.now();
     if (status == null) {
       status = PaymentIntentStatus.PENDING;
+    }
+    if (purpose == null) {
+      purpose = PaymentIntentPurpose.INITIAL;
     }
     if (saveCardRequested == null) {
       saveCardRequested = false;

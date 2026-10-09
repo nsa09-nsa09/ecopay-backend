@@ -25,6 +25,14 @@ public interface PaymentIntentRepository extends JpaRepository<PaymentIntent, Lo
   Optional<PaymentIntent> findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
       Long roomMemberId, List<PaymentIntentStatus> statuses);
 
+  /**
+   * Intents of this member for one billing period in any of the given statuses. Used by renewal
+   * (already-paid / reuse-open checks) and by the recurring scheduler (skip a period already
+   * covered by an intent of any purpose). Newest first.
+   */
+  List<PaymentIntent> findByRoomMember_IdAndBillingPeriodStartAndStatusInOrderByCreatedAtDesc(
+      Long roomMemberId, LocalDateTime billingPeriodStart, List<PaymentIntentStatus> statuses);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<PaymentIntent> findWithLockById(Long id);
 

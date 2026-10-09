@@ -7,11 +7,13 @@ import kz.hrms.splitupauth.dto.CreatePaymentIntentRequest;
 import kz.hrms.splitupauth.dto.PageResponse;
 import kz.hrms.splitupauth.dto.PaymentHistoryItemDto;
 import kz.hrms.splitupauth.dto.PaymentIntentResponse;
+import kz.hrms.splitupauth.dto.RenewalIntentRequest;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.service.PaymentHistoryService;
 import kz.hrms.splitupauth.service.PaymentService;
 import kz.hrms.splitupauth.service.RateLimiter;
+import kz.hrms.splitupauth.service.RenewalPaymentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -27,6 +29,7 @@ public class PaymentController {
 
   private final PaymentService paymentService;
   private final PaymentHistoryService paymentHistoryService;
+  private final RenewalPaymentService renewalPaymentService;
   private final RateLimiter rateLimiter;
 
   /** Max intent creations (initial + renewal) tolerated per user per window. */
@@ -51,6 +54,17 @@ public class PaymentController {
     rateLimitIntentCreation(user);
     return ResponseEntity.status(HttpStatus.CREATED)
         .body(paymentService.createPaymentIntent(roomMemberId, user, request));
+  }
+
+  /** Manual renewal payment for the member's next billing period (hosted page, no stored card). */
+  @PostMapping("/members/{roomMemberId}/renewal-intent")
+  public ResponseEntity<PaymentIntentResponse> createRenewalIntent(
+      @PathVariable Long roomMemberId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody RenewalIntentRequest request) {
+    rateLimitIntentCreation(user);
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(renewalPaymentService.createRenewalIntent(roomMemberId, user, request));
   }
 
   /**

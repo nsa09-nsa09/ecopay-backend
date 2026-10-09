@@ -22,6 +22,10 @@ public enum NotificationType {
   MEMBER_JOINED(NotificationCategory.MEMBERSHIP, false),
   PAYMENT_SUCCESS(NotificationCategory.PAYMENTS, true),
   PAYMENT_FAILED(NotificationCategory.PAYMENTS, true),
+  // Manual renewal: the window to pay the next period is open (one reminder per period).
+  RENEWAL_DUE(NotificationCategory.PAYMENTS, true),
+  // The period lapsed past its grace with no payment — member (and owner) are told; admin decides.
+  RENEWAL_OVERDUE(NotificationCategory.PAYMENTS, true),
   // Owner-facing: a member completed payment and is now requesting connection/access.
   // In-app only — one per member payment would be too noisy over email.
   ROOM_MEMBER_PAID(NotificationCategory.MEMBERSHIP, false),

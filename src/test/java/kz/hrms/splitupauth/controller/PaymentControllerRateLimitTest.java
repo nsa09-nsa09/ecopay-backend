@@ -23,6 +23,7 @@ import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.service.PaymentHistoryService;
 import kz.hrms.splitupauth.service.PaymentService;
 import kz.hrms.splitupauth.service.RateLimiter;
+import kz.hrms.splitupauth.service.RenewalPaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -39,8 +40,9 @@ class PaymentControllerRateLimitTest {
   void setUp() {
     paymentService = mock(PaymentService.class);
     PaymentHistoryService historyService = mock(PaymentHistoryService.class);
+    RenewalPaymentService renewalService = mock(RenewalPaymentService.class);
     rateLimiter = mock(RateLimiter.class);
-    controller = new PaymentController(paymentService, historyService, rateLimiter);
+    controller = new PaymentController(paymentService, historyService, renewalService, rateLimiter);
     ReflectionTestUtils.setField(controller, "intentMax", 10);
     ReflectionTestUtils.setField(controller, "intentWindowSeconds", 600L);
     ReflectionTestUtils.setField(controller, "confirmPerIntentWindowSeconds", 3L);

@@ -81,6 +81,25 @@ final class NotificationMessages {
               "Төлемді орындау мүмкін болмады. Қайталап көріңіз.",
               "Payment failed",
               "We could not complete your payment. Please try again.");
+      case RENEWAL_DUE ->
+          copy(
+              locale,
+              "Пора продлить участие",
+              "Участие в комнате «{roomTitle}» можно продлить. Оплатите {amount} {currency} до {dueDate}.",
+              "Қатысуды ұзарту уақыты келді",
+              "«{roomTitle}» бөлмесіндегі қатысуды ұзартуға болады. {dueDate} дейін {amount} {currency}"
+                  + " төлеңіз.",
+              "Time to renew",
+              "You can renew your place in «{roomTitle}». Pay {amount} {currency} before {dueDate}.");
+      case RENEWAL_OVERDUE ->
+          copy(
+              locale,
+              "Срок продления истёк",
+              "Оплата за следующий период в комнате «{roomTitle}» не поступила вовремя.",
+              "Ұзарту мерзімі өтті",
+              "«{roomTitle}» бөлмесіндегі келесі кезеңге төлем уақытында түспеді.",
+              "Renewal overdue",
+              "Payment for the next period in «{roomTitle}» was not received in time.");
       case ROOM_MEMBER_PAID ->
           copy(
               locale,

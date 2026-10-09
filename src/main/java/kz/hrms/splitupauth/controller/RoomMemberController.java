@@ -8,6 +8,7 @@ import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.service.DisputeService;
 import kz.hrms.splitupauth.service.MemberHoldService;
 import kz.hrms.splitupauth.service.RateLimiter;
+import kz.hrms.splitupauth.service.RenewalPaymentService;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +25,7 @@ public class RoomMemberController {
   private final RoomMemberService roomMemberService;
   private final MemberHoldService memberHoldService;
   private final DisputeService disputeService;
+  private final RenewalPaymentService renewalPaymentService;
   private final RateLimiter rateLimiter;
 
   @Value("${app.rate-limit.room-join.max:20}")
@@ -65,7 +67,11 @@ public class RoomMemberController {
   @GetMapping("/{id}/members/me")
   public ResponseEntity<MyRoomMembershipDto> getMyMembership(
       @PathVariable Long id, @AuthenticationPrincipal User user) {
-    return ResponseEntity.ok(roomMemberService.getMyMembership(id, user));
+    MyRoomMembershipDto membership = roomMemberService.getMyMembership(id, user);
+    // Billing is attached here (not in the mapper) to avoid a bean cycle: the mapper is used by
+    // RoomMemberService, which PaymentService depends on, which the renewal service depends on.
+    membership.setBilling(renewalPaymentService.describeBilling(membership.getId(), user));
+    return ResponseEntity.ok(membership);
   }
 
   @GetMapping("/{id}/members/me/hold")

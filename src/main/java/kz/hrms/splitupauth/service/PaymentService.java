@@ -120,38 +120,55 @@ public class PaymentService {
       throw ex;
     }
 
-    PaymentIntent intent = prepared.intent();
-    if (intent.getStatus() != PaymentIntentStatus.PENDING || prepared.chargeRequest() == null) {
-      return prepared.response() != null ? prepared.response() : mapToResponse(intent);
+    return initGatewayForPreparedIntent(
+        prepared.intent(),
+        prepared.savedCardToken(),
+        prepared.chargeRequest(),
+        prepared.response(),
+        currentUser.getId());
+  }
+
+  /**
+   * Calls the gateway for an already-persisted PENDING intent and applies the response (verbatim
+   * extraction of the former {@code createPaymentIntent} tail): on a gateway exception the intent
+   * goes UNKNOWN for reconciliation; otherwise the init response is applied, and only a gateway
+   * that PROVES synchronous capture finalizes here. Shared by the initial and renewal flows.
+   */
+  PaymentIntentResponse initGatewayForPreparedIntent(
+      PaymentIntent intent,
+      String savedCardToken,
+      GatewayChargeRequest chargeRequest,
+      PaymentIntentResponse preparedResponse,
+      Long actorUserId) {
+    if (intent.getStatus() != PaymentIntentStatus.PENDING || chargeRequest == null) {
+      return preparedResponse != null ? preparedResponse : mapToResponse(intent);
     }
 
     GatewayChargeResponse chargeResp;
     try {
       PaymentGateway gateway = gatewayRegistry.resolve(intent.getProviderName());
       chargeResp =
-          prepared.savedCardToken() != null
-              ? gateway.chargeWithToken(prepared.chargeRequest(), prepared.savedCardToken())
-              : gateway.initCharge(prepared.chargeRequest());
+          savedCardToken != null
+              ? gateway.chargeWithToken(chargeRequest, savedCardToken)
+              : gateway.initCharge(chargeRequest);
     } catch (Exception ex) {
       log.error(
           "Gateway charge initiation failed for intent {}: {}",
           intent.getId(),
           ex.getClass().getSimpleName());
       MoneyOperationsMetrics.paymentInit("unknown");
-      PaymentIntentResponse failed =
-          tx().execute(
-                  status ->
-                      mapToResponse(
-                          markIntentUnknownAfterGatewayException(
-                              intent.getId(), currentUser.getId(), ex.getMessage())));
-      return failed;
+      return tx().execute(
+              status ->
+                  mapToResponse(
+                      markIntentUnknownAfterGatewayException(
+                          intent.getId(), actorUserId, ex.getMessage())));
     }
 
+    GatewayChargeResponse resp = chargeResp;
     PaymentIntentResponse updated =
         tx().execute(
                 status ->
-                    mapToResponse(
-                        applyGatewayInitResponse(intent.getId(), chargeResp, currentUser.getId())));
+                    mapToResponse(applyGatewayInitResponse(intent.getId(), resp, actorUserId)));
     MoneyOperationsMetrics.paymentInit(
         !chargeResp.isSuccess()
             ? "failed"
@@ -172,12 +189,12 @@ public class PaymentService {
                       mapToResponse(
                           finalizeSuccessfulPayment(
                               updatedIntentId,
-                              chargeResp.getExternalPaymentId(),
-                              chargeResp.getProviderStatusCode(),
+                              resp.getExternalPaymentId(),
+                              resp.getProviderStatusCode(),
                               null,
                               null,
                               null,
-                              currentUser.getId(),
+                              actorUserId,
                               "GATEWAY_SYNC_SUCCESS")));
     }
 
@@ -1053,6 +1070,10 @@ public class PaymentService {
     recordSuccessTransaction(intent, cardPanMask, providerSignature, true);
     roomMemberService.markMembershipAsPaid(intent.getRoomMember());
     payoutService.createOwnerPayoutForSuccessfulPayment(intent);
+    // The member is locked here (consumeReservedSeatIfAvailable). Initialize the schedule on the
+    // first payment, or advance it exactly once for a manual renewal / auto-renewal of the current
+    // period. The top-of-method duplicate guard makes a repeated finalize (webhook retry) a no-op.
+    applyBillingScheduleOnCapture(intent);
 
     RoomMember member = intent.getRoomMember();
     roomEventLogger.log(
@@ -1089,6 +1110,41 @@ public class PaymentService {
         intent.getIdempotencyKey(),
         Map.of("externalPaymentId", String.valueOf(intent.getExternalPaymentId())));
     return intent;
+  }
+
+  /**
+   * Billing-schedule side effect of a captured payment, applied to the member locked by seat
+   * consumption. INITIAL anchors the schedule at capture time; RENEWAL/RECURRING advance the period
+   * exactly once, only when the intent is for the member's current {@code nextBillingAt} (so a
+   * stale or duplicate intent can never move the period). OTHER rooms have no schedule.
+   */
+  private void applyBillingScheduleOnCapture(PaymentIntent intent) {
+    RoomMember member = intent.getRoomMember();
+    if (member == null || member.getRoom() == null) {
+      return;
+    }
+    PeriodType type = member.getRoom().getPeriodType();
+    if (!BillingSchedule.isSupported(type)) {
+      return;
+    }
+    PaymentIntentPurpose purpose =
+        intent.getPurpose() == null ? PaymentIntentPurpose.INITIAL : intent.getPurpose();
+    if (purpose == PaymentIntentPurpose.INITIAL) {
+      if (member.getBillingAnchorAt() == null) {
+        BillingSchedule.initialize(member, intent.getCapturedAt(), type);
+        roomMemberRepository.save(member);
+      }
+      return;
+    }
+    // RENEWAL / RECURRING: advance only the period this intent actually paid for.
+    LocalDateTime period = intent.getBillingPeriodStart();
+    if (period != null
+        && member.getNextBillingAt() != null
+        && period.isEqual(member.getNextBillingAt())) {
+      BillingSchedule.advance(member, type);
+      member.setRenewalOverdueSince(null);
+      roomMemberRepository.save(member);
+    }
   }
 
   private SeatConsumptionResult consumeReservedSeatIfAvailable(PaymentIntent intent) {
@@ -1345,6 +1401,11 @@ public class PaymentService {
           "platform-fee-intent-" + intent.getId());
     }
     return tx;
+  }
+
+  /** Package-private view of {@link #mapToResponse} for the renewal flow. */
+  PaymentIntentResponse toResponse(PaymentIntent intent) {
+    return mapToResponse(intent);
   }
 
   private PaymentIntentResponse mapToResponse(PaymentIntent intent) {
