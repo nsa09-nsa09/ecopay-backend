@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.awt.Color;
@@ -186,7 +187,8 @@ class NewsServiceTest extends AbstractIntegrationTest {
     newsService.delete(created.getId(), adminUser, new MockHttpServletRequest());
 
     assertThrows(ResourceNotFoundException.class, () -> newsService.adminGet(created.getId()));
-    verify(s3Client).deleteObject(any(DeleteObjectRequest.class));
+    // Delete removes both the original object and its generated preview under news/thumb/.
+    verify(s3Client, times(2)).deleteObject(any(DeleteObjectRequest.class));
   }
 
   // ===================== public feed =====================
@@ -244,12 +246,17 @@ class NewsServiceTest extends AbstractIntegrationTest {
         new MockMultipartFile("file", "a.png", "image/png", makePng(120, 120)),
         new MockHttpServletRequest());
 
+    // Each upload writes two objects now: the original plus its news/thumb/ preview.
     ArgumentCaptor<PutObjectRequest> putCap = ArgumentCaptor.forClass(PutObjectRequest.class);
-    verify(s3Client).putObject(putCap.capture(), any(RequestBody.class));
-    String firstKey = putCap.getValue().key();
-    assertTrue(firstKey.startsWith("news/"), "first uploaded key sits under news/ prefix");
+    verify(s3Client, times(2)).putObject(putCap.capture(), any(RequestBody.class));
+    String firstKey =
+        putCap.getAllValues().stream()
+            .map(PutObjectRequest::key)
+            .filter(k -> k.startsWith("news/") && !k.startsWith("news/thumb/"))
+            .findFirst()
+            .orElseThrow();
 
-    // Second upload: another put + a delete for the previous key.
+    // Second upload: another original+preview put, and a delete of the previous original+preview.
     newsService.uploadImage(
         created.getId(),
         adminUser,
@@ -257,9 +264,10 @@ class NewsServiceTest extends AbstractIntegrationTest {
         new MockHttpServletRequest());
 
     ArgumentCaptor<DeleteObjectRequest> delCap = ArgumentCaptor.forClass(DeleteObjectRequest.class);
-    verify(s3Client).deleteObject(delCap.capture());
-    assertEquals(
-        firstKey, delCap.getValue().key(), "replacing the image must delete the previous key");
+    verify(s3Client, times(2)).deleteObject(delCap.capture());
+    assertTrue(
+        delCap.getAllValues().stream().anyMatch(r -> r.key().equals(firstKey)),
+        "replacing the image must delete the previous original key");
   }
 
   // ===================== audit =====================
