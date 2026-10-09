@@ -280,10 +280,18 @@ public class RenewalPaymentService {
     MemberBillingDto.MemberBillingDtoBuilder dto =
         MemberBillingDto.builder().nextBillingAt(period).renewalOpen(renewalOpen).overdue(overdue);
     if (renewalOpen) {
-      PaymentService.ChargeBreakdown breakdown = paymentService.currentChargeBreakdown(room);
-      dto.renewalAmountKzt(breakdown.amount())
-          .renewalShareKzt(breakdown.share())
-          .renewalCommissionKzt(breakdown.commission());
+      // Never let a pricing edge case turn a dashboard GET into a 500; amounts stay null then.
+      try {
+        PaymentService.ChargeBreakdown breakdown = paymentService.currentChargeBreakdown(room);
+        dto.renewalAmountKzt(breakdown.amount())
+            .renewalShareKzt(breakdown.share())
+            .renewalCommissionKzt(breakdown.commission());
+      } catch (RuntimeException ex) {
+        log.warn(
+            "Could not compute renewal amount for member {}: {}",
+            roomMemberId,
+            ex.getClass().getSimpleName());
+      }
     }
     return dto.build();
   }
