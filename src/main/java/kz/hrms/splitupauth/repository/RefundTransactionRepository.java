@@ -1,34 +1,96 @@
 package kz.hrms.splitupauth.repository;
 
+import jakarta.persistence.LockModeType;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 import kz.hrms.splitupauth.entity.Dispute;
+import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentTransaction;
 import kz.hrms.splitupauth.entity.RefundTransaction;
 import kz.hrms.splitupauth.entity.User;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
-import java.math.BigDecimal;
-import java.util.List;
-import java.util.Optional;
+public interface RefundTransactionRepository
+    extends JpaRepository<RefundTransaction, Long>, JpaSpecificationExecutor<RefundTransaction> {
 
-public interface RefundTransactionRepository extends JpaRepository<RefundTransaction, Long> {
+  Optional<RefundTransaction> findByIdempotencyKey(String idempotencyKey);
 
-    Optional<RefundTransaction> findByIdempotencyKey(String idempotencyKey);
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  Optional<RefundTransaction> findWithLockById(Long id);
 
-    Optional<RefundTransaction> findByProviderRefundId(String providerRefundId);
+  Optional<RefundTransaction> findByProviderRefundId(String providerRefundId);
 
-    List<RefundTransaction> findByDisputeOrderByCreatedAtDesc(Dispute dispute);
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  Optional<RefundTransaction> findWithLockByProviderRefundId(String providerRefundId);
 
-    List<RefundTransaction> findByPaymentTransaction_PaymentIntent_UserOrderByCreatedAtDesc(User user);
+  List<RefundTransaction> findByDisputeOrderByCreatedAtDesc(Dispute dispute);
 
-    List<RefundTransaction> findByPaymentTransactionAndStatusIn(
-            PaymentTransaction tx, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+  List<RefundTransaction> findByPaymentTransaction_PaymentIntent_UserOrderByCreatedAtDesc(
+      User user);
 
-    default BigDecimal sumActiveRefundAmounts(PaymentTransaction tx) {
-        return findByPaymentTransactionAndStatusIn(tx, List.of(
+  long countByPaymentTransaction_PaymentIntent_UserAndStatusIn(
+      User user, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
+  List<RefundTransaction> findByPaymentTransactionAndStatusIn(
+      PaymentTransaction tx, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
+  @Query(
+      """
+      select r.id
+      from RefundTransaction r
+      where r.status = kz.hrms.splitupauth.entity.RefundStatus.PENDING
+        and (r.nextRetryAt is null or r.nextRetryAt <= :now)
+        and (r.leaseUntil is null or r.leaseUntil <= :now)
+        and coalesce(r.retryCount, 0) < :maxAttempts
+      order by coalesce(r.nextRetryAt, r.createdAt), r.id
+      """)
+  List<Long> findDispatchableIds(
+      @Param("now") LocalDateTime now, @Param("maxAttempts") int maxAttempts, Pageable pageable);
+
+  @Query(
+      """
+      select count(r) > 0
+      from RefundTransaction r
+      where r.paymentTransaction.paymentIntent = :intent
+        and r.status in :statuses
+      """)
+  boolean existsByPaymentIntentAndStatusIn(
+      @Param("intent") PaymentIntent intent,
+      @Param("statuses") List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
+  default BigDecimal sumActiveRefundAmounts(PaymentTransaction tx) {
+    return findByPaymentTransactionAndStatusIn(
+            tx,
+            List.of(
                 kz.hrms.splitupauth.entity.RefundStatus.PENDING,
+                kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER,
                 kz.hrms.splitupauth.entity.RefundStatus.SUCCESS))
-                .stream()
-                .map(RefundTransaction::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
+        .stream()
+        .map(RefundTransaction::getAmount)
+        .reduce(BigDecimal.ZERO, BigDecimal::add);
+  }
+
+  default BigDecimal sumSuccessfulRefundAmounts(PaymentTransaction tx) {
+    return findByPaymentTransactionAndStatusIn(
+            tx, List.of(kz.hrms.splitupauth.entity.RefundStatus.SUCCESS))
+        .stream()
+        .map(RefundTransaction::getAmount)
+        .reduce(BigDecimal.ZERO, BigDecimal::add);
+  }
+
+  @Query(
+      "select r.id from RefundTransaction r "
+          + "where r.status = kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER "
+          + "and (r.lastReconciledAt is null or r.lastReconciledAt < :reconciledBefore) "
+          + "order by r.createdAt asc")
+  java.util.List<Long> findIdsPendingProviderForReconciliation(
+      @Param("reconciledBefore") java.time.LocalDateTime reconciledBefore,
+      org.springframework.data.domain.Pageable pageable);
 }

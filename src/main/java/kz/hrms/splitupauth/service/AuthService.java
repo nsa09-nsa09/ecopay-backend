@@ -1,9 +1,15 @@
 package kz.hrms.splitupauth.service;
 
+import jakarta.servlet.http.HttpServletRequest;
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.EmailVerificationToken;
+import kz.hrms.splitupauth.entity.LegalDocument;
 import kz.hrms.splitupauth.entity.PasswordResetToken;
 import kz.hrms.splitupauth.entity.RefreshToken;
+import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.StaffTwoFactorChallenge;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
@@ -19,292 +25,597 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import kz.hrms.splitupauth.entity.Role;
-
-import java.time.LocalDateTime;
-import java.util.UUID;
-
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class AuthService {
 
-    private final UserRepository userRepository;
-    private final PasswordResetTokenRepository passwordResetTokenRepository;
-    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtUtil jwtUtil;
-    private final RefreshTokenService refreshTokenService;
-    private final EmailService emailService;
-    private final RateLimitService rateLimitService;
-    private final UserMapper userMapper;
-    private final PhoneVerificationService phoneVerificationService;
-    private final StaffTwoFactorService staffTwoFactorService;
+  private static final SecureRandom RANDOM = new SecureRandom();
 
-    // Dev/test only: auto-verify email on registration so login works without SMTP.
-    @Value("${app.dev.auto-verify-email:false}")
-    private boolean devAutoVerifyEmail;
+  /** Wrong-code attempts allowed before the confirmation must be restarted (resent). */
+  private static final int MAX_CODE_ATTEMPTS = 5;
 
-    @Transactional
-    public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new UserAlreadyExistsException("User with this email already exists");
-        }
+  /** Minimum seconds between two verification emails for the same account. */
+  static final int RESEND_COOLDOWN_SECONDS = 60;
 
-        if (userRepository.existsByPhone(request.getPhone())) {
-            throw new PhoneAlreadyExistsException("User with this phone already exists");
-        }
+  /** Verification emails allowed per account per hour (anti-mailbomb). */
+  static final int MAX_SENDS_PER_HOUR = 5;
 
-        User user = User.builder()
-                .email(request.getEmail())
-                .password(passwordEncoder.encode(request.getPassword()))
-                .displayName(request.getDisplayName())
-                .phone(request.getPhone())
-                .status(UserStatus.ACTIVE)
-                .role(Role.USER)
-                .reputation(0)
-                .emailVerified(false)
-                .build();
+  /**
+   * Lifetime of a one-time confirmation token, shared by the emailed link and the 6-digit code.
+   *
+   * <p>Short on purpose: the token is a bearer credential sitting in a mailbox, and a mailbox is
+   * exactly what gets forwarded, synced to a phone that later changes hands, or read by whoever
+   * borrows an unlocked laptop. Thirty minutes covers "open the mail, type the code" and little
+   * else. The user is never stuck — /auth/resend-verification issues a fresh one.
+   */
+  public static final int CONFIRMATION_TTL_MINUTES = 30;
 
-        user = userRepository.save(user);
+  /** Lifetime of a password-reset link. Same reasoning, and the stakes are higher. */
+  public static final int PASSWORD_RESET_TTL_MINUTES = 30;
 
-        if (devAutoVerifyEmail) {
-            // Dev/test: skip the email round-trip so the account can log in without SMTP.
-            user.setEmailVerified(true);
-            user = userRepository.save(user);
-        } else {
-            sendVerificationEmail(user);
-        }
-        try {
-            phoneVerificationService.requestCode(user, request.getPhone());
-        } catch (Exception ex) {
-            // SMS delivery failure must not block registration — user can resend.
-            log.warn("Failed to send initial SMS code for user {}: {}",
-                    user.getEmail(), ex.getMessage());
-        }
+  private final UserRepository userRepository;
+  private final PasswordResetTokenRepository passwordResetTokenRepository;
+  private final EmailVerificationTokenRepository emailVerificationTokenRepository;
+  private final PasswordEncoder passwordEncoder;
+  private final JwtUtil jwtUtil;
+  private final RefreshTokenService refreshTokenService;
+  private final EmailService emailService;
+  private final RateLimitService rateLimitService;
+  private final UserMapper userMapper;
+  private final StaffTwoFactorService staffTwoFactorService;
+  private final LegalDocumentService legalDocumentService;
+  private final SlugService slugService;
+  private final EmailChangeService emailChangeService;
+  private final EmailValidationService emailValidationService;
+  private final AccountRestrictionService accountRestrictionService;
 
-        // No tokens issued: the account must verify its email before logging in.
-        return AuthResponse.builder()
-                .user(userMapper.toDto(user))
-                .build();
+  // Dev/test only: auto-verify email on registration so login works without SMTP.
+  @Value("${app.dev.auto-verify-email:false}")
+  private boolean devAutoVerifyEmail;
+
+  /**
+   * In-process limiter for the auth anti-abuse buckets (register / password-reset). Field-injected
+   * (mirrors {@link RoomMapper}) and optional so the Mockito unit tests that {@code new
+   * AuthService(...)} without it keep compiling; when it is null the limiter checks are skipped —
+   * those tests assert the business logic, and the integration tests exercise the real limiter.
+   */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private RateLimiter authRateLimiter;
+
+  // --- Registration anti-abuse (Block 4a). Keyed on BOTH source IP and normalized email. ---
+  @Value("${app.rate-limit.register.ip-max:10}")
+  private int registerIpMax;
+
+  @Value("${app.rate-limit.register.ip-window-seconds:3600}")
+  private long registerIpWindowSeconds;
+
+  @Value("${app.rate-limit.register.email-max:3}")
+  private int registerEmailMax;
+
+  @Value("${app.rate-limit.register.email-window-seconds:3600}")
+  private long registerEmailWindowSeconds;
+
+  // --- Password-reset anti-abuse (Block 4b). Per-account cooldown is SILENT; per-IP may 429. ---
+  @Value("${app.rate-limit.password-reset.account-max:3}")
+  private int passwordResetAccountMax;
+
+  @Value("${app.rate-limit.password-reset.account-window-seconds:900}")
+  private long passwordResetAccountWindowSeconds;
+
+  @Value("${app.rate-limit.password-reset.ip-max:15}")
+  private int passwordResetIpMax;
+
+  @Value("${app.rate-limit.password-reset.ip-window-seconds:3600}")
+  private long passwordResetIpWindowSeconds;
+
+  @Transactional
+  public AuthResponse register(RegisterRequest request, MailLocale locale) {
+    return register(request, locale, null);
+  }
+
+  @Transactional
+  public AuthResponse register(
+      RegisterRequest request, MailLocale locale, HttpServletRequest httpRequest) {
+    // Registration attaches a brand-new address, so it gets the full
+    // pipeline: canonicalise, then reject malformed addresses and domains that
+    // publish no MX. Skipping this is how gmial.com rows end up in the table.
+    String email = emailValidationService.normalizeAndValidateDeliverable(request.getEmail());
+
+    // Anti-abuse (Block 4a): throttle on BOTH the source IP and the normalized email so neither a
+    // single host nor a single address can drive an unverified-account creation storm. Done before
+    // the existence check so it also caps "does this email exist" probing via the signup form.
+    if (authRateLimiter != null) {
+      String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+      if (ip != null) {
+        authRateLimiter.check(
+            "register:ip:" + ip,
+            registerIpMax,
+            registerIpWindowSeconds,
+            "Too many registration attempts. Please try again later.");
+      }
+      authRateLimiter.check(
+          "register:email:" + email,
+          registerEmailMax,
+          registerEmailWindowSeconds,
+          "Too many registration attempts for this email. Please try again later.");
     }
 
-    @Transactional
-    public AuthResponse login(LoginRequest request) {
-        rateLimitService.checkLoginAttempts(request.getEmail());
+    if (userRepository.existsByEmail(email)) {
+      throw new UserAlreadyExistsException("User with this email already exists");
+    }
 
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> {
-                    rateLimitService.recordLoginAttempt(request.getEmail(), false);
-                    return new InvalidCredentialsException("Invalid email or password");
+    // @AssertTrue on RegisterRequest.termsAccepted already rejects null/false
+    // with a 400, so anything reaching this point has consented. Persist the
+    // acceptance timestamp + document versions. If the caller didn't send
+    // versions, fall back to the current server-side versions.
+    Integer termsVersion =
+        request.getAcceptedTermsVersion() != null
+            ? request.getAcceptedTermsVersion()
+            : legalDocumentService.currentVersion(LegalDocument.DocType.TERMS);
+    Integer privacyVersion =
+        request.getAcceptedPrivacyVersion() != null
+            ? request.getAcceptedPrivacyVersion()
+            : legalDocumentService.currentVersion(LegalDocument.DocType.PRIVACY);
+
+    User user =
+        User.builder()
+            .email(email)
+            .locale(locale.tag())
+            .password(passwordEncoder.encode(request.getPassword()))
+            .displayName(request.getDisplayName())
+            .status(UserStatus.ACTIVE)
+            .role(Role.USER)
+            .reputation(User.DEFAULT_REPUTATION)
+            .emailVerified(false)
+            .termsAcceptedAt(LocalDateTime.now())
+            .acceptedTermsVersion(termsVersion)
+            .acceptedPrivacyVersion(privacyVersion)
+            .build();
+
+    // Assign a unique human-readable slug before the row is persisted so the
+    // returned DTO already carries it.
+    slugService.assignInitialSlug(user);
+    user = userRepository.save(user);
+
+    if (devAutoVerifyEmail) {
+      // Dev/test: skip the email round-trip so the account can log in without SMTP.
+      // Tokens are issued straight away so the frontend can drop the user in.
+      user.setEmailVerified(true);
+      user = userRepository.save(user);
+      return issueTokens(user);
+    }
+
+    sendVerificationEmail(user);
+
+    // No tokens issued: the account must confirm the emailed code (or link)
+    // before it is considered fully registered and allowed to log in.
+    return AuthResponse.builder().user(userMapper.toDto(user)).build();
+  }
+
+  @Transactional
+  public AuthResponse login(LoginRequest request) {
+    return login(request, null);
+  }
+
+  @Transactional
+  public AuthResponse login(LoginRequest request, HttpServletRequest httpRequest) {
+    // Format check only (level 1). The address already exists in the database
+    // here, so an MX lookup would add latency without adding safety — and would
+    // lock out an existing user whose provider's DNS is having a bad day.
+    // Normalizing is not optional: without it "User@Gmail.com" misses the row
+    // stored as "user@gmail.com" and reads as wrong credentials.
+    String email = emailValidationService.normalizeAndValidateFormat(request.getEmail());
+
+    // Rate-limit on the canonical identifier so case variants share one bucket
+    // rather than giving an attacker a fresh allowance per spelling. The IP bucket
+    // (Block 4c) additionally catches credential stuffing across many emails from one host.
+    String identifier = email;
+    final String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+    rateLimitService.checkLoginAttempts(identifier, ip);
+
+    User user =
+        userRepository
+            .findByEmail(email)
+            .orElseThrow(
+                () -> {
+                  // Burn the same hashing cost as a real check so response time does not reveal
+                  // whether the account exists.
+                  passwordEncoder.matches(request.getPassword(), timingEqualizerHash());
+                  rateLimitService.recordLoginAttempt(identifier, false, ip);
+                  return new InvalidCredentialsException("Invalid credentials");
                 });
 
-        if (user.getStatus() == UserStatus.BANNED) {
-            throw new UserBannedException(
-                    "Your account has been banned",
-                    user.getBanReason(),
-                    user.getBannedAt());
-        }
-
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            rateLimitService.recordLoginAttempt(request.getEmail(), false);
-            throw new InvalidCredentialsException("Invalid email or password");
-        }
-
-        if (Boolean.FALSE.equals(user.getEmailVerified())) {
-            throw new EmailNotVerifiedException("Email not verified. Please check your inbox for the verification link.");
-        }
-
-        rateLimitService.recordLoginAttempt(request.getEmail(), true);
-
-        // ADMIN / SUPPORT accounts must complete an email 2FA step before any
-        // access or refresh tokens are issued.
-        if (staffTwoFactorService.requiresTwoFactor(user)) {
-            StaffTwoFactorChallenge challenge = staffTwoFactorService.createChallenge(user);
-            return AuthResponse.builder()
-                    .requiresTwoFactor(true)
-                    .challengeId(challenge.getId())
-                    .expiresAt(challenge.getExpiresAt())
-                    .maskedEmail(StaffTwoFactorService.maskEmail(user.getEmail()))
-                    .build();
-        }
-
-        return issueTokens(user);
+    // Password first: ban status and reason are only revealed to someone who knows the password.
+    if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+      rateLimitService.recordLoginAttempt(identifier, false, ip);
+      throw new InvalidCredentialsException("Invalid credentials");
     }
 
-    /**
-     * Second step of the staff login flow. Verifies the OTP and, on success,
-     * returns the normal access + refresh token bundle.
-     */
-    @Transactional
-    public AuthResponse verifyStaffTwoFactor(TwoFactorVerifyRequest request) {
-        User user = staffTwoFactorService.verifyChallenge(
-                request.getChallengeId(), request.getCode());
+    accountRestrictionService.requireAllowed(user);
 
-        if (user.getStatus() == UserStatus.BANNED) {
-            throw new UserBannedException(
-                    "Your account has been banned",
-                    user.getBanReason(),
-                    user.getBannedAt());
-        }
-
-        return issueTokens(user);
+    if (!Boolean.TRUE.equals(user.getEmailVerified())) {
+      throw new EmailNotVerifiedException(
+          "Email not verified. Please check your inbox for the verification link.");
     }
 
-    /**
-     * Re-issue the OTP for an existing staff 2FA challenge. Cooldown-protected
-     * by the underlying service.
-     */
-    @Transactional
-    public void resendStaffTwoFactor(TwoFactorResendRequest request) {
-        staffTwoFactorService.resendChallenge(request.getChallengeId());
+    rateLimitService.recordLoginAttempt(identifier, true, ip);
+
+    // ADMIN / SUPPORT accounts must complete an email 2FA step before any
+    // access or refresh tokens are issued.
+    if (staffTwoFactorService.requiresTwoFactor(user)) {
+      StaffTwoFactorChallenge challenge = staffTwoFactorService.createChallenge(user);
+      return AuthResponse.builder()
+          .requiresTwoFactor(true)
+          .challengeId(challenge.getId())
+          .expiresAt(challenge.getExpiresAt())
+          .maskedEmail(StaffTwoFactorService.maskEmail(user.getEmail()))
+          .build();
     }
 
-    private AuthResponse issueTokens(User user) {
-        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        String refreshToken = refreshTokenService.createRefreshToken(user);
+    return issueTokens(user);
+  }
 
-        // Track the moment tokens were last issued so the admin panel can show
-        // "online presence". Refresh-token rotation does NOT touch this field —
-        // refreshToken() does not call issueTokens, only authenticated sessions.
-        user.setLastLoginAt(LocalDateTime.now());
-        userRepository.save(user);
+  private volatile String timingEqualizerHash;
 
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .user(userMapper.toDto(user))
-                .build();
+  private String timingEqualizerHash() {
+    String hash = timingEqualizerHash;
+    if (hash == null) {
+      hash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
+      timingEqualizerHash = hash;
+    }
+    return hash;
+  }
+
+  /**
+   * Second step of the staff login flow. Verifies the OTP and, on success, returns the normal
+   * access + refresh token bundle.
+   */
+  @Transactional
+  public AuthResponse verifyStaffTwoFactor(TwoFactorVerifyRequest request) {
+    User user = staffTwoFactorService.verifyChallenge(request.getChallengeId(), request.getCode());
+
+    accountRestrictionService.requireAllowed(user);
+
+    return issueTokens(user);
+  }
+
+  /**
+   * Re-issue the OTP for an existing staff 2FA challenge. Cooldown-protected by the underlying
+   * service.
+   */
+  @Transactional
+  public void resendStaffTwoFactor(TwoFactorResendRequest request) {
+    staffTwoFactorService.resendChallenge(request.getChallengeId());
+  }
+
+  private AuthResponse issueTokens(User user) {
+    // Subject is the immutable publicId, not the email: email may change.
+    // JwtAuthenticationFilter still resolves legacy email-subject tokens for
+    // sessions issued before this switch.
+    String accessToken = jwtUtil.generateAccessToken(user.getPublicId());
+    String refreshToken = refreshTokenService.createRefreshToken(user);
+
+    // Track the moment tokens were last issued so the admin panel can show
+    // "online presence". Refresh-token rotation does NOT touch this field —
+    // refreshToken() does not call issueTokens, only authenticated sessions.
+    user.setLastLoginAt(LocalDateTime.now());
+    userRepository.save(user);
+
+    return AuthResponse.builder()
+        .accessToken(accessToken)
+        .refreshToken(refreshToken)
+        .user(userMapper.toDto(user))
+        .build();
+  }
+
+  @Transactional
+  public AuthResponse refreshToken(RefreshTokenRequest request) {
+    RefreshToken refreshToken = refreshTokenService.validateRefreshToken(request.getRefreshToken());
+    User user = refreshToken.getUser();
+
+    accountRestrictionService.requireAllowed(user);
+
+    // Rotate: revoke the presented token first, then issue a fresh one.
+    refreshTokenService.revokeRefreshToken(request.getRefreshToken());
+
+    String accessToken = jwtUtil.generateAccessToken(user.getPublicId());
+    String newRefreshToken = refreshTokenService.createRefreshToken(user);
+
+    return AuthResponse.builder()
+        .accessToken(accessToken)
+        .refreshToken(newRefreshToken)
+        .user(userMapper.toDto(user))
+        .build();
+  }
+
+  @Transactional
+  public void logout(String refreshTokenValue) {
+    refreshTokenService.revokeRefreshToken(refreshTokenValue);
+  }
+
+  @Transactional
+  public void requestPasswordReset(PasswordResetRequest request) {
+    requestPasswordReset(request, null);
+  }
+
+  @Transactional
+  public void requestPasswordReset(PasswordResetRequest request, HttpServletRequest httpRequest) {
+    // Per-IP throttle (Block 4b). Keyed on IP only and applied BEFORE any address lookup, so a 429
+    // here is address-INDEPENDENT: it reflects only how many reset requests this host made, never
+    // whether a given address exists. That keeps the no-enumeration contract intact while capping a
+    // mail-bomb run from one source.
+    if (authRateLimiter != null && httpRequest != null) {
+      String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+      if (ip != null) {
+        authRateLimiter.check(
+            "pwreset:ip:" + ip,
+            passwordResetIpMax,
+            passwordResetIpWindowSeconds,
+            "Too many password reset requests. Please try again later.");
+      }
     }
 
-    @Transactional
-    public AuthResponse refreshToken(RefreshTokenRequest request) {
-        RefreshToken refreshToken = refreshTokenService.validateRefreshToken(request.getRefreshToken());
-        User user = refreshToken.getUser();
+    // Normalize only — never validate loudly here. Any thrown error (bad
+    // format, dead domain) would be a different response than the silent
+    // success below, handing an attacker an oracle for which addresses exist.
+    String email = emailValidationService.normalize(request.getEmail());
+    User user = email == null ? null : userRepository.findByEmail(email).orElse(null);
 
-        if (user.getStatus() == UserStatus.BANNED) {
-            throw new UserBannedException(
-                    "Your account has been banned",
-                    user.getBanReason(),
-                    user.getBannedAt());
-        }
-
-        // Rotate: revoke the presented token first, then issue a fresh one.
-        refreshTokenService.revokeRefreshToken(request.getRefreshToken());
-
-        String accessToken = jwtUtil.generateAccessToken(user.getEmail());
-        String newRefreshToken = refreshTokenService.createRefreshToken(user);
-
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(newRefreshToken)
-                .user(userMapper.toDto(user))
-                .build();
+    // Silent for unknown addresses AND for accounts whose email was never
+    // confirmed: password recovery only works through a verified email, and
+    // responding differently would leak which addresses exist in the system.
+    if (user == null || !Boolean.TRUE.equals(user.getEmailVerified())) {
+      return;
     }
 
-    @Transactional
-    public void logout(String refreshTokenValue) {
-        refreshTokenService.revokeRefreshToken(refreshTokenValue);
-    }
-
-
-@Transactional
-public void requestPasswordReset(PasswordResetRequest request) {
-    User user = userRepository.findByEmail(request.getEmail()).orElse(null);
-
-    if (user == null) {
+    // Per-account cooldown (Block 4b). MUST be SILENT: throwing here only for known+verified
+    // accounts would make the response differ from the unknown-address case and reintroduce the
+    // enumeration oracle. So when the cooldown trips we return the same way the unknown path does —
+    // no token, no mail, no error.
+    if (authRateLimiter != null) {
+      try {
+        authRateLimiter.check(
+            "pwreset:acct:" + user.getId(),
+            passwordResetAccountMax,
+            passwordResetAccountWindowSeconds,
+            "cooldown");
+      } catch (TooManyRequestsException silent) {
         return;
+      }
     }
 
     passwordResetTokenRepository.deleteByUser(user);
 
     String token = UUID.randomUUID().toString();
-    PasswordResetToken resetToken = PasswordResetToken.builder()
-            .token(token)
+    // Only a SHA-256 digest is stored: a database/backup reader cannot use pending reset links.
+    PasswordResetToken resetToken =
+        PasswordResetToken.builder()
+            .token(sha256Hex(token))
             .user(user)
-            .expiresAt(LocalDateTime.now().plusHours(1))
+            .expiresAt(LocalDateTime.now().plusMinutes(PASSWORD_RESET_TTL_MINUTES))
             .used(false)
             .build();
 
     passwordResetTokenRepository.save(resetToken);
 
-    emailService.sendPasswordResetEmail(user.getEmail(), token);
+    try {
+      emailService.sendPasswordResetEmail(
+          user.getEmail(), token, MailLocale.from(user.getLocale()));
+    } catch (MailDeliveryException e) {
+      // This endpoint answers identically for unknown and unverified addresses
+      // (see above), so it must answer identically when our mail server is
+      // down too — otherwise 200-vs-503 tells an attacker exactly which
+      // addresses are registered and verified. The token stays valid; the user
+      // can request another one once delivery recovers.
+      log.error("Password-reset email failed for account id={}: {}", user.getId(), e.getMessage());
     }
-    @Transactional
-    public void confirmPasswordReset(PasswordResetConfirmRequest request) {
+  }
 
-        PasswordResetToken resetToken = passwordResetTokenRepository
-                .findByToken(request.getToken())
-                .orElseThrow(() ->
-                        new TokenExpiredException("Invalid or expired reset token"));
+  @Transactional
+  public void confirmPasswordReset(PasswordResetConfirmRequest request) {
 
-        if (resetToken.getUsed()) {
-            throw new TokenExpiredException("Reset token already used");
-        }
+    PasswordResetToken resetToken =
+        passwordResetTokenRepository
+            .findByToken(sha256Hex(request.getToken() == null ? "" : request.getToken()))
+            .orElseThrow(() -> new TokenExpiredException("Invalid or expired reset token"));
 
-        if (resetToken.isExpired()) {
-            throw new TokenExpiredException("Reset token expired");
-        }
-
-        User user = resetToken.getUser();
-
-        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-        userRepository.save(user);
-
-        resetToken.setUsed(true);
-        passwordResetTokenRepository.save(resetToken);
-
-        refreshTokenService.revokeAllUserTokens(user);
+    if (resetToken.getUsed()) {
+      throw new TokenExpiredException("Reset token already used");
     }
 
-    @Transactional
-    public void verifyEmail(String token) {
-        EmailVerificationToken verificationToken = emailVerificationTokenRepository
-                .findByToken(token)
-                .orElseThrow(() ->
-                        new TokenExpiredException("Invalid or expired verification token"));
-
-        if (verificationToken.getUsed()) {
-            throw new TokenExpiredException("Verification token already used");
-        }
-
-        if (verificationToken.isExpired()) {
-            throw new TokenExpiredException("Verification token expired");
-        }
-
-        User user = verificationToken.getUser();
-        user.setEmailVerified(true);
-        userRepository.save(user);
-
-        verificationToken.setUsed(true);
-        emailVerificationTokenRepository.save(verificationToken);
+    if (resetToken.isExpired()) {
+      throw new TokenExpiredException("Reset token expired");
     }
 
-    @Transactional
-    public void resendVerificationEmail(ResendVerificationRequest request) {
-        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+    User user = resetToken.getUser();
 
-        // Stay silent for unknown or already-verified accounts to avoid email enumeration.
-        if (user == null || Boolean.TRUE.equals(user.getEmailVerified())) {
-            return;
-        }
+    user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+    userRepository.save(user);
 
-        sendVerificationEmail(user);
+    resetToken.setUsed(true);
+    passwordResetTokenRepository.save(resetToken);
+
+    refreshTokenService.revokeAllUserTokens(user);
+  }
+
+  @Transactional
+  public void verifyEmail(String token) {
+    EmailVerificationToken verificationToken =
+        emailVerificationTokenRepository
+            .findByToken(token)
+            .orElseThrow(() -> new TokenExpiredException("Invalid or expired verification token"));
+
+    if (verificationToken.getUsed()) {
+      throw new TokenExpiredException("Verification token already used");
     }
 
-    private void sendVerificationEmail(User user) {
-        emailVerificationTokenRepository.deleteByUser(user);
-
-        String token = UUID.randomUUID().toString();
-        EmailVerificationToken verificationToken = EmailVerificationToken.builder()
-                .token(token)
-                .user(user)
-                .expiresAt(LocalDateTime.now().plusHours(24))
-                .used(false)
-                .build();
-
-        emailVerificationTokenRepository.save(verificationToken);
-
-        emailService.sendVerificationEmail(user.getEmail(), token);
+    if (verificationToken.isExpired()) {
+      throw new TokenExpiredException("Verification token expired");
     }
+
+    User user = verificationToken.getUser();
+
+    // Click-through link of the profile add/change-email flow: the address is
+    // parked on the token and only attached to the account now.
+    if (verificationToken.getPendingEmail() != null) {
+      emailChangeService.applyPendingEmail(user, verificationToken);
+      return;
+    }
+
+    user.setEmailVerified(true);
+    userRepository.save(user);
+
+    verificationToken.setUsed(true);
+    emailVerificationTokenRepository.save(verificationToken);
+  }
+
+  @Transactional
+  public void resendVerificationEmail(ResendVerificationRequest request) {
+    // Silent path: normalize but never throw, same enumeration argument as
+    // requestPasswordReset.
+    String email = emailValidationService.normalize(request.getEmail());
+    User user = email == null ? null : userRepository.findByEmail(email).orElse(null);
+
+    // Stay silent for unknown or already-verified accounts to avoid email enumeration.
+    if (user == null || Boolean.TRUE.equals(user.getEmailVerified())) {
+      return;
+    }
+
+    try {
+      sendVerificationEmail(user);
+    } catch (TooManyRequestsException e) {
+      // This endpoint is unauthenticated and takes an arbitrary address, so a
+      // 429 here would answer "yes, that address exists and is unverified" —
+      // exactly the enumeration signal the silent branches above avoid. Drop
+      // the send instead; the client shows its own resend countdown.
+      log.debug("Suppressed resend for rate-limited account id={}", user.getId());
+    } catch (MailDeliveryException e) {
+      // Same reasoning, and it bites harder: while SMTP is down an unknown
+      // address returns 200 and a real one would return 503, handing an
+      // attacker a clean oracle over the whole user base. Our outage must not
+      // become a disclosure, so answer identically and page the operator
+      // through the logs instead.
+      log.error("Verification resend failed for account id={}: {}", user.getId(), e.getMessage());
+    }
+  }
+
+  /**
+   * Confirm the 6-digit code emailed at registration. On success the account is marked verified and
+   * logged in straight away (tokens issued), matching the staff-2FA "verify then enter" flow.
+   */
+  @Transactional
+  public AuthResponse verifyEmailCode(VerifyEmailCodeRequest request) {
+    String email = emailValidationService.normalize(request.getEmail());
+    User user =
+        userRepository
+            .findByEmail(email)
+            .orElseThrow(
+                () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
+
+    // Already verified: never mint a session here. This endpoint is unauthenticated and the code
+    // is the only credential it checks, so a verified account must go through /login (password,
+    // ban check, staff 2FA). Same generic error as a wrong code, so it reveals nothing.
+    if (Boolean.TRUE.equals(user.getEmailVerified())) {
+      throw new InvalidVerificationCodeException("Invalid or expired verification code");
+    }
+
+    EmailVerificationToken verificationToken =
+        emailVerificationTokenRepository
+            .findByUser(user)
+            .orElseThrow(
+                () -> new InvalidVerificationCodeException("Invalid or expired verification code"));
+
+    if (verificationToken.getUsed() || verificationToken.getCodeHash() == null) {
+      throw new InvalidVerificationCodeException("Invalid or expired verification code");
+    }
+
+    if (verificationToken.isExpired()) {
+      throw new VerificationCodeExpiredException(
+          "Verification code expired. Please request a new one.");
+    }
+
+    if (verificationToken.getAttempts() >= MAX_CODE_ATTEMPTS) {
+      throw new InvalidVerificationCodeException(
+          "Too many invalid attempts. Please request a new code.");
+    }
+
+    if (!passwordEncoder.matches(request.getCode(), verificationToken.getCodeHash())) {
+      verificationToken.setAttempts(verificationToken.getAttempts() + 1);
+      emailVerificationTokenRepository.save(verificationToken);
+      throw new InvalidVerificationCodeException("Invalid or expired verification code");
+    }
+
+    user.setEmailVerified(true);
+    userRepository.save(user);
+
+    verificationToken.setUsed(true);
+    emailVerificationTokenRepository.save(verificationToken);
+
+    accountRestrictionService.requireAllowed(user);
+    if (staffTwoFactorService.requiresTwoFactor(user)) {
+      // Staff must complete the regular login with its second factor.
+      return AuthResponse.builder().user(userMapper.toDto(user)).build();
+    }
+    return issueTokens(user);
+  }
+
+  /**
+   * Issues a fresh verification token + code and emails it.
+   *
+   * <p>Rate-limited on the same terms as the profile email-change flow: an unauthenticated caller
+   * can hit /auth/resend-verification with any address, so without a cooldown this endpoint is a
+   * free way to mailbomb a third party and burn our sending reputation.
+   */
+  private void sendVerificationEmail(User user) {
+    LocalDateTime now = LocalDateTime.now();
+
+    long sendsLastHour =
+        emailVerificationTokenRepository.countByUserAndCreatedAtAfter(user, now.minusHours(1));
+    if (sendsLastHour >= MAX_SENDS_PER_HOUR) {
+      throw new TooManyRequestsException("Too many confirmation emails. Try again later.");
+    }
+
+    emailVerificationTokenRepository
+        .findTopByUserOrderByCreatedAtDesc(user)
+        .filter(t -> t.getCreatedAt().isAfter(now.minusSeconds(RESEND_COOLDOWN_SECONDS)))
+        .ifPresent(
+            t -> {
+              throw new TooManyRequestsException("Please wait before requesting another code.");
+            });
+
+    emailVerificationTokenRepository.deleteByUser(user);
+
+    String token = UUID.randomUUID().toString();
+    String code = generate6DigitCode();
+    EmailVerificationToken verificationToken =
+        EmailVerificationToken.builder()
+            .token(token)
+            .user(user)
+            .codeHash(passwordEncoder.encode(code))
+            .attempts(0)
+            .expiresAt(now.plusMinutes(CONFIRMATION_TTL_MINUTES))
+            .used(false)
+            .build();
+
+    emailVerificationTokenRepository.save(verificationToken);
+
+    emailService.sendVerificationEmail(
+        user.getEmail(), token, code, MailLocale.from(user.getLocale()));
+  }
+
+  private String generate6DigitCode() {
+    return String.format("%06d", RANDOM.nextInt(1_000_000));
+  }
+
+  private static String sha256Hex(String value) {
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(
+              java.security.MessageDigest.getInstance("SHA-256")
+                  .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 not available", e);
+    }
+  }
 }

@@ -13,13 +13,11 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class StaffDisputeController {
 
-    private final DisputeService disputeService;
+  private final DisputeService disputeService;
 
-    @PostMapping("/from-ticket/{ticketId}")
-    public ResponseEntity<DisputeResponse> openFromTicket(
-            @PathVariable Long ticketId,
-            @AuthenticationPrincipal User user
-    ) {
-        return ResponseEntity.ok(disputeService.openFromTicket(ticketId, user));
-    }
+  @PostMapping("/from-ticket/{ticketId}")
+  public ResponseEntity<DisputeResponse> openFromTicket(
+      @PathVariable Long ticketId, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(disputeService.openFromTicket(ticketId, user));
+  }
 }

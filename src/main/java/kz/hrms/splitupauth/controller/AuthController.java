@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.time.Duration;
@@ -7,6 +8,7 @@ import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.service.AuthService;
+import kz.hrms.splitupauth.service.MailLocale;
 import kz.hrms.splitupauth.service.PhoneVerificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,15 +43,49 @@ public class AuthController {
   @Value("${jwt.refresh-expiration}")
   private long refreshExpirationMs;
 
+  @Value("${app.auth.refresh-cookie-secure:true}")
+  private boolean refreshCookieSecure;
+
+  @Value("${app.auth.refresh-token-body-enabled:false}")
+  private boolean refreshTokenBodyEnabled;
+
   @PostMapping("/register")
-  public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
+  public ResponseEntity<AuthResponse> register(
+      @Valid @RequestBody RegisterRequest request,
+      HttpServletRequest httpRequest,
+      HttpServletResponse response,
+      @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+    // Captured on the account so every later email (verification, password
+    // reset, notifications) goes out in the language the user signed up in.
+    AuthResponse auth = authService.register(request, MailLocale.from(acceptLanguage), httpRequest);
+    // Regular sign-up issues no tokens — the account must confirm the emailed
+    // code first. Only the dev auto-verify path returns a refresh token here.
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.status(HttpStatus.CREATED).body(auth);
+  }
+
+  /**
+   * Final step of regular registration: caller submits their email plus the 6-digit code that was
+   * emailed to them. On success the account is verified and logged in (tokens + cookie issued).
+   */
+  @PostMapping("/verify-email-code")
+  public ResponseEntity<AuthResponse> verifyEmailCode(
+      @Valid @RequestBody VerifyEmailCodeRequest request, HttpServletResponse response) {
+    AuthResponse auth = authService.verifyEmailCode(request);
+    if (auth.getRefreshToken() != null) {
+      addRefreshCookie(response, auth.getRefreshToken());
+    }
+    return ResponseEntity.ok(auth);
   }
 
   @PostMapping("/login")
   public ResponseEntity<AuthResponse> login(
-      @Valid @RequestBody LoginRequest request, HttpServletResponse response) {
-    AuthResponse auth = authService.login(request);
+      @Valid @RequestBody LoginRequest request,
+      HttpServletRequest httpRequest,
+      HttpServletResponse response) {
+    AuthResponse auth = authService.login(request, httpRequest);
     // Staff 2FA path does not issue tokens yet — only set the cookie when a
     // real refresh token was minted (regular users, or the second 2FA step).
     if (auth.getRefreshToken() != null) {
@@ -71,28 +107,28 @@ public class AuthController {
     }
     return ResponseEntity.ok(auth);
   }
-    /**
-     * Re-issues the OTP for an outstanding staff 2FA challenge. Cooldown
-     * protected by the service layer.
-     */
-    @PostMapping("/login/2fa/resend")
-    public ResponseEntity<Void> resendTwoFactor(
-            @Valid @RequestBody TwoFactorResendRequest request) {
-        authService.resendStaffTwoFactor(request);
-        return ResponseEntity.noContent().build();
-    }
 
   /**
-   * Refresh the access token. The refresh token is preferred from the httpOnly cookie (new
-   * client), but we still accept it in the request body so an older frontend that hasn't been
-   * redeployed yet keeps working.
+   * Re-issues the OTP for an outstanding staff 2FA challenge. Cooldown protected by the service
+   * layer.
+   */
+  @PostMapping("/login/2fa/resend")
+  public ResponseEntity<Void> resendTwoFactor(@Valid @RequestBody TwoFactorResendRequest request) {
+    authService.resendStaffTwoFactor(request);
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Refresh the access token. The refresh token is preferred from the httpOnly cookie. Deprecated
+   * request-body mode is disabled by default and can only be re-enabled with an explicit config
+   * flag during a controlled migration.
    */
   @PostMapping("/refresh")
   public ResponseEntity<AuthResponse> refreshToken(
       @CookieValue(name = REFRESH_COOKIE_NAME, required = false) String cookieToken,
       @RequestBody(required = false) RefreshTokenRequest body,
       HttpServletResponse response) {
-    String token = pickRefreshToken(cookieToken, body);
+    String token = pickRefreshToken(cookieToken, body, true);
     if (token == null) {
       throw new InvalidRequestException("Refresh token is required");
     }
@@ -106,53 +142,57 @@ public class AuthController {
   }
 
   /**
-   * Revoke the refresh token and clear the cookie. Accepts the token from cookie first, body
-   * second, and no-ops silently if neither is present (client already forgot it).
+   * Revoke the refresh token and clear the cookie. Deprecated request-body mode follows the same
+   * explicit config flag as /refresh, and no-ops silently if neither source is present.
    */
   @PostMapping("/logout")
   public ResponseEntity<Void> logout(
       @CookieValue(name = REFRESH_COOKIE_NAME, required = false) String cookieToken,
       @RequestBody(required = false) RefreshTokenRequest body,
       HttpServletResponse response) {
-    String token = pickRefreshToken(cookieToken, body);
+    String token = pickRefreshToken(cookieToken, body, false);
     if (token != null) {
       authService.logout(token);
     }
     clearRefreshCookie(response);
     return ResponseEntity.noContent().build();
   }
-    @PostMapping("/reset-password")
-    public ResponseEntity<Void> requestPasswordReset(@Valid @RequestBody PasswordResetRequest request) {
-        authService.requestPasswordReset(request);
-        return ResponseEntity.ok().build();
-    }
 
-    @PostMapping("/reset-password/confirm")
-    public ResponseEntity<Void> confirmPasswordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
-        authService.confirmPasswordReset(request);
-        return ResponseEntity.ok().build();
-    }
+  @PostMapping("/reset-password")
+  public ResponseEntity<Void> requestPasswordReset(
+      @Valid @RequestBody PasswordResetRequest request, HttpServletRequest httpRequest) {
+    authService.requestPasswordReset(request, httpRequest);
+    return ResponseEntity.ok().build();
+  }
 
-    @GetMapping("/verify-email")
-    public ResponseEntity<String> verifyEmail(@RequestParam("token") String token) {
-        authService.verifyEmail(token);
-        return ResponseEntity.ok("Email verified successfully. You can now log in.");
-    }
+  @PostMapping("/reset-password/confirm")
+  public ResponseEntity<Void> confirmPasswordReset(
+      @Valid @RequestBody PasswordResetConfirmRequest request) {
+    authService.confirmPasswordReset(request);
+    return ResponseEntity.ok().build();
+  }
 
-    @PostMapping("/resend-verification")
-    public ResponseEntity<Void> resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
-        authService.resendVerificationEmail(request);
-        return ResponseEntity.ok().build();
-    }
+  @GetMapping("/verify-email")
+  public ResponseEntity<String> verifyEmail(@RequestParam("token") String token) {
+    authService.verifyEmail(token);
+    return ResponseEntity.ok("Email verified successfully. You can now log in.");
+  }
 
-    @PostMapping("/phone/request-code")
-    public ResponseEntity<Void> requestPhoneCode(
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody RequestPhoneCodeRequest request
-    ) {
-        phoneVerificationService.requestCode(user, request.getPhone());
-        return ResponseEntity.noContent().build();
-    }
+  @PostMapping("/resend-verification")
+  public ResponseEntity<Void> resendVerification(
+      @Valid @RequestBody ResendVerificationRequest request) {
+    authService.resendVerificationEmail(request);
+    return ResponseEntity.ok().build();
+  }
+
+  @PostMapping("/phone/request-code")
+  public ResponseEntity<Void> requestPhoneCode(
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody RequestPhoneCodeRequest request,
+      HttpServletRequest httpRequest) {
+    phoneVerificationService.requestCode(user, request.getPhone(), httpRequest);
+    return ResponseEntity.noContent().build();
+  }
 
   @PostMapping("/phone/verify")
   public ResponseEntity<Void> verifyPhone(
@@ -161,12 +201,19 @@ public class AuthController {
     return ResponseEntity.noContent().build();
   }
 
-  private String pickRefreshToken(String cookieToken, RefreshTokenRequest body) {
+  private String pickRefreshToken(
+      String cookieToken, RefreshTokenRequest body, boolean requiredWhenBodyDisabled) {
     if (cookieToken != null && !cookieToken.isBlank()) {
       return cookieToken;
     }
     if (body != null && body.getRefreshToken() != null && !body.getRefreshToken().isBlank()) {
+      if (!refreshTokenBodyEnabled) {
+        throw new InvalidRequestException("Refresh token body mode is disabled");
+      }
       return body.getRefreshToken();
+    }
+    if (requiredWhenBodyDisabled && !refreshTokenBodyEnabled) {
+      return null;
     }
     return null;
   }
@@ -175,7 +222,7 @@ public class AuthController {
     ResponseCookie cookie =
         ResponseCookie.from(REFRESH_COOKIE_NAME, refreshToken)
             .httpOnly(true)
-            .secure(true)
+            .secure(refreshCookieSecure)
             .sameSite("Lax")
             .path(REFRESH_COOKIE_PATH)
             .maxAge(Duration.ofSeconds(refreshExpirationMs / 1000))
@@ -187,7 +234,7 @@ public class AuthController {
     ResponseCookie cookie =
         ResponseCookie.from(REFRESH_COOKIE_NAME, "")
             .httpOnly(true)
-            .secure(true)
+            .secure(refreshCookieSecure)
             .sameSite("Lax")
             .path(REFRESH_COOKIE_PATH)
             .maxAge(0)

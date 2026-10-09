@@ -16,12 +16,12 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CreateServiceReviewRequest {
 
-    @NotNull
-    @Min(1)
-    @Max(5)
-    private Integer rating;
+  @NotNull
+  @Min(1)
+  @Max(5)
+  private Integer rating;
 
-    @NotBlank
-    @Size(max = 2000)
-    private String text;
+  @NotBlank
+  @Size(max = 2000)
+  private String text;
 }

@@ -1,2 +1,6 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+
+# GitHub Linguist: держать язык репозитория на Java (Spring Boot)
+*.md          linguist-documentation
+api-tests/**  linguist-vendored

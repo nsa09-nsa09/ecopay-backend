@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.entity;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -9,48 +10,78 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "freedom_webhook_inbox", indexes = {
-        @Index(name = "idx_freedom_webhook_inbox_status", columnList = "processing_status, received_at")
-})
+@Table(
+    name = "freedom_webhook_inbox",
+    indexes = {
+      @Index(
+          name = "idx_freedom_webhook_inbox_status",
+          columnList = "processing_status, received_at")
+    })
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class FreedomWebhookInbox {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(name = "provider_request_id", nullable = false, unique = true, length = 200)
-    private String providerRequestId;
+  @Column(name = "provider_request_id", nullable = false, unique = true, length = 200)
+  private String providerRequestId;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "raw_body", nullable = false, columnDefinition = "jsonb")
-    private JsonNode rawBody;
+  @Column(name = "callback_script", nullable = false, length = 30)
+  @Builder.Default
+  private String callbackScript = "result";
 
-    @Column(name = "signature_valid")
-    private Boolean signatureValid;
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(name = "raw_body", nullable = false, columnDefinition = "jsonb")
+  private JsonNode rawBody;
 
-    @Column(name = "received_at", nullable = false)
-    private LocalDateTime receivedAt;
+  @Column(name = "signature_valid")
+  private Boolean signatureValid;
 
-    @Column(name = "processed_at")
-    private LocalDateTime processedAt;
+  @Column(name = "received_at", nullable = false)
+  private LocalDateTime receivedAt;
 
-    @Column(name = "processing_status", nullable = false, length = 20)
-    @Builder.Default
-    private String processingStatus = "PENDING";
+  @Column(name = "processed_at")
+  private LocalDateTime processedAt;
 
-    @Column(name = "error_message", columnDefinition = "TEXT")
-    private String errorMessage;
+  @Column(name = "processing_status", nullable = false, length = 20)
+  @Builder.Default
+  private String processingStatus = "PENDING";
 
-    @PrePersist
-    protected void onCreate() {
-        if (receivedAt == null) receivedAt = LocalDateTime.now();
-        if (processingStatus == null) processingStatus = "PENDING";
-    }
+  @Column(name = "attempt_count", nullable = false)
+  @Builder.Default
+  private Integer attemptCount = 0;
+
+  @Column(name = "next_retry_at")
+  private LocalDateTime nextRetryAt;
+
+  @Column(name = "last_error_code", length = 80)
+  private String lastErrorCode;
+
+  @Column(name = "lease_until")
+  private LocalDateTime leaseUntil;
+
+  @Column(name = "lease_owner", length = 100)
+  private String leaseOwner;
+
+  @Column(name = "last_attempt_at")
+  private LocalDateTime lastAttemptAt;
+
+  @Column(name = "dead_lettered_at")
+  private LocalDateTime deadLetteredAt;
+
+  @Column(name = "error_message", columnDefinition = "TEXT")
+  private String errorMessage;
+
+  @PrePersist
+  protected void onCreate() {
+    if (receivedAt == null) receivedAt = LocalDateTime.now();
+    if (callbackScript == null) callbackScript = "result";
+    if (processingStatus == null) processingStatus = "PENDING";
+    if (attemptCount == null) attemptCount = 0;
+  }
 }

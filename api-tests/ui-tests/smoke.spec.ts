@@ -40,4 +40,13 @@ test.describe("UI smoke", () => {
     // The SPA shell mounts (root not empty).
     await expect(page.locator("#root")).not.toBeEmpty();
   });
+
+  test("public static routes are reachable without auth", async ({ page }) => {
+    for (const path of ["/how-it-works", "/security", "/about"]) {
+      const res = await page.goto(path);
+      expect(res?.status() ?? 200).toBeLessThan(400);
+      await expect(page.locator("#root")).not.toBeEmpty();
+      await expect(page).toHaveURL(new RegExp(`${path}$`));
+    }
+  });
 });

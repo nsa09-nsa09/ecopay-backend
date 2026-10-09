@@ -1,101 +1,195 @@
 package kz.hrms.splitupauth.payment.gateway;
 
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
-
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import kz.hrms.splitupauth.util.SecurityLogSanitizer;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 /**
  * Deterministic in-memory payment gateway for dev/test environments.
  *
- * <p>Activated by setting {@code ecopay.payments.provider=mock} (see
- * application-dev.properties). It charges/refunds/pays out synchronously and
- * successfully, so the full membership chain (intent → SUCCESS → membership
- * PENDING → activation → owner payout) can be exercised without real Freedom Pay
- * sandbox credentials.
+ * <p>Activated by setting {@code ecopay.payments.provider=mock} (see application-dev.properties).
+ * It charges/refunds/pays out synchronously and successfully, so the full membership chain (intent
+ * → SUCCESS → membership PENDING → activation → owner payout) can be exercised without real Freedom
+ * Pay sandbox credentials.
  *
- * <p>Charges are <b>non-redirect</b> successes, which {@code PaymentService}
- * finalizes immediately — no webhook round-trip needed.
+ * <p>Charges are <b>non-redirect</b> successes, which {@code PaymentService} finalizes immediately
+ * — no webhook round-trip needed.
  */
 @Component
 @Slf4j
 public class MockPaymentGateway implements PaymentGateway {
 
-    public static final String PROVIDER_NAME = "mock";
+  public static final String PROVIDER_NAME = "mock";
 
-    private static String newId(String prefix) {
-        // UUID keeps external ids unique even across app restarts (no in-memory counter
-        // that resets and collides with persisted transactions).
-        return prefix + UUID.randomUUID();
-    }
+  private final AtomicInteger chargeAttempts = new AtomicInteger();
+  private final AtomicInteger payoutAttempts = new AtomicInteger();
 
-    @Override
-    public String providerName() {
-        return PROVIDER_NAME;
-    }
+  /**
+   * When true, charges behave like a real hosted payment page: accepted, not yet captured, and
+   * finalized only by a callback or status reconciliation. Default false (synchronous capture).
+   */
+  private final AtomicBoolean asyncCapture = new AtomicBoolean();
 
-    @Override
-    public GatewayChargeResponse initCharge(GatewayChargeRequest request) {
-        String ext = newId("MOCK-PAY-");
-        log.info("[MOCK-GATEWAY] initCharge intent={} amount={} -> SUCCESS ({})",
-                request.getIntentId(), request.getAmount(), ext);
-        return GatewayChargeResponse.builder()
-                .success(true)
-                .requiresRedirect(false)
-                .externalPaymentId(ext)
-                .providerStatusCode("ok")
-                .build();
-    }
+  /** Representative card-acquiring rate (~2.9%) so dev/test exercises the provider-fee path. */
+  private static final BigDecimal MOCK_FEE_RATE = new BigDecimal("0.029");
 
-    @Override
-    public GatewayChargeResponse chargeWithToken(GatewayChargeRequest request, String savedCardToken) {
-        String ext = newId("MOCK-PAY-");
-        log.info("[MOCK-GATEWAY] chargeWithToken intent={} amount={} token={} -> SUCCESS ({})",
-                request.getIntentId(), request.getAmount(), savedCardToken, ext);
-        return GatewayChargeResponse.builder()
-                .success(true)
-                .requiresRedirect(false)
-                .externalPaymentId(ext)
-                .providerStatusCode("ok")
-                .build();
-    }
+  private static BigDecimal mockProviderFee(BigDecimal amount) {
+    return amount == null ? null : amount.multiply(MOCK_FEE_RATE).setScale(2, RoundingMode.HALF_UP);
+  }
 
-    @Override
-    public GatewayRefundResponse refund(GatewayRefundRequest request) {
-        log.info("[MOCK-GATEWAY] refund {} amount={} -> SUCCESS", request.getExternalPaymentId(), request.getAmount());
-        return GatewayRefundResponse.builder()
-                .success(true)
-                .externalRefundId(newId("MOCK-REF-"))
-                .providerStatusCode("ok")
-                .pending(false)
-                .build();
-    }
+  private static String newId(String prefix) {
+    // UUID keeps external ids unique even across app restarts (no in-memory counter
+    // that resets and collides with persisted transactions).
+    return prefix + UUID.randomUUID();
+  }
 
-    @Override
-    public GatewayPayoutResponse payout(GatewayPayoutRequest request) {
-        log.info("[MOCK-GATEWAY] payout {} amount={} -> SUCCESS", request.getPayoutId(), request.getAmount());
-        return GatewayPayoutResponse.builder()
-                .success(true)
-                .externalPayoutId(newId("MOCK-OUT-"))
-                .providerStatusCode("ok")
-                .pending(false)
-                .build();
-    }
+  @Override
+  public String providerName() {
+    return PROVIDER_NAME;
+  }
 
-    @Override
-    public GatewayStatusResponse getStatus(String externalPaymentId) {
-        return GatewayStatusResponse.builder()
-                .externalPaymentId(externalPaymentId)
-                .status("SUCCESS")
-                .providerStatusCode("ok")
-                .build();
-    }
+  @Override
+  public GatewayCardBindingResponse initCardBinding(GatewayCardBindingRequest request) {
+    String externalId = newId("MOCK-CARD-");
+    return GatewayCardBindingResponse.builder()
+        .success(true)
+        .externalBindingId(externalId)
+        .requiresRedirect(false)
+        .providerStatusCode("ok")
+        .cardToken("MOCK-CARD-TOKEN-" + request.getBindingId())
+        .cardPanMask("411111******1111")
+        .build();
+  }
 
-    @Override
-    public GatewayWebhookEvent verifyAndParseWebhook(Map<String, String> params) {
-        // The mock flow finalizes synchronously, so webhooks are not used.
-        // Return null to signal "no verifiable event" if one ever arrives.
-        return null;
+  @Override
+  public GatewayChargeResponse initCharge(GatewayChargeRequest request) {
+    chargeAttempts.incrementAndGet();
+    String ext = newId("MOCK-PAY-");
+    if (asyncCapture.get()) {
+      log.info(
+          "[MOCK-GATEWAY] initCharge intent={} -> ACCEPTED, awaiting callback",
+          request.getIntentId());
+      return GatewayChargeResponse.builder()
+          .success(true)
+          .requiresRedirect(true)
+          .paymentUrl("https://mock-pay.invalid/" + ext)
+          .captureConfirmed(false)
+          .externalPaymentId(ext)
+          .providerStatusCode("ok")
+          .build();
     }
+    log.info(
+        "[MOCK-GATEWAY] initCharge intent={} amount={} -> SUCCESS ({})",
+        request.getIntentId(),
+        request.getAmount(),
+        ext);
+    return GatewayChargeResponse.builder()
+        .success(true)
+        .requiresRedirect(false)
+        .captureConfirmed(true)
+        .externalPaymentId(ext)
+        .providerStatusCode("ok")
+        .providerFeeAmount(mockProviderFee(request.getAmount()))
+        .build();
+  }
+
+  @Override
+  public GatewayChargeResponse chargeWithToken(
+      GatewayChargeRequest request, String savedCardToken) {
+    chargeAttempts.incrementAndGet();
+    String ext = newId("MOCK-PAY-");
+    log.info(
+        "[MOCK-GATEWAY] chargeWithToken intent={} amount={} token={} -> SUCCESS ({})",
+        request.getIntentId(),
+        request.getAmount(),
+        SecurityLogSanitizer.tokenPresent(savedCardToken),
+        ext);
+    return GatewayChargeResponse.builder()
+        .success(true)
+        .requiresRedirect(false)
+        .captureConfirmed(true)
+        .externalPaymentId(ext)
+        .providerStatusCode("ok")
+        .providerFeeAmount(mockProviderFee(request.getAmount()))
+        .build();
+  }
+
+  @Override
+  public GatewayRefundResponse refund(GatewayRefundRequest request) {
+    log.info(
+        "[MOCK-GATEWAY] refund {} amount={} -> SUCCESS",
+        request.getExternalPaymentId(),
+        request.getAmount());
+    return GatewayRefundResponse.builder()
+        .success(true)
+        .externalRefundId(newId("MOCK-REF-"))
+        .providerStatusCode("ok")
+        .pending(false)
+        .build();
+  }
+
+  @Override
+  public GatewayPayoutResponse payout(GatewayPayoutRequest request) {
+    payoutAttempts.incrementAndGet();
+    log.info(
+        "[MOCK-GATEWAY] payout {} amount={} -> SUCCESS",
+        request.getPayoutId(),
+        request.getAmount());
+    return GatewayPayoutResponse.builder()
+        .success(true)
+        .externalPayoutId(newId("MOCK-OUT-"))
+        .providerStatusCode("ok")
+        .pending(false)
+        .build();
+  }
+
+  @Override
+  public GatewayStatusResponse getStatus(String externalPaymentId) {
+    return GatewayStatusResponse.builder()
+        .externalPaymentId(externalPaymentId)
+        .status("SUCCESS")
+        .providerState(ProviderPaymentState.CAPTURED)
+        .providerStatusCode("ok")
+        .build();
+  }
+
+  @Override
+  public GatewayStatusResponse getPayoutStatus(String externalPayoutId, String merchantOrderId) {
+    return GatewayStatusResponse.builder()
+        .externalPaymentId(externalPayoutId)
+        .status("SUCCESS")
+        .providerStatusCode("success")
+        .build();
+  }
+
+  @Override
+  public GatewayWebhookEvent verifyAndParseWebhook(Map<String, String> params) {
+    // The mock flow finalizes synchronously, so webhooks are not used.
+    // Return null to signal "no verifiable event" if one ever arrives.
+    return null;
+  }
+
+  public int chargeAttempts() {
+    return chargeAttempts.get();
+  }
+
+  public int payoutAttempts() {
+    return payoutAttempts.get();
+  }
+
+  public void resetCounters() {
+    chargeAttempts.set(0);
+    payoutAttempts.set(0);
+    asyncCapture.set(false);
+  }
+
+  public void setAsyncCapture(boolean enabled) {
+    asyncCapture.set(enabled);
+  }
 }

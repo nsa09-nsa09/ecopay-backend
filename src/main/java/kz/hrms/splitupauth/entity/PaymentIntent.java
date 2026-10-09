@@ -1,99 +1,163 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "payment_intents", indexes = {
-        @Index(name = "idx_payment_intents_room_member_id", columnList = "room_member_id"),
-        @Index(name = "idx_payment_intents_user_id", columnList = "user_id"),
-        @Index(name = "idx_payment_intents_idempotency_key", columnList = "idempotency_key")
-})
+@Table(
+    name = "payment_intents",
+    indexes = {
+      @Index(name = "idx_payment_intents_room_member_id", columnList = "room_member_id"),
+      @Index(name = "idx_payment_intents_user_id", columnList = "user_id"),
+      @Index(name = "idx_payment_intents_idempotency_key", columnList = "idempotency_key")
+    })
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class PaymentIntent {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
-    private String idempotencyKey;
+  @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
+  private String idempotencyKey;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "room_member_id", nullable = false)
-    private RoomMember roomMember;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "room_member_id", nullable = false)
+  private RoomMember roomMember;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "user_id", nullable = false)
+  private User user;
 
-    @Column(nullable = false, precision = 12, scale = 2)
-    private BigDecimal amount;
+  /** Total charged to the member = tariff share + EcoPay commission. */
+  @Column(nullable = false, precision = 12, scale = 2)
+  private BigDecimal amount;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private PaymentIntentStatus status;
+  /**
+   * EcoPay commission portion of {@link #amount}. The owner payout is {@code amount -
+   * commissionAmount} (i.e. the member's tariff share).
+   */
+  @Column(name = "commission_amount", nullable = false, precision = 12, scale = 2)
+  @Builder.Default
+  private BigDecimal commissionAmount = BigDecimal.ZERO;
 
-    @Column(name = "provider_name", length = 50)
-    private String providerName;
+  /**
+   * Acquiring cost reported by the provider for this charge, carried onto the committed {@link
+   * PaymentTransaction}. Nullable: null means "not reported", not zero. Additive — does not change
+   * {@link #amount} or {@link #commissionAmount}.
+   */
+  @Column(name = "provider_fee_amount", precision = 12, scale = 2)
+  private BigDecimal providerFeeAmount;
 
-    @Column(name = "external_payment_id", length = 100)
-    private String externalPaymentId;
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
+  private PaymentIntentStatus status;
 
-    @Column(name = "payment_url", columnDefinition = "TEXT")
-    private String paymentUrl;
+  @Column(name = "provider_name", length = 50)
+  private String providerName;
 
-    @Column(name = "save_card_requested", nullable = false)
-    @Builder.Default
-    private Boolean saveCardRequested = false;
+  @Column(name = "external_payment_id", length = 100)
+  private String externalPaymentId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "saved_card_id")
-    private SavedCard savedCard;
+  @Column(name = "payment_url", columnDefinition = "TEXT")
+  private String paymentUrl;
 
-    @Column(name = "expires_at")
-    private LocalDateTime expiresAt;
+  @Column(name = "save_card_requested", nullable = false)
+  @Builder.Default
+  private Boolean saveCardRequested = false;
 
-    @Column(name = "last_webhook_at")
-    private LocalDateTime lastWebhookAt;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "saved_card_id")
+  private SavedCard savedCard;
 
-    @Column(name = "provider_status_code", length = 50)
-    private String providerStatusCode;
+  @Column(name = "expires_at")
+  private LocalDateTime expiresAt;
 
-    @Column(name = "failure_code", length = 50)
-    private String failureCode;
+  @Column(name = "last_webhook_at")
+  private LocalDateTime lastWebhookAt;
 
-    @Column(name = "failure_message", columnDefinition = "TEXT")
-    private String failureMessage;
+  /** Server-observed time at which a verified provider result confirmed the capture. */
+  @Column(name = "captured_at")
+  private LocalDateTime capturedAt;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+  @Column(name = "provider_status_code", length = 50)
+  private String providerStatusCode;
 
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
+  @Column(name = "failure_code", length = 50)
+  private String failureCode;
 
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        if (status == null) {
-            status = PaymentIntentStatus.PENDING;
-        }
-        if (saveCardRequested == null) {
-            saveCardRequested = false;
-        }
+  @Column(name = "failure_message", columnDefinition = "TEXT")
+  private String failureMessage;
+
+  @Column(name = "compensation_required", nullable = false)
+  @Builder.Default
+  private Boolean compensationRequired = false;
+
+  @Column(name = "review_required", nullable = false)
+  @Builder.Default
+  private Boolean reviewRequired = false;
+
+  @Column(name = "review_reason", length = 100)
+  private String reviewReason;
+
+  @Column(name = "created_at", nullable = false)
+  private LocalDateTime createdAt;
+
+  @Column(name = "updated_at")
+  private LocalDateTime updatedAt;
+
+  /** Last provider status query for an ambiguous (UNKNOWN/RECONCILING/PENDING) intent. */
+  @Column(name = "last_reconciled_at")
+  private LocalDateTime lastReconciledAt;
+
+  @Column(name = "reconcile_attempts", nullable = false)
+  @Builder.Default
+  private Integer reconcileAttempts = 0;
+
+  /** What this intent pays for: the first payment, a manual renewal, or an auto-renewal charge. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "purpose", nullable = false, length = 16)
+  @Builder.Default
+  private PaymentIntentPurpose purpose = PaymentIntentPurpose.INITIAL;
+
+  /**
+   * For RENEWAL/RECURRING intents, the {@code nextBillingAt} of the period being paid. Lets a
+   * finalize advance the member's period exactly once and dedup a second renewal for the same
+   * period.
+   */
+  @Column(name = "billing_period_start")
+  private LocalDateTime billingPeriodStart;
+
+  @PrePersist
+  protected void onCreate() {
+    createdAt = LocalDateTime.now();
+    if (status == null) {
+      status = PaymentIntentStatus.PENDING;
     }
-
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
+    if (purpose == null) {
+      purpose = PaymentIntentPurpose.INITIAL;
     }
+    if (saveCardRequested == null) {
+      saveCardRequested = false;
+    }
+    if (compensationRequired == null) {
+      compensationRequired = false;
+    }
+    if (reviewRequired == null) {
+      reviewRequired = false;
+    }
+  }
+
+  @PreUpdate
+  protected void onUpdate() {
+    updatedAt = LocalDateTime.now();
+  }
 }

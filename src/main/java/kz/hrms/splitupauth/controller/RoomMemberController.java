@@ -2,92 +2,117 @@ package kz.hrms.splitupauth.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
 import kz.hrms.splitupauth.dto.*;
 import kz.hrms.splitupauth.entity.User;
-import kz.hrms.splitupauth.service.InMemoryRateLimiter;
+import kz.hrms.splitupauth.service.DisputeService;
+import kz.hrms.splitupauth.service.MemberHoldService;
+import kz.hrms.splitupauth.service.RateLimiter;
+import kz.hrms.splitupauth.service.RenewalPaymentService;
 import kz.hrms.splitupauth.service.RoomMemberService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/rooms")
 @RequiredArgsConstructor
 public class RoomMemberController {
 
-    private final RoomMemberService roomMemberService;
-    private final InMemoryRateLimiter rateLimiter;
+  private final RoomMemberService roomMemberService;
+  private final MemberHoldService memberHoldService;
+  private final DisputeService disputeService;
+  private final RenewalPaymentService renewalPaymentService;
+  private final RateLimiter rateLimiter;
 
-    @PostMapping("/{id}/members")
-    public ResponseEntity<RoomMemberDto> createMembership(
-            @PathVariable Long id,
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody JoinRoomRequest request
-    ) {
-        rateLimiter.check("room-join:" + user.getId(), 20, 600,
-                "Too many join attempts — please slow down");
-        return ResponseEntity.status(HttpStatus.CREATED).body(roomMemberService.joinRoom(id, user, request));
-    }
+  @Value("${app.rate-limit.room-join.max:20}")
+  private int joinMax;
 
-    @GetMapping("/joined")
-    public ResponseEntity<List<JoinedRoomDto>> getMyJoinedRooms(
-            @AuthenticationPrincipal User user
-    ) {
-        return ResponseEntity.ok(roomMemberService.getMyJoinedRooms(user));
-    }
+  @Value("${app.rate-limit.room-join.window-seconds:600}")
+  private long joinWindowSeconds;
 
-    @GetMapping("/{id}/members")
-    public ResponseEntity<PagedResponse<RoomMemberDto>> getRoomMembers(
-            @PathVariable Long id,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @AuthenticationPrincipal User user
-    ) {
-        return ResponseEntity.ok(roomMemberService.getRoomMembers(id, page, size, user));
+  @PostMapping("/{id}/members")
+  public ResponseEntity<RoomMemberDto> createMembership(
+      @PathVariable Long id,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody JoinRoomRequest request) {
+    if (joinMax > 0) {
+      rateLimiter.check(
+          "room-join:" + user.getId(),
+          joinMax,
+          joinWindowSeconds,
+          "Слишком много попыток вступления. Попробуйте позже.");
     }
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(roomMemberService.joinRoom(id, user, request));
+  }
 
-    @GetMapping("/{id}/members/me")
-    public ResponseEntity<MyRoomMembershipDto> getMyMembership(
-            @PathVariable Long id,
-            @AuthenticationPrincipal User user
-    ) {
-        return ResponseEntity.ok(roomMemberService.getMyMembership(id, user));
-    }
-    @PatchMapping("/{roomId}/members/{memberId}/owner-access")
-    public ResponseEntity<RoomMemberDto> confirmOwnerAccess(
-            @PathVariable Long roomId,
-            @PathVariable Long memberId,
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody ConfirmOwnerAccessRequest request
-    ) {
-        return ResponseEntity.ok(
-                roomMemberService.confirmOwnerAccess(roomId, memberId, user, request)
-        );
-    }
+  @GetMapping("/joined")
+  public ResponseEntity<List<JoinedRoomDto>> getMyJoinedRooms(@AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(roomMemberService.getMyJoinedRooms(user));
+  }
 
-    @PostMapping("/{roomId}/members/me/confirm-access")
-    public ResponseEntity<MyRoomMembershipDto> confirmMemberAccess(
-            @PathVariable Long roomId,
-            @AuthenticationPrincipal User user
-    ) {
-        return ResponseEntity.ok(
-                roomMemberService.confirmMemberAccess(roomId, user)
-        );
-    }
-    @PostMapping("/{roomId}/members/{memberId}/reveal-identifier")
-    public ResponseEntity<RevealedIdentifierDto> revealIdentifier(
-            @PathVariable Long roomId,
-            @PathVariable Long memberId,
-            @AuthenticationPrincipal User user,
-            @Valid @RequestBody RevealIdentifierRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        return ResponseEntity.ok(
-                roomMemberService.revealIdentifierForOwner(roomId, memberId, user, request, httpRequest)
-        );
-    }
+  @GetMapping("/{id}/members")
+  public ResponseEntity<PagedResponse<RoomMemberDto>> getRoomMembers(
+      @PathVariable Long id,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size,
+      @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(roomMemberService.getRoomMembers(id, page, size, user));
+  }
+
+  @GetMapping("/{id}/members/me")
+  public ResponseEntity<MyRoomMembershipDto> getMyMembership(
+      @PathVariable Long id, @AuthenticationPrincipal User user) {
+    MyRoomMembershipDto membership = roomMemberService.getMyMembership(id, user);
+    // Billing is attached here (not in the mapper) to avoid a bean cycle: the mapper is used by
+    // RoomMemberService, which PaymentService depends on, which the renewal service depends on.
+    membership.setBilling(renewalPaymentService.describeBilling(membership.getId(), user));
+    return ResponseEntity.ok(membership);
+  }
+
+  @GetMapping("/{id}/members/me/hold")
+  public ResponseEntity<MemberHoldDto> getMyHold(
+      @PathVariable Long id, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(memberHoldService.getMyHold(id, user));
+  }
+
+  @PatchMapping("/{roomId}/members/{memberId}/owner-access")
+  public ResponseEntity<RoomMemberDto> confirmOwnerAccess(
+      @PathVariable Long roomId,
+      @PathVariable Long memberId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody ConfirmOwnerAccessRequest request) {
+    return ResponseEntity.ok(roomMemberService.confirmOwnerAccess(roomId, memberId, user, request));
+  }
+
+  @PostMapping("/{roomId}/members/me/confirm-access")
+  public ResponseEntity<MyRoomMembershipDto> confirmMemberAccess(
+      @PathVariable Long roomId, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(roomMemberService.confirmMemberAccess(roomId, user));
+  }
+
+  /** Opens an administrator-visible case when a paid member reports an owner breach. */
+  @PostMapping("/{roomId}/members/me/complaints")
+  public ResponseEntity<DisputeResponse> createComplaint(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody CreateRoomComplaintRequest request) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(disputeService.openMemberComplaint(roomId, user, request));
+  }
+
+  @PostMapping("/{roomId}/members/{memberId}/reveal-identifier")
+  public ResponseEntity<RevealedIdentifierDto> revealIdentifier(
+      @PathVariable Long roomId,
+      @PathVariable Long memberId,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody RevealIdentifierRequest request,
+      HttpServletRequest httpRequest) {
+    return SensitiveResponseHeaders.ok(
+        roomMemberService.revealIdentifierForOwner(roomId, memberId, user, request, httpRequest));
+  }
 }

@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.dto;
 
 import jakarta.validation.constraints.Size;
 import kz.hrms.splitupauth.entity.ProviderType;
+import kz.hrms.splitupauth.entity.ServiceAccessType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,15 +14,17 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpdateServiceRequest {
 
-    private Long categoryId;
+  private Long categoryId;
 
-    @Size(max = 120)
-    private String name;
+  @Size(max = 120)
+  private String name;
 
-    @Size(max = 120)
-    private String slug;
+  @Size(max = 120)
+  private String slug;
 
-    private ProviderType providerType;
+  private ProviderType providerType;
 
-    private Boolean isActive;
+  private ServiceAccessType accessType;
+
+  private Boolean isActive;
 }

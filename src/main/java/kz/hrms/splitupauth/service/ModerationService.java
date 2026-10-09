@@ -1,427 +1,498 @@
 package kz.hrms.splitupauth.service;
 
-import jakarta.servlet.http.HttpServletRequest;
-import kz.hrms.splitupauth.dto.AdminDecisionRequest;
-import kz.hrms.splitupauth.dto.BatchConfirmRequest;
-import kz.hrms.splitupauth.dto.ModerationQueueItemDto;
-import kz.hrms.splitupauth.entity.*;
-import kz.hrms.splitupauth.exception.ForbiddenOperationException;
-import kz.hrms.splitupauth.exception.InvalidRequestException;
-import kz.hrms.splitupauth.exception.ResourceNotFoundException;
-import kz.hrms.splitupauth.repository.*;
-
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
+import jakarta.servlet.http.HttpServletRequest;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import kz.hrms.splitupauth.dto.AdminDecisionRequest;
+import kz.hrms.splitupauth.dto.BatchConfirmRequest;
+import kz.hrms.splitupauth.dto.ModerationQueueItemDto;
+import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.entity.Role;
+import kz.hrms.splitupauth.exception.ForbiddenOperationException;
+import kz.hrms.splitupauth.exception.InvalidRequestException;
+import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.*;
+import kz.hrms.splitupauth.websocket.AccountRealtimeService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 @Service
 @RequiredArgsConstructor
 public class ModerationService {
 
-    private final ModerationQueueRepository moderationQueueRepository;
-    private final AdminActionLogRepository adminActionLogRepository;
-    private final RoomEventLogRepository roomEventLogRepository;
-    private final RoomMemberRepository roomMemberRepository;
-    private final RoomRepository roomRepository;
-    private final UserRepository userRepository;
-    private final SupportTicketRepository supportTicketRepository;
-    private final DisputeRepository disputeRepository;
+  private final ModerationQueueRepository moderationQueueRepository;
+  private final AdminActionLogRepository adminActionLogRepository;
+  private final RoomEventLogRepository roomEventLogRepository;
+  private final RoomMemberRepository roomMemberRepository;
+  private final RoomRepository roomRepository;
+  private final UserRepository userRepository;
+  private final SupportTicketRepository supportTicketRepository;
+  private final DisputeRepository disputeRepository;
+  private final NotificationService notificationService;
+  private final TokenRevocationService tokenRevocationService;
+  private final AccountRealtimeService accountRealtimeService;
 
-    @Transactional(readOnly = true)
-    public List<ModerationQueueItemDto> getOpenQueue(User currentUser) {
-        ensureAdmin(currentUser);
+  @Transactional(readOnly = true)
+  public List<ModerationQueueItemDto> getOpenQueue(User currentUser) {
+    ensureAdmin(currentUser);
 
-        return moderationQueueRepository.findByStatusOrderByCreatedAtAsc(ModerationQueueStatus.OPEN)
-                .stream()
-                .map(this::mapQueueItem)
-                .toList();
+    return moderationQueueRepository
+        .findByStatusOrderByCreatedAtAsc(ModerationQueueStatus.OPEN)
+        .stream()
+        .map(this::mapQueueItem)
+        .toList();
+  }
+
+  @Transactional
+  public void enqueueMembershipForReview(
+      RoomMember roomMember, String reasonCode, BigDecimal riskScore) {
+    boolean exists =
+        moderationQueueRepository.existsByRoomMemberAndStatusIn(
+            roomMember, List.of(ModerationQueueStatus.OPEN, ModerationQueueStatus.IN_REVIEW));
+
+    if (exists) {
+      return;
     }
 
-    @Transactional
-    public void enqueueMembershipForReview(RoomMember roomMember, String reasonCode, BigDecimal riskScore) {
-        boolean exists = moderationQueueRepository.existsByRoomMemberAndStatusIn(
-                roomMember,
-                List.of(ModerationQueueStatus.OPEN, ModerationQueueStatus.IN_REVIEW)
-        );
+    ModerationQueue item =
+        ModerationQueue.builder()
+            .entityType("ROOM_MEMBER")
+            .entityId(roomMember.getId())
+            .room(roomMember.getRoom())
+            .roomMember(roomMember)
+            .reasonCode(reasonCode)
+            .riskScore(riskScore != null ? riskScore : BigDecimal.ZERO)
+            .status(ModerationQueueStatus.OPEN)
+            .build();
 
-        if (exists) {
-            return;
-        }
+    moderationQueueRepository.save(item);
+  }
 
-        ModerationQueue item = ModerationQueue.builder()
-                .entityType("ROOM_MEMBER")
-                .entityId(roomMember.getId())
-                .room(roomMember.getRoom())
-                .roomMember(roomMember)
-                .reasonCode(reasonCode)
-                .riskScore(riskScore != null ? riskScore : BigDecimal.ZERO)
-                .status(ModerationQueueStatus.OPEN)
-                .build();
+  @Transactional
+  public ModerationQueueItemDto assignToMe(Long queueId, User currentUser) {
+    ensureAdmin(currentUser);
 
-        moderationQueueRepository.save(item);
+    ModerationQueue item =
+        moderationQueueRepository
+            .findById(queueId)
+            .orElseThrow(() -> new ResourceNotFoundException("Moderation queue item not found"));
+
+    if (item.getStatus() != ModerationQueueStatus.OPEN
+        && item.getStatus() != ModerationQueueStatus.IN_REVIEW) {
+      throw new InvalidRequestException("Only OPEN or IN_REVIEW item can be assigned");
     }
 
-    @Transactional
-    public ModerationQueueItemDto assignToMe(Long queueId, User currentUser) {
-        ensureAdmin(currentUser);
+    item.setAssignedAdmin(currentUser);
+    item.setStatus(ModerationQueueStatus.IN_REVIEW);
+    moderationQueueRepository.save(item);
 
-        ModerationQueue item = moderationQueueRepository.findById(queueId)
-                .orElseThrow(() -> new ResourceNotFoundException("Moderation queue item not found"));
+    return mapQueueItem(item);
+  }
 
-        if (item.getStatus() != ModerationQueueStatus.OPEN && item.getStatus() != ModerationQueueStatus.IN_REVIEW) {
-            throw new InvalidRequestException("Only OPEN or IN_REVIEW item can be assigned");
-        }
+  @Transactional
+  public ModerationQueueItemDto confirmMembership(
+      Long queueId,
+      User currentUser,
+      AdminDecisionRequest request,
+      HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
 
-        item.setAssignedAdmin(currentUser);
-        item.setStatus(ModerationQueueStatus.IN_REVIEW);
-        moderationQueueRepository.save(item);
+    ModerationQueue item =
+        moderationQueueRepository
+            .findById(queueId)
+            .orElseThrow(() -> new ResourceNotFoundException("Moderation queue item not found"));
 
-        return mapQueueItem(item);
+    if (item.getRoomMember() == null) {
+      throw new InvalidRequestException("Queue item is not linked to membership");
     }
 
-    @Transactional
-    public ModerationQueueItemDto confirmMembership(
-            Long queueId,
-            User currentUser,
-            AdminDecisionRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        ensureAdmin(currentUser);
+    RoomMember roomMember = item.getRoomMember();
 
-        ModerationQueue item = moderationQueueRepository.findById(queueId)
-                .orElseThrow(() -> new ResourceNotFoundException("Moderation queue item not found"));
-
-        if (item.getRoomMember() == null) {
-            throw new InvalidRequestException("Queue item is not linked to membership");
-        }
-
-        RoomMember roomMember = item.getRoomMember();
-
-        if (roomMember.getStatus() != MemberStatus.PENDING) {
-            throw new InvalidRequestException("Only PENDING membership can be confirmed by admin");
-        }
-
-        roomMember.setRequiresAdminReview(false);
-        roomMember.setStatus(MemberStatus.ACTIVE);
-
-        if (roomMember.getActivatedAt() == null) {
-            roomMember.setActivatedAt(LocalDateTime.now());
-        }
-
-        roomMemberRepository.save(roomMember);
-
-        item.setAssignedAdmin(currentUser);
-        item.setStatus(ModerationQueueStatus.RESOLVED);
-        moderationQueueRepository.save(item);
-
-        adminActionLogRepository.save(
-                AdminActionLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .adminUser(currentUser)
-                        .actionType(AdminActionType.ACCESS_CONFIRMED)
-                        .entityType("ROOM_MEMBER")
-                        .entityId(roomMember.getId())
-                        .reason(request.getReason())
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
-
-        roomEventLogRepository.save(
-                RoomEventLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .actorUser(currentUser)
-                        .actorRole("ADMIN")
-                        .room(roomMember.getRoom())
-                        .roomMember(roomMember)
-                        .eventType("ADMIN_CONFIRMED_ACCESS")
-                        .newState(statusState("ACTIVE"))
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
-
-        return mapQueueItem(item);
+    if (roomMember.getStatus() != MemberStatus.PENDING) {
+      throw new InvalidRequestException("Only PENDING membership can be confirmed by admin");
     }
 
-    @Transactional
-    public ModerationQueueItemDto rejectMembership(
-            Long queueId,
-            User currentUser,
-            AdminDecisionRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        ensureAdmin(currentUser);
+    roomMember.setRequiresAdminReview(false);
+    roomMember.setStatus(MemberStatus.ACTIVE);
 
-        ModerationQueue item = moderationQueueRepository.findById(queueId)
-                .orElseThrow(() -> new ResourceNotFoundException("Moderation queue item not found"));
-
-        if (item.getRoomMember() == null) {
-            throw new InvalidRequestException("Queue item is not linked to membership");
-        }
-
-        RoomMember roomMember = item.getRoomMember();
-
-        if (roomMember.getStatus() != MemberStatus.PENDING) {
-            throw new InvalidRequestException("Only PENDING membership can be rejected by admin");
-        }
-
-        roomMember.setStatus(MemberStatus.REJECTED);
-        roomMember.setRejectedAt(LocalDateTime.now());
-        roomMember.setRequiresAdminReview(false);
-        roomMemberRepository.save(roomMember);
-
-        item.setAssignedAdmin(currentUser);
-        item.setStatus(ModerationQueueStatus.REJECTED);
-        moderationQueueRepository.save(item);
-
-        adminActionLogRepository.save(
-                AdminActionLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .adminUser(currentUser)
-                        .actionType(AdminActionType.ACCESS_REJECTED)
-                        .entityType("ROOM_MEMBER")
-                        .entityId(roomMember.getId())
-                        .reason(request.getReason())
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
-
-        roomEventLogRepository.save(
-                RoomEventLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .actorUser(currentUser)
-                        .actorRole("ADMIN")
-                        .room(roomMember.getRoom())
-                        .roomMember(roomMember)
-                        .eventType("ADMIN_REJECTED_ACCESS")
-                        .newState(statusState("REJECTED"))
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
-
-        return mapQueueItem(item);
+    if (roomMember.getActivatedAt() == null) {
+      roomMember.setActivatedAt(LocalDateTime.now());
     }
 
-    @Transactional
-    public void blockRoom(
-            Long roomId,
-            User currentUser,
-            AdminDecisionRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        ensureAdmin(currentUser);
+    roomMemberRepository.save(roomMember);
 
-        Room room = roomRepository.findById(roomId)
-                .filter(r -> r.getDeletedAt() == null)
-                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+    notifyMembershipActive(roomMember);
 
-        room.setStatus(RoomStatus.BLOCKED);
-        room.setBlockedAt(LocalDateTime.now());
-        room.setBlockReason(request.getReason());
-        roomRepository.save(room);
+    item.setAssignedAdmin(currentUser);
+    item.setStatus(ModerationQueueStatus.RESOLVED);
+    moderationQueueRepository.save(item);
 
-        adminActionLogRepository.save(
-                AdminActionLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .adminUser(currentUser)
-                        .actionType(AdminActionType.ROOM_BLOCKED)
-                        .entityType("ROOM")
-                        .entityId(room.getId())
-                        .reason(request.getReason())
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(currentUser)
+            .actionType(AdminActionType.ACCESS_CONFIRMED)
+            .entityType("ROOM_MEMBER")
+            .entityId(roomMember.getId())
+            .reason(request.getReason())
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
 
-        roomEventLogRepository.save(
-                RoomEventLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .actorUser(currentUser)
-                        .actorRole("ADMIN")
-                        .room(room)
-                        .eventType("ROOM_BLOCKED")
-                        .newState(statusState("BLOCKED"))
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
+    roomEventLogRepository.save(
+        RoomEventLog.builder()
+            .eventId(UUID.randomUUID())
+            .actorUser(currentUser)
+            .actorRole("ADMIN")
+            .room(roomMember.getRoom())
+            .roomMember(roomMember)
+            .eventType("ADMIN_CONFIRMED_ACCESS")
+            .newState(statusState("ACTIVE"))
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+
+    return mapQueueItem(item);
+  }
+
+  @Transactional
+  public ModerationQueueItemDto rejectMembership(
+      Long queueId,
+      User currentUser,
+      AdminDecisionRequest request,
+      HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
+
+    ModerationQueue item =
+        moderationQueueRepository
+            .findById(queueId)
+            .orElseThrow(() -> new ResourceNotFoundException("Moderation queue item not found"));
+
+    if (item.getRoomMember() == null) {
+      throw new InvalidRequestException("Queue item is not linked to membership");
     }
 
-    @Transactional
-    public void banUser(
-            Long userId,
-            User currentUser,
-            AdminDecisionRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        ensureAdmin(currentUser);
+    RoomMember roomMember = item.getRoomMember();
 
-        User target = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        target.setStatus(UserStatus.BANNED);
-        userRepository.save(target);
-
-        adminActionLogRepository.save(
-                AdminActionLog.builder()
-                        .eventId(UUID.randomUUID())
-                        .adminUser(currentUser)
-                        .actionType(AdminActionType.USER_BANNED)
-                        .entityType("USER")
-                        .entityId(target.getId())
-                        .reason(request.getReason())
-                        .ipAddress(httpRequest.getRemoteAddr())
-                        .userAgent(httpRequest.getHeader("User-Agent"))
-                        .build()
-        );
+    if (roomMember.getStatus() != MemberStatus.PENDING) {
+      throw new InvalidRequestException("Only PENDING membership can be rejected by admin");
     }
 
-    private ModerationQueueItemDto mapQueueItem(ModerationQueue item) {
-        return ModerationQueueItemDto.builder()
-                .id(item.getId())
-                .entityType(item.getEntityType())
-                .entityId(item.getEntityId())
-                .roomId(item.getRoom() != null ? item.getRoom().getId() : null)
-                .roomMemberId(item.getRoomMember() != null ? item.getRoomMember().getId() : null)
-                .reasonCode(item.getReasonCode())
-                .riskScore(item.getRiskScore())
-                .status(item.getStatus().name())
-                .assignedAdminId(item.getAssignedAdmin() != null ? item.getAssignedAdmin().getId() : null)
-                .createdAt(item.getCreatedAt())
-                .updatedAt(item.getUpdatedAt())
-                .build();
-    }
-    @Transactional
-    public List<ModerationQueueItemDto> batchConfirmMemberships(
-            User currentUser,
-            BatchConfirmRequest request,
-            HttpServletRequest httpRequest
-    ) {
-        ensureAdmin(currentUser);
+    roomMember.setStatus(MemberStatus.REJECTED);
+    roomMember.setRejectedAt(LocalDateTime.now());
+    roomMember.setRequiresAdminReview(false);
+    roomMemberRepository.save(roomMember);
 
-        List<ModerationQueue> items = moderationQueueRepository.findAllById(request.getQueueIds());
+    item.setAssignedAdmin(currentUser);
+    item.setStatus(ModerationQueueStatus.REJECTED);
+    moderationQueueRepository.save(item);
 
-        if (items.size() != request.getQueueIds().size()) {
-            throw new ResourceNotFoundException("One or more moderation queue items not found");
-        }
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(currentUser)
+            .actionType(AdminActionType.ACCESS_REJECTED)
+            .entityType("ROOM_MEMBER")
+            .entityId(roomMember.getId())
+            .reason(request.getReason())
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
 
-        Long roomId = null;
+    roomEventLogRepository.save(
+        RoomEventLog.builder()
+            .eventId(UUID.randomUUID())
+            .actorUser(currentUser)
+            .actorRole("ADMIN")
+            .room(roomMember.getRoom())
+            .roomMember(roomMember)
+            .eventType("ADMIN_REJECTED_ACCESS")
+            .newState(statusState("REJECTED"))
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
 
-        for (ModerationQueue item : items) {
-            if (item.getRoom() == null || item.getRoomMember() == null) {
-                throw new InvalidRequestException("Batch confirm supports only room-linked membership queue items");
-            }
+    return mapQueueItem(item);
+  }
 
-            if (roomId == null) {
-                roomId = item.getRoom().getId();
-            } else if (!roomId.equals(item.getRoom().getId())) {
-                throw new InvalidRequestException("Batch confirm is allowed only within one room");
-            }
+  @Transactional
+  public void blockRoom(
+      Long roomId, User currentUser, AdminDecisionRequest request, HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
 
-            if (item.getStatus() != ModerationQueueStatus.OPEN && item.getStatus() != ModerationQueueStatus.IN_REVIEW) {
-                throw new InvalidRequestException("Only OPEN or IN_REVIEW items can be batch confirmed");
-            }
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-            if (!"ADMIN_REQUIRED".equals(item.getReasonCode())) {
-                throw new InvalidRequestException("Batch confirm is allowed only for ADMIN_REQUIRED items without red flags");
-            }
-        }
+    room.setStatus(RoomStatus.BLOCKED);
+    room.setBlockedAt(LocalDateTime.now());
+    room.setBlockReason(request.getReason());
+    roomRepository.save(room);
 
-        for (ModerationQueue item : items) {
-            RoomMember roomMember = item.getRoomMember();
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(currentUser)
+            .actionType(AdminActionType.ROOM_BLOCKED)
+            .entityType("ROOM")
+            .entityId(room.getId())
+            .reason(request.getReason())
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
 
-            if (roomMember.getStatus() != MemberStatus.PENDING) {
-                throw new InvalidRequestException("Only PENDING memberships can be batch confirmed");
-            }
+    roomEventLogRepository.save(
+        RoomEventLog.builder()
+            .eventId(UUID.randomUUID())
+            .actorUser(currentUser)
+            .actorRole("ADMIN")
+            .room(room)
+            .eventType("ROOM_BLOCKED")
+            .newState(statusState("BLOCKED"))
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+  }
 
-            if (hasOpenSupportTicket(roomMember) || hasOpenDispute(roomMember)) {
-                throw new InvalidRequestException("Batch confirm is not allowed for memberships with open support/dispute");
-            }
+  @Transactional
+  public void unblockRoom(
+      Long roomId, User currentUser, AdminDecisionRequest request, HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
 
-            roomMember.setRequiresAdminReview(false);
-            roomMember.setStatus(MemberStatus.ACTIVE);
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-            if (roomMember.getActivatedAt() == null) {
-                roomMember.setActivatedAt(LocalDateTime.now());
-            }
-
-            roomMemberRepository.save(roomMember);
-
-            item.setAssignedAdmin(currentUser);
-            item.setStatus(ModerationQueueStatus.RESOLVED);
-            moderationQueueRepository.save(item);
-
-            adminActionLogRepository.save(
-                    AdminActionLog.builder()
-                            .eventId(UUID.randomUUID())
-                            .adminUser(currentUser)
-                            .actionType(AdminActionType.BATCH_CONFIRM)
-                            .entityType("ROOM_MEMBER")
-                            .entityId(roomMember.getId())
-                            .reason(request.getReason())
-                            .ipAddress(httpRequest.getRemoteAddr())
-                            .userAgent(httpRequest.getHeader("User-Agent"))
-                            .build()
-            );
-
-            roomEventLogRepository.save(
-                    RoomEventLog.builder()
-                            .eventId(UUID.randomUUID())
-                            .actorUser(currentUser)
-                            .actorRole("ADMIN")
-                            .room(roomMember.getRoom())
-                            .roomMember(roomMember)
-                            .eventType("ADMIN_BATCH_CONFIRMED_ACCESS")
-                            .newState(statusState("ACTIVE"))
-                            .ipAddress(httpRequest.getRemoteAddr())
-                            .userAgent(httpRequest.getHeader("User-Agent"))
-                            .build()
-            );
-        }
-
-        return items.stream().map(this::mapQueueItem).toList();
-    }
-    private ObjectNode statusState(String status) {
-        ObjectNode node = JsonNodeFactory.instance.objectNode();
-        node.put("status", status);
-        return node;
+    if (room.getStatus() != RoomStatus.BLOCKED) {
+      throw new InvalidRequestException("Room is not blocked");
     }
 
-    private void ensureAdmin(User currentUser) {
-        if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
-            throw new ForbiddenOperationException("Admin access required");
-        }
-    }
-    private boolean hasOpenSupportTicket(RoomMember roomMember) {
-        return supportTicketRepository.existsByRoomMemberAndStatusIn(
-                roomMember,
-                List.of(
-                        SupportTicketStatus.OPEN,
-                        SupportTicketStatus.IN_PROGRESS,
-                        SupportTicketStatus.WAITING_USER,
-                        SupportTicketStatus.ESCALATED
-                )
-        );
+    room.setStatus(RoomStatus.ACTIVE);
+    room.setBlockedAt(null);
+    room.setBlockReason(null);
+    roomRepository.save(room);
+
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(currentUser)
+            .actionType(AdminActionType.ROOM_UNBLOCKED)
+            .entityType("ROOM")
+            .entityId(room.getId())
+            .reason(request.getReason())
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+
+    roomEventLogRepository.save(
+        RoomEventLog.builder()
+            .eventId(UUID.randomUUID())
+            .actorUser(currentUser)
+            .actorRole("ADMIN")
+            .room(room)
+            .eventType("ROOM_UNBLOCKED")
+            .newState(statusState("ACTIVE"))
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+  }
+
+  @Transactional
+  public void banUser(
+      Long userId, User currentUser, AdminDecisionRequest request, HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
+
+    User target =
+        userRepository
+            .findById(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+    if (target.getStatus() == UserStatus.DELETED
+        || target.getRole() == Role.ADMIN
+        || target.getId().equals(currentUser.getId())) {
+      throw new ForbiddenOperationException("User cannot be restricted");
     }
 
-    private boolean hasOpenDispute(RoomMember roomMember) {
-        return disputeRepository.existsByRoomMemberAndStatusIn(
-                roomMember,
-                List.of(
-                        DisputeStatus.OPEN,
-                        DisputeStatus.UNDER_REVIEW
-                )
-        );
+    LocalDateTime now = LocalDateTime.now();
+    target.setStatus(UserStatus.BANNED);
+    target.setBanReason(request.getReason());
+    target.setBannedAt(now);
+    target.setBanStartsAt(now);
+    target.setBanUntil(null);
+    userRepository.save(target);
+
+    tokenRevocationService.revokeAllUserTokens(target);
+    accountRealtimeService.publishBanned(target.getId(), target.getBanReason(), now);
+    notificationService.notify(target, NotificationType.ACCOUNT_BANNED);
+
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(currentUser)
+            .actionType(AdminActionType.USER_BANNED)
+            .entityType("USER")
+            .entityId(target.getId())
+            .reason(request.getReason())
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+  }
+
+  private ModerationQueueItemDto mapQueueItem(ModerationQueue item) {
+    return ModerationQueueItemDto.builder()
+        .id(item.getId())
+        .entityType(item.getEntityType())
+        .entityId(item.getEntityId())
+        .roomId(item.getRoom() != null ? item.getRoom().getId() : null)
+        .roomMemberId(item.getRoomMember() != null ? item.getRoomMember().getId() : null)
+        .reasonCode(item.getReasonCode())
+        .riskScore(item.getRiskScore())
+        .status(item.getStatus().name())
+        .assignedAdminId(item.getAssignedAdmin() != null ? item.getAssignedAdmin().getId() : null)
+        .createdAt(item.getCreatedAt())
+        .updatedAt(item.getUpdatedAt())
+        .build();
+  }
+
+  @Transactional
+  public List<ModerationQueueItemDto> batchConfirmMemberships(
+      User currentUser, BatchConfirmRequest request, HttpServletRequest httpRequest) {
+    ensureAdmin(currentUser);
+
+    List<ModerationQueue> items = moderationQueueRepository.findAllById(request.getQueueIds());
+
+    if (items.size() != request.getQueueIds().size()) {
+      throw new ResourceNotFoundException("One or more moderation queue items not found");
     }
+
+    Long roomId = null;
+
+    for (ModerationQueue item : items) {
+      if (item.getRoom() == null || item.getRoomMember() == null) {
+        throw new InvalidRequestException(
+            "Batch confirm supports only room-linked membership queue items");
+      }
+
+      if (roomId == null) {
+        roomId = item.getRoom().getId();
+      } else if (!roomId.equals(item.getRoom().getId())) {
+        throw new InvalidRequestException("Batch confirm is allowed only within one room");
+      }
+
+      if (item.getStatus() != ModerationQueueStatus.OPEN
+          && item.getStatus() != ModerationQueueStatus.IN_REVIEW) {
+        throw new InvalidRequestException("Only OPEN or IN_REVIEW items can be batch confirmed");
+      }
+
+      if (!"ADMIN_REQUIRED".equals(item.getReasonCode())) {
+        throw new InvalidRequestException(
+            "Batch confirm is allowed only for ADMIN_REQUIRED items without red flags");
+      }
+    }
+
+    for (ModerationQueue item : items) {
+      RoomMember roomMember = item.getRoomMember();
+
+      if (roomMember.getStatus() != MemberStatus.PENDING) {
+        throw new InvalidRequestException("Only PENDING memberships can be batch confirmed");
+      }
+
+      if (hasOpenSupportTicket(roomMember) || hasOpenDispute(roomMember)) {
+        throw new InvalidRequestException(
+            "Batch confirm is not allowed for memberships with open support/dispute");
+      }
+
+      roomMember.setRequiresAdminReview(false);
+      roomMember.setStatus(MemberStatus.ACTIVE);
+
+      if (roomMember.getActivatedAt() == null) {
+        roomMember.setActivatedAt(LocalDateTime.now());
+      }
+
+      roomMemberRepository.save(roomMember);
+
+      notifyMembershipActive(roomMember);
+
+      item.setAssignedAdmin(currentUser);
+      item.setStatus(ModerationQueueStatus.RESOLVED);
+      moderationQueueRepository.save(item);
+
+      adminActionLogRepository.save(
+          AdminActionLog.builder()
+              .eventId(UUID.randomUUID())
+              .adminUser(currentUser)
+              .actionType(AdminActionType.BATCH_CONFIRM)
+              .entityType("ROOM_MEMBER")
+              .entityId(roomMember.getId())
+              .reason(request.getReason())
+              .ipAddress(httpRequest.getRemoteAddr())
+              .userAgent(httpRequest.getHeader("User-Agent"))
+              .build());
+
+      roomEventLogRepository.save(
+          RoomEventLog.builder()
+              .eventId(UUID.randomUUID())
+              .actorUser(currentUser)
+              .actorRole("ADMIN")
+              .room(roomMember.getRoom())
+              .roomMember(roomMember)
+              .eventType("ADMIN_BATCH_CONFIRMED_ACCESS")
+              .newState(statusState("ACTIVE"))
+              .ipAddress(httpRequest.getRemoteAddr())
+              .userAgent(httpRequest.getHeader("User-Agent"))
+              .build());
+    }
+
+    return items.stream().map(this::mapQueueItem).toList();
+  }
+
+  private void notifyMembershipActive(RoomMember roomMember) {
+    Room room = roomMember.getRoom();
+    String tariffName = room.getTariffNameSnapshot();
+    if (tariffName == null || tariffName.isBlank()) {
+      tariffName = room.getTariffPlan() == null ? room.getTitle() : room.getTariffPlan().getName();
+    }
+    notificationService.notify(
+        roomMember.getUser(),
+        NotificationType.MEMBERSHIP_ACTIVATED,
+        java.util.Map.of("roomTitle", room.getTitle() == null ? "" : room.getTitle()),
+        "/rooms/member/" + room.getId(),
+        java.util.Map.of("roomId", room.getId(), "memberId", roomMember.getId()));
+  }
+
+  private ObjectNode statusState(String status) {
+    ObjectNode node = JsonNodeFactory.instance.objectNode();
+    node.put("status", status);
+    return node;
+  }
+
+  private void ensureAdmin(User currentUser) {
+    if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
+      throw new ForbiddenOperationException("Admin access required");
+    }
+  }
+
+  private boolean hasOpenSupportTicket(RoomMember roomMember) {
+    return supportTicketRepository.existsByRoomMemberAndStatusIn(
+        roomMember,
+        List.of(
+            SupportTicketStatus.OPEN,
+            SupportTicketStatus.IN_PROGRESS,
+            SupportTicketStatus.WAITING_USER,
+            SupportTicketStatus.ESCALATED));
+  }
+
+  private boolean hasOpenDispute(RoomMember roomMember) {
+    return disputeRepository.existsByRoomMemberAndStatusIn(
+        roomMember, List.of(DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW));
+  }
 }

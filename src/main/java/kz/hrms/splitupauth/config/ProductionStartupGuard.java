@@ -1,0 +1,454 @@
+package kz.hrms.splitupauth.config;
+
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
+import java.util.Locale;
+import kz.hrms.splitupauth.payment.gateway.MockPaymentGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayProperties;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
+import org.springframework.stereotype.Component;
+
+/**
+ * Refuses to start the prod profile with unsafe configuration.
+ *
+ * <p>Validation runs in {@link #afterSingletonsInstantiated()}, i.e. after every bean exists but
+ * BEFORE the context is refreshed — so before any {@code @Scheduled} money job (payout/refund
+ * dispatch, reconciliation) can fire and before the web server accepts traffic. It is repeated as
+ * an {@link ApplicationRunner} for callers/tests that only drive the runner contract.
+ *
+ * <p>Automatic recurring charges stay rejected in production on purpose: auto-renewal is not part
+ * of the MVP launch and FreedomPay's recurring contract (make_recurring_payment acceptance vs.
+ * capture semantics, recurring lifetime) must first be confirmed for this merchant.
+ */
+@Component
+@Profile("prod")
+@RequiredArgsConstructor
+public class ProductionStartupGuard implements ApplicationRunner, SmartInitializingSingleton {
+
+  private final Environment environment;
+  private final CorsProperties corsProperties;
+  private final FreedomPayProperties freedomPayProperties;
+
+  private volatile boolean validated;
+
+  @Override
+  public void afterSingletonsInstantiated() {
+    run(null);
+  }
+
+  @Override
+  public void run(ApplicationArguments args) {
+    if (validated) {
+      return;
+    }
+    List<String> violations = new ArrayList<>();
+
+    validateProfiles(violations);
+    validateMoneyMovement(violations);
+    reject(!isStrongBase64Secret(prop("jwt.secret")), violations, "JWT secret is missing or weak");
+    reject(
+        !isStrongBase64Secret(prop("app.security.field-encryption-key")),
+        violations,
+        "field encryption key is missing or weak");
+    reject(!isHttpsPublicUrl(prop("app.base-url")), violations, "backend public URL is not HTTPS");
+    reject(
+        !isHttpsPublicUrl(prop("app.frontend-url")),
+        violations,
+        "frontend public URL is not HTTPS");
+    validateFreedomPayUrls(violations);
+    validateCors(violations);
+    validateSms(violations);
+    validateSmtp(violations);
+    validateObjectStorage(violations);
+    validateBrandAndLegalReadiness(violations);
+    reject(
+        !"true".equalsIgnoreCase(prop("app.auth.refresh-cookie-secure")),
+        violations,
+        "refresh cookie secure flag is disabled");
+    reject(
+        "true".equalsIgnoreCase(prop("app.auth.refresh-token-body-enabled")),
+        violations,
+        "refresh token body mode is enabled");
+    reject(
+        "true".equalsIgnoreCase(prop("app.recurring.enabled")),
+        violations,
+        "automatic recurring charges are enabled");
+    reject(
+        !"false".equalsIgnoreCase(prop("springdoc.api-docs.enabled"))
+            || !"false".equalsIgnoreCase(prop("springdoc.swagger-ui.enabled")),
+        violations,
+        "Swagger/OpenAPI is enabled");
+    reject(
+        "true".equalsIgnoreCase(prop("spring.jpa.show-sql")),
+        violations,
+        "SQL statement logging is enabled");
+    reject(
+        "false".equalsIgnoreCase(prop("spring.flyway.validate-on-migrate")),
+        violations,
+        "Flyway validation is disabled");
+    reject(
+        !prop("spring.flyway.ignore-migration-patterns").isBlank(),
+        violations,
+        "Flyway missing migration validation is weakened");
+    reject(
+        !List.of("framework", "native").contains(prop("server.forward-headers-strategy")),
+        violations,
+        "forwarded headers strategy is not configured for reverse proxy use");
+    if ("native".equals(prop("server.forward-headers-strategy"))) {
+      String proxies = prop("server.tomcat.remoteip.internal-proxies").trim();
+      reject(
+          proxies.isBlank() || proxies.equals(".*") || proxies.equals(".+"),
+          violations,
+          "trusted proxy list would let any client spoof X-Forwarded-For");
+    }
+    reject(
+        !"jdbc".equalsIgnoreCase(prop("app.rate-limit.store")),
+        violations,
+        "rate limiting is per-instance (app.rate-limit.store must be jdbc for production)");
+    String exposure = prop("management.endpoints.web.exposure.include").toLowerCase(Locale.ROOT);
+    reject(
+        exposure.contains("*")
+            || exposure.contains("env")
+            || exposure.contains("heapdump")
+            || exposure.contains("threaddump")
+            || exposure.contains("configprops")
+            || exposure.contains("loggers")
+            || exposure.contains("beans"),
+        violations,
+        "sensitive actuator endpoints are exposed");
+    reject(
+        !freedomPayProperties.isVerifyResponseSignatures(),
+        violations,
+        "FreedomPay response signature verification is disabled");
+
+    if (!violations.isEmpty()) {
+      throw new IllegalStateException(
+          "Refusing to start production profile due to unsafe configuration: "
+              + String.join("; ", violations));
+    }
+    validated = true;
+  }
+
+  private void validateProfiles(List<String> violations) {
+    List<String> activeProfiles = List.of(environment.getActiveProfiles());
+    reject(!activeProfiles.contains("prod"), violations, "prod profile is not active");
+    reject(activeProfiles.contains("dev"), violations, "dev profile is active together with prod");
+    reject(
+        activeProfiles.contains("test"), violations, "test profile is active together with prod");
+  }
+
+  private void validateMoneyMovement(List<String> violations) {
+    boolean liveMoneyEnabled = boolProp("app.money.live-enabled");
+    boolean payoutDispatchEnabled = boolProp("app.money.payout-dispatch-enabled");
+    boolean refundDispatchEnabled = boolProp("app.money.refund-dispatch-enabled");
+    boolean postPayoutRefundEnabled = boolProp("app.money.post-payout-refund-enabled");
+    boolean ownerReceivableEnabled = boolProp("app.money.owner-receivable-enabled");
+
+    reject(
+        intProp("app.payout.hold-minutes", 0) > 0,
+        violations,
+        "payout hold-minutes test override is set");
+
+    if (!liveMoneyEnabled) {
+      reject(
+          payoutDispatchEnabled || refundDispatchEnabled,
+          violations,
+          "money dispatch is enabled while the live-money gate is disabled");
+      return;
+    }
+
+    reject(
+        MockPaymentGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
+        violations,
+        "payment provider is mock");
+    reject(
+        !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(prop("ecopay.payments.provider")),
+        violations,
+        "payment provider is not production FreedomPay");
+    reject(!isFreedomPayLiveMode(), violations, "FreedomPay test mode is enabled");
+    reject(
+        isSandboxOrTestHost(hostOf(freedomPayProperties.getBaseUrl())),
+        violations,
+        "FreedomPay base URL points to sandbox/test host");
+    rejectBlank("ecopay.payments.freedompay.merchant-id", violations);
+    rejectBlank("ecopay.payments.freedompay.secret-key", violations);
+    rejectBlank("ecopay.payments.freedompay.payout-secret-key", violations);
+    reject(!payoutDispatchEnabled, violations, "payout dispatch is disabled in live-money mode");
+    reject(!refundDispatchEnabled, violations, "refund dispatch is disabled in live-money mode");
+    reject(intProp("app.payout.hold-days", -1) != 30, violations, "payout hold is not 30 days");
+    reject(
+        !freedomPayProperties.isAutoClearing(),
+        violations,
+        "FreedomPay two-step (pg_auto_clearing=0) charges would be treated as captured money");
+    reject(
+        postPayoutRefundEnabled && !ownerReceivableEnabled,
+        violations,
+        "post-payout refunds require owner receivables");
+  }
+
+  private void validateFreedomPayUrls(List<String> violations) {
+    rejectUnsafeCallback(freedomPayProperties.getResultUrl(), violations, "FreedomPay result URL");
+    rejectUnsafeCallback(
+        freedomPayProperties.getPayoutResultUrl(), violations, "FreedomPay payout result URL");
+    rejectUnsafeCallback(
+        freedomPayProperties.getPayoutCardResultUrl(),
+        violations,
+        "FreedomPay payout card result URL");
+    // Callback signatures use the last path segment of the callback URL as script name, so the
+    // configured URLs must end exactly like the controller mappings.
+    rejectWrongCallbackScript(freedomPayProperties.getResultUrl(), "result", violations);
+    rejectWrongCallbackScript(
+        freedomPayProperties.getPayoutResultUrl(), "payout-result", violations);
+    rejectWrongCallbackScript(
+        freedomPayProperties.getPayoutCardResultUrl(), "payout-card-result", violations);
+    rejectUnsafeCallback(
+        freedomPayProperties.getSuccessUrl(), violations, "FreedomPay success URL");
+    rejectUnsafeCallback(
+        freedomPayProperties.getFailureUrl(), violations, "FreedomPay failure URL");
+  }
+
+  private void validateCors(List<String> violations) {
+    if (corsProperties.getAllowedOrigins().isEmpty()) {
+      violations.add("CORS allowlist is empty");
+      return;
+    }
+    for (String origin : corsProperties.getAllowedOrigins()) {
+      String normalized = origin == null ? "" : origin.trim().toLowerCase(Locale.ROOT);
+      reject(normalized.equals("*"), violations, "CORS allowlist contains wildcard");
+      reject(
+          normalized.startsWith("http://"), violations, "CORS allowlist contains non-HTTPS origin");
+      reject(
+          isPrivateOrLocalHost(hostOf(normalized)),
+          violations,
+          "CORS allowlist contains local/private origin");
+    }
+  }
+
+  private void validateSms(List<String> violations) {
+    String provider = prop("ecopay.sms.provider").trim().toLowerCase(Locale.ROOT);
+    reject(provider.isBlank(), violations, "SMS provider is missing");
+    reject(
+        provider.equals("logging") || provider.equals("mock"),
+        violations,
+        "SMS provider is not real");
+    reject(!provider.equals("mobizon"), violations, "SMS provider is not supported for production");
+    rejectBlank("ecopay.sms.mobizon.base-url", violations);
+    reject(
+        !isHttpsPublicUrl(prop("ecopay.sms.mobizon.base-url")),
+        violations,
+        "Mobizon base URL is not HTTPS");
+    rejectBlank("ecopay.sms.mobizon.api-key", violations);
+    rejectBlank("ecopay.sms.mobizon.from", violations);
+    reject(!prop("app.phone.dev-bypass-code").isBlank(), violations, "dev phone bypass is enabled");
+  }
+
+  private void validateSmtp(List<String> violations) {
+    rejectBlank("spring.mail.host", violations);
+    reject(
+        isPrivateOrLocalHost(hostOf("//" + prop("spring.mail.host"))),
+        violations,
+        "SMTP host is local/private");
+    rejectBlank("spring.mail.username", violations);
+    rejectBlank("spring.mail.password", violations);
+    rejectBlank("spring.mail.properties.mail.smtp.from", violations);
+  }
+
+  private void validateObjectStorage(List<String> violations) {
+    rejectBlank("app.s3.region", violations);
+    rejectBlank("app.s3.bucket", violations);
+    rejectBlank("app.s3.endpoint", violations);
+    reject(
+        !isHttpsPublicUrl(prop("app.s3.endpoint")),
+        violations,
+        "object storage endpoint is not HTTPS public URL");
+    rejectBlank("app.s3.access-key", violations);
+    rejectBlank("app.s3.secret-key", violations);
+  }
+
+  private void validateBrandAndLegalReadiness(List<String> violations) {
+    reject(
+        !isPlausibleEmail(prop("app.brand.support-email")),
+        violations,
+        "support email is missing or invalid");
+    reject(
+        hasPlaceholderValue(prop("app.production.legal-entity-name")),
+        violations,
+        "legal entity name is missing or placeholder");
+    reject(
+        hasPlaceholderValue(prop("app.production.legal-bin")), violations, "legal BIN is missing");
+    reject(
+        hasPlaceholderValue(prop("app.production.legal-address")),
+        violations,
+        "legal address is missing or placeholder");
+    reject(
+        !"true".equalsIgnoreCase(prop("app.production.legal-reviewed")),
+        violations,
+        "terms/privacy legal review is not confirmed");
+  }
+
+  private static void rejectWrongCallbackScript(
+      String url, String expectedScript, List<String> violations) {
+    String path = "";
+    try {
+      URI uri = URI.create(url == null ? "" : url.trim());
+      path = uri.getPath() == null ? "" : uri.getPath();
+    } catch (IllegalArgumentException ignored) {
+      // reported by rejectUnsafeCallback
+    }
+    while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+    reject(
+        !path.endsWith("/" + expectedScript),
+        violations,
+        "FreedomPay callback URL must end with /" + expectedScript);
+  }
+
+  private void rejectUnsafeCallback(String url, List<String> violations, String label) {
+    reject(!isHttpsPublicUrl(url), violations, label + " is not HTTPS public URL");
+    reject(isPrivateOrLocalHost(hostOf(url)), violations, label + " contains local/private host");
+  }
+
+  private boolean isFreedomPayLiveMode() {
+    String testMode = freedomPayProperties.getTestMode();
+    return testMode != null
+        && (testMode.equals("0")
+            || testMode.equalsIgnoreCase("false")
+            || testMode.equalsIgnoreCase("off"));
+  }
+
+  private void rejectBlank(String propertyName, List<String> violations) {
+    reject(prop(propertyName).isBlank(), violations, propertyName + " is missing");
+  }
+
+  private boolean isStrongBase64Secret(String value) {
+    if (isBlankOrExample(value)) {
+      return false;
+    }
+    try {
+      return Base64.getDecoder().decode(value.trim()).length >= 32;
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  private static boolean isBlankOrExample(String value) {
+    if (value == null || value.isBlank()) {
+      return true;
+    }
+    String normalized = value.trim().toLowerCase(Locale.ROOT);
+    return normalized.contains("example")
+        || normalized.contains("default")
+        || normalized.contains("change-me")
+        || normalized.contains("changeme")
+        || normalized.equals("secret");
+  }
+
+  private static boolean hasPlaceholderValue(String value) {
+    if (isBlankOrExample(value)) {
+      return true;
+    }
+    String normalized = value.trim().toLowerCase(Locale.ROOT);
+    return normalized.contains("[")
+        || normalized.contains("]")
+        || normalized.contains("___")
+        || normalized.contains("todo")
+        || normalized.contains("draft")
+        || normalized.contains("template")
+        || normalized.contains("placeholder")
+        || normalized.contains("черновик")
+        || normalized.contains("укажите");
+  }
+
+  private static boolean isPlausibleEmail(String value) {
+    if (hasPlaceholderValue(value)) {
+      return false;
+    }
+    return value.trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+  }
+
+  private static boolean isHttpsPublicUrl(String value) {
+    try {
+      URI uri = URI.create(value == null ? "" : value.trim());
+      return "https".equalsIgnoreCase(uri.getScheme())
+          && uri.getHost() != null
+          && !isPrivateOrLocalHost(uri.getHost());
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  private static String hostOf(String value) {
+    try {
+      return URI.create(value == null ? "" : value.trim()).getHost();
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+  }
+
+  private static boolean isPrivateOrLocalHost(String host) {
+    if (host == null || host.isBlank()) {
+      return true;
+    }
+    String lower = host.toLowerCase(Locale.ROOT);
+    if (lower.equals("localhost")
+        || lower.equals("0.0.0.0")
+        || lower.equals("127.0.0.1")
+        || lower.equals("::1")
+        || lower.endsWith(".localhost")
+        || lower.endsWith(".local")) {
+      return true;
+    }
+    if (lower.startsWith("10.") || lower.startsWith("192.168.")) {
+      return true;
+    }
+    if (lower.startsWith("172.")) {
+      String[] parts = lower.split("\\.");
+      if (parts.length > 1) {
+        try {
+          int second = Integer.parseInt(parts[1]);
+          return second >= 16 && second <= 31;
+        } catch (NumberFormatException ignored) {
+          return false;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean isSandboxOrTestHost(String host) {
+    if (host == null || host.isBlank()) {
+      return true;
+    }
+    String lower = host.toLowerCase(Locale.ROOT);
+    return lower.contains("test") || lower.contains("sandbox") || lower.contains("stage");
+  }
+
+  private String prop(String name) {
+    return environment.getProperty(name, "");
+  }
+
+  private boolean boolProp(String name) {
+    return "true".equalsIgnoreCase(prop(name));
+  }
+
+  private int intProp(String name, int fallback) {
+    try {
+      return Integer.parseInt(prop(name));
+    } catch (NumberFormatException ignored) {
+      return fallback;
+    }
+  }
+
+  private static void reject(boolean condition, List<String> violations, String message) {
+    if (condition) {
+      violations.add(message);
+    }
+  }
+}
