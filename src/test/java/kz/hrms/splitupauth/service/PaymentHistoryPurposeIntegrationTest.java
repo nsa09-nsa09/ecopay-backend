@@ -55,6 +55,11 @@ class PaymentHistoryPurposeIntegrationTest extends AbstractIntegrationTest {
                 .roomType(RoomType.DIGITAL)
                 .title("History Room")
                 .maxMembers(2)
+                .priceTotal(new BigDecimal("2000.00"))
+                .pricePerMember(new BigDecimal("1000.00"))
+                .priceTotalKzt(new BigDecimal("2000.00"))
+                .pricePerMemberKzt(new BigDecimal("1000.00"))
+                .currency("KZT")
                 .periodType(PeriodType.MONTHLY)
                 .startDate(LocalDateTime.now().plusDays(5))
                 .build());
