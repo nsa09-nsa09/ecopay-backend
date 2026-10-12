@@ -9,9 +9,12 @@ import kz.hrms.splitupauth.dto.NotificationDto;
 import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.entity.Notification;
 import kz.hrms.splitupauth.entity.NotificationType;
+import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.NotificationRepository;
+import kz.hrms.splitupauth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +54,7 @@ public class NotificationService {
   private final NotificationPreferenceService preferenceService;
   private final ApplicationEventPublisher eventPublisher;
   private final ObjectMapper objectMapper;
+  private final UserRepository userRepository;
 
   // ===================== emit =====================
 
@@ -65,6 +69,22 @@ public class NotificationService {
   public void notify(
       User recipient,
       NotificationType type,
+      Map<String, String> params,
+      String link,
+      Map<String, Object> metadata) {
+    notify(recipient, type, null, params, link, metadata);
+  }
+
+  /**
+   * Core emit that also records the domain entity this notification is about ({@code
+   * relatedEntityId}), so repeated operational alerts for the same entity+type can be
+   * de-duplicated. See {@link #notifyAdminsOnce}.
+   */
+  @Transactional
+  public void notify(
+      User recipient,
+      NotificationType type,
+      Long relatedEntityId,
       Map<String, String> params,
       String link,
       Map<String, Object> metadata) {
@@ -98,6 +118,7 @@ public class NotificationService {
                 .body(body)
                 .link(link)
                 .metadata(metaNode)
+                .relatedEntityId(relatedEntityId)
                 .build();
         notification = notificationRepository.save(notification);
         dto = NotificationDto.from(notification);
@@ -135,6 +156,37 @@ public class NotificationService {
   @Transactional
   public void notify(User recipient, NotificationType type, Map<String, String> params) {
     notify(recipient, type, params, null, null);
+  }
+
+  /**
+   * Alert every active ADMIN about an operational money-path event, exactly once per {@code (type,
+   * relatedEntityId)}: if an alert of this type already exists for the entity it is skipped, so a
+   * repeated state transition (e.g. a re-run reconciliation) never spams. Best-effort like {@link
+   * #notify} — delivery goes through the same async outbox and never blocks or breaks the
+   * triggering payment/payout/refund operation.
+   */
+  @Transactional
+  public void notifyAdminsOnce(
+      NotificationType type,
+      Long relatedEntityId,
+      Map<String, String> params,
+      String link,
+      Map<String, Object> metadata) {
+    try {
+      if (relatedEntityId != null
+          && notificationRepository.existsByTypeAndRelatedEntityId(type, relatedEntityId)) {
+        return;
+      }
+      for (User admin : userRepository.findByRoleAndStatus(Role.ADMIN, UserStatus.ACTIVE)) {
+        notify(admin, type, relatedEntityId, params, link, metadata);
+      }
+    } catch (Exception e) {
+      log.warn(
+          "Failed to emit admin alert type={} entity={}: {}",
+          type,
+          relatedEntityId,
+          e.getMessage());
+    }
   }
 
   // ===================== read surface =====================

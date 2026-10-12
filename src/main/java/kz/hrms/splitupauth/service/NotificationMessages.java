@@ -280,6 +280,53 @@ final class NotificationMessages {
               "Аккаунтыңыз қайта белсенді.",
               "Account unblocked",
               "Your account is active again.");
+      case PAYMENT_CAPTURE_ANOMALY ->
+          copy(
+              locale,
+              "Аномалия захвата платежа",
+              "Платёж (intent #{entityId}) захвачен у провайдера, но не сверяется с заказом."
+                  + " Требуется проверка в /admin/finance.",
+              "Төлемді ұстаудағы ауытқу",
+              "Төлем (intent #{entityId}) провайдерде ұсталды, бірақ тапсырыспен сәйкес келмейді."
+                  + " /admin/finance бөлімінде тексеру қажет.",
+              "Payment capture anomaly",
+              "Payment (intent #{entityId}) was captured at the provider but does not reconcile"
+                  + " to the order. Review it in /admin/finance.");
+      case PAYMENT_REQUIRES_REVIEW ->
+          copy(
+              locale,
+              "Платёж требует проверки",
+              "Платёж (intent #{entityId}) захвачен, но требует решения оператора в /admin/finance.",
+              "Төлем тексеруді қажет етеді",
+              "Төлем (intent #{entityId}) ұсталды, бірақ /admin/finance бөлімінде оператор шешімін"
+                  + " қажет етеді.",
+              "Payment requires review",
+              "Payment (intent #{entityId}) was captured but needs an operator decision in"
+                  + " /admin/finance.");
+      case PAYOUT_REQUIRES_REVIEW ->
+          copy(
+              locale,
+              "Выплата требует проверки",
+              "Выплата (payout #{entityId}) осталась в неоднозначном статусе у провайдера."
+                  + " Требуется решение оператора в /admin/finance.",
+              "Төлем тексеруді қажет етеді",
+              "Төлем (payout #{entityId}) провайдерде анық емес күйде қалды."
+                  + " /admin/finance бөлімінде оператор шешімі қажет.",
+              "Payout requires review",
+              "Payout (payout #{entityId}) is in an ambiguous provider state and needs an operator"
+                  + " decision in /admin/finance.");
+      case REFUND_REQUIRES_REVIEW ->
+          copy(
+              locale,
+              "Возврат требует проверки",
+              "Возврат (refund #{entityId}) осталась в неоднозначном статусе у провайдера."
+                  + " Требуется решение оператора в /admin/finance.",
+              "Қайтару тексеруді қажет етеді",
+              "Қайтару (refund #{entityId}) провайдерде анық емес күйде қалды."
+                  + " /admin/finance бөлімінде оператор шешімі қажет.",
+              "Refund requires review",
+              "Refund (refund #{entityId}) is in an ambiguous provider state and needs an operator"
+                  + " decision in /admin/finance.");
     };
   }
 

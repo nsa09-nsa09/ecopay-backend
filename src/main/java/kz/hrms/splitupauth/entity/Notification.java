@@ -52,6 +52,13 @@ public class Notification {
   @Column(columnDefinition = "jsonb")
   private JsonNode metadata;
 
+  /**
+   * Id of the domain entity this notification is about (intent / payout / refund id), used to
+   * de-duplicate repeated operational alerts for the same entity+type. Nullable.
+   */
+  @Column(name = "related_entity_id")
+  private Long relatedEntityId;
+
   @Column(name = "read_at")
   private LocalDateTime readAt;
 

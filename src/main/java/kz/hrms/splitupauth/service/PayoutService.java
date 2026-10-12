@@ -546,6 +546,7 @@ public class PayoutService {
         payout.setFailureReason("Prior submission requires reconciliation before any new transfer");
       }
       payoutRepository.save(payout);
+      notifyPayoutRequiresReview(payout);
       return null;
     }
     if (!staleProcessing
@@ -803,6 +804,9 @@ public class PayoutService {
       payout.setLeaseUntil(null);
       payout.setNextRetryAt(null);
       payoutRepository.save(payout);
+      if (status == PayoutStatus.REQUIRES_REVIEW) {
+        notifyPayoutRequiresReview(payout);
+      }
     }
   }
 
@@ -827,6 +831,7 @@ public class PayoutService {
             "Provider has no record of this payout order; verify before resending");
         payout.setNextRetryAt(null);
         payoutRepository.save(payout);
+        notifyPayoutRequiresReview(payout);
         return;
       }
       payout.setNextRetryAt(now.plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
@@ -846,6 +851,7 @@ public class PayoutService {
               + payout.getSubmittedAmount());
       payout.setNextRetryAt(null);
       payoutRepository.save(payout);
+      notifyPayoutRequiresReview(payout);
       return;
     }
     if ("SUCCESS".equals(status)) {
@@ -867,6 +873,7 @@ public class PayoutService {
       payout.setProcessedAt(LocalDateTime.now(clock));
       payout.setNextRetryAt(null);
       payoutRepository.save(payout);
+      notifyPayoutRequiresReview(payout);
       return;
     }
     payout.setNextRetryAt(
@@ -1009,7 +1016,20 @@ public class PayoutService {
 
     if (success) {
       notifyPayoutSent(payout);
+    } else {
+      notifyPayoutRequiresReview(payout);
     }
+  }
+
+  /** One-shot admin alert that a payout is stuck in REQUIRES_REVIEW and needs an operator. */
+  private void notifyPayoutRequiresReview(Payout payout) {
+    if (payout.getId() == null) return;
+    notificationService.notifyAdminsOnce(
+        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_REQUIRES_REVIEW,
+        payout.getId(),
+        java.util.Map.of("entityId", String.valueOf(payout.getId())),
+        "/admin/finance",
+        java.util.Map.of("payoutId", payout.getId()));
   }
 
   private void notifyPayoutSent(Payout payout) {

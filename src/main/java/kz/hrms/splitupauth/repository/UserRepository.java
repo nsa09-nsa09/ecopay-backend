@@ -4,6 +4,7 @@ import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import kz.hrms.splitupauth.entity.Role;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +22,9 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
   boolean existsByEmail(String email);
 
   Optional<User> findByEmailAndStatus(String email, UserStatus status);
+
+  /** Active admins — recipients of operational money-path alerts. */
+  List<User> findByRoleAndStatus(Role role, UserStatus status);
 
   Optional<User> findByPhone(String phone);
 

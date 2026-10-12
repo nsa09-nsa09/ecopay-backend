@@ -92,7 +92,8 @@ public class PaymentHistoryService {
           pi.provider_name as provider_name,
           tx.card_pan_mask as card_pan_mask,
           pi.failure_code as failure_code,
-          cast(null as timestamp) as release_at
+          cast(null as timestamp) as release_at,
+          pi.purpose as purpose
         from payment_intents pi
         join room_members rm on rm.id = pi.room_member_id
         join rooms room on room.id = rm.room_id
@@ -120,7 +121,8 @@ public class PaymentHistoryService {
           tx.provider_name as provider_name,
           tx.card_pan_mask as card_pan_mask,
           cast(null as varchar) as failure_code,
-          cast(null as timestamp) as release_at
+          cast(null as timestamp) as release_at,
+          pi.purpose as purpose
         from refund_transactions r
         join payment_transactions tx on tx.id = r.payment_transaction_id
         join payment_intents pi on pi.id = tx.payment_intent_id
@@ -148,7 +150,8 @@ public class PaymentHistoryService {
           pm.provider_name as provider_name,
           pm.pan_mask as card_pan_mask,
           cast(null as varchar) as failure_code,
-          p.release_at as release_at
+          p.release_at as release_at,
+          cast(null as varchar) as purpose
         from payouts p
         left join rooms room on room.id = p.room_id
         left join payout_methods pm on pm.id = p.payout_method_id
@@ -185,6 +188,7 @@ public class PaymentHistoryService {
             rs.getTimestamp("release_at") == null
                 ? null
                 : rs.getTimestamp("release_at").toLocalDateTime())
+        .purpose(rs.getString("purpose"))
         .build();
   }
 

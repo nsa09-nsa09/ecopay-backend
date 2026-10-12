@@ -26,4 +26,7 @@ public class PaymentHistoryItemDto {
   private String cardPanMask;
   private String failureCode;
   private LocalDateTime releaseAt;
+
+  /** Intent purpose (INITIAL/RENEWAL/RECURRING); null for rows with no backing intent. */
+  private String purpose;
 }

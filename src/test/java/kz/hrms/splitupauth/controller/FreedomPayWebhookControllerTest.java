@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -11,26 +12,39 @@ import java.util.List;
 import java.util.Map;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
+import kz.hrms.splitupauth.service.InMemoryRateLimiter;
+import kz.hrms.splitupauth.service.RateLimiter;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 class FreedomPayWebhookControllerTest {
 
   @Mock private FreedomPayGateway gateway;
   @Mock private FreedomWebhookInboxCoordinator coordinator;
+  @Mock private RateLimiter rateLimiter;
 
   private FreedomPayWebhookController controller;
 
   @BeforeEach
   void setUp() {
-    controller = new FreedomPayWebhookController(gateway, coordinator);
+    controller = new FreedomPayWebhookController(gateway, coordinator, rateLimiter);
+  }
+
+  @AfterEach
+  void clearRequestContext() {
+    RequestContextHolder.resetRequestAttributes();
   }
 
   private static MultiValueMap<String, String> form(String... kv) {
@@ -106,6 +120,38 @@ class FreedomPayWebhookControllerTest {
         .acceptAndProcessMulti(
             "payout-card-result",
             Map.of("pg_payment_id", List.of("bind-1"), "pg_sig", List.of("s")));
+  }
+
+  @Test
+  void perIpRateLimitRejectsFloodBeforeInboxWrite() {
+    RateLimiter realLimiter = new InMemoryRateLimiter(1000, 3600);
+    FreedomPayWebhookController limited =
+        new FreedomPayWebhookController(gateway, coordinator, realLimiter);
+    ReflectionTestUtils.setField(limited, "rateLimitPerMinute", 3);
+
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRemoteAddr("203.0.113.5");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+    when(coordinator.acceptAndProcessMulti(anyString(), anyMap()))
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(1L, false));
+    when(gateway.buildWebhookResponse("result", "ok", "Order processed")).thenReturn("<ok/>");
+    when(gateway.buildWebhookResponse("result", "error", "rate limited")).thenReturn("<rl/>");
+
+    MultiValueMap<String, String> params = form("pg_order_id", "42", "pg_sig", "s");
+    assertEquals("<ok/>", limited.result(params).getBody());
+    assertEquals("<ok/>", limited.result(params).getBody());
+    assertEquals("<ok/>", limited.result(params).getBody());
+    // 4th request within the window from the same IP is rejected before any inbox write.
+    assertEquals("<rl/>", limited.result(params).getBody());
+    verify(coordinator, times(3)).acceptAndProcessMulti(anyString(), anyMap());
+
+    // A different, slow sender is not affected by the first IP's flood.
+    MockHttpServletRequest other = new MockHttpServletRequest();
+    other.setRemoteAddr("198.51.100.9");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(other));
+    assertEquals("<ok/>", limited.result(params).getBody());
+    verify(coordinator, times(4)).acceptAndProcessMulti(anyString(), anyMap());
   }
 
   @Test

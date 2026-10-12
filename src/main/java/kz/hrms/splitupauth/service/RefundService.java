@@ -96,6 +96,7 @@ public class RefundService {
       refund.setNextRetryAt(null);
       refund.setLastErrorCode("WEBHOOK_FAILED");
       refund.setLastErrorMessage("Provider reported refund failure");
+      notifyRefundRequiresReview(refund);
     }
     refundTransactionRepository.save(refund);
     eventLogger.log(
@@ -320,13 +321,21 @@ public class RefundService {
             .findWithLockById(request.getPaymentTransactionId())
             .orElseThrow(() -> new ResourceNotFoundException("Payment transaction not found"));
 
-    if (paymentTransaction.getType() != PaymentTransactionType.CHARGE) {
-      throw new InvalidRequestException("Refund can only be created for CHARGE transaction");
+    if (paymentTransaction.getType() != PaymentTransactionType.CHARGE
+        || (paymentTransaction.getStatus() != PaymentTransactionStatus.SUCCESS
+            && paymentTransaction.getStatus() != PaymentTransactionStatus.REFUNDED_PARTIAL)) {
+      throw new InvalidRequestException(
+          "REFUND_NOT_CAPTURED", "Only a captured charge can be refunded");
     }
 
-    BigDecimal amount = normalizeRefundAmount(request.getAmount());
     BigDecimal already = refundTransactionRepository.sumActiveRefundAmounts(paymentTransaction);
     BigDecimal remaining = paymentTransaction.getAmount().subtract(already);
+    if (remaining.signum() <= 0) {
+      throw new InvalidRequestException(
+          "REFUND_NO_BALANCE", "No captured balance remains to refund");
+    }
+    BigDecimal amount =
+        request.getAmount() == null ? remaining : normalizeRefundAmount(request.getAmount());
     if (amount.compareTo(remaining) > 0) {
       throw new InvalidRequestException(
           "REFUND_AMOUNT_EXCEEDS_BALANCE",
@@ -557,6 +566,7 @@ public class RefundService {
       refund.setLastErrorMessage(
           "Provider refunded total " + providerRefunded + " does not cover " + expected);
       refundTransactionRepository.save(refund);
+      notifyRefundRequiresReview(refund);
     }
   }
 
@@ -615,6 +625,7 @@ public class RefundService {
     if (attempts >= MAX_REFUND_ATTEMPTS) {
       refund.setStatus(RefundStatus.REQUIRES_REVIEW);
       refund.setNextRetryAt(null);
+      notifyRefundRequiresReview(refund);
       return;
     }
     refund.setStatus(RefundStatus.PENDING);
@@ -632,6 +643,19 @@ public class RefundService {
             processPendingRefundsOnce(1);
           }
         });
+  }
+
+  /** One-shot admin alert that a refund is stuck in REQUIRES_REVIEW and needs an operator. */
+  private void notifyRefundRequiresReview(RefundTransaction refund) {
+    if (refund.getId() == null) {
+      return;
+    }
+    notificationService.notifyAdminsOnce(
+        NotificationType.REFUND_REQUIRES_REVIEW,
+        refund.getId(),
+        java.util.Map.of("entityId", String.valueOf(refund.getId())),
+        "/admin/finance",
+        java.util.Map.of("refundId", refund.getId()));
   }
 
   private void notifyRefundIssued(RefundTransaction refund) {

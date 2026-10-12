@@ -763,7 +763,28 @@ public class PaymentService {
         providerRequestId,
         intent.getIdempotencyKey(),
         Map.of("reason", reason));
+    notifyCaptureAnomaly(intent);
     return intent;
+  }
+
+  /** One-shot admin alert that captured funds for this intent could not be reconciled. */
+  private void notifyCaptureAnomaly(PaymentIntent intent) {
+    notificationService.notifyAdminsOnce(
+        NotificationType.PAYMENT_CAPTURE_ANOMALY,
+        intent.getId(),
+        Map.of("entityId", String.valueOf(intent.getId())),
+        "/admin/finance",
+        Map.of("intentId", intent.getId()));
+  }
+
+  /** One-shot admin alert that a captured payment needs an operator decision. */
+  private void notifyPaymentRequiresReview(PaymentIntent intent) {
+    notificationService.notifyAdminsOnce(
+        NotificationType.PAYMENT_REQUIRES_REVIEW,
+        intent.getId(),
+        Map.of("entityId", String.valueOf(intent.getId())),
+        "/admin/finance",
+        Map.of("intentId", intent.getId()));
   }
 
   private record ReconcileTarget(
@@ -896,6 +917,7 @@ public class PaymentService {
                 intent.getAmount().toPlainString(),
                 "received",
                 event.getAmount().toPlainString()));
+        notifyCaptureAnomaly(intent);
         return;
       }
       if (event.getCurrency() != null
@@ -914,6 +936,7 @@ public class PaymentService {
         intent.setReviewReason("CURRENCY_MISMATCH");
         intent.setCompensationRequired(true);
         paymentIntentRepository.save(intent);
+        notifyCaptureAnomaly(intent);
         return;
       }
       if (Boolean.TRUE.equals(intent.getSaveCardRequested())
@@ -960,7 +983,26 @@ public class PaymentService {
               "failureMessage",
               String.valueOf(event.getFailureMessage())));
     } else {
-      log.info("Webhook with non-terminal status {}, ignoring", event.getResultStatus());
+      // Any status outside SUCCESS/FAILED/PENDING is unrecognized (FreedomPay documents no
+      // chargeback/dispute webhook; if they ever start sending one it would land here). Record it
+      // in the same append-only log as every other event so it is visible under the
+      // /admin/finance/webhooks filter instead of vanishing into an INFO line.
+      log.warn(
+          "Webhook with unrecognized status {} for intent {}; recording for review",
+          event.getResultStatus(),
+          intent.getId());
+      intent.setLastWebhookAt(LocalDateTime.now());
+      paymentIntentRepository.save(intent);
+      eventLogger.log(
+          "INTENT",
+          intent.getId(),
+          "WEBHOOK_UNRECOGNIZED_STATUS",
+          intent.getStatus().name(),
+          intent.getStatus().name(),
+          null,
+          event.getProviderRequestId(),
+          intent.getIdempotencyKey(),
+          Map.of("resultStatus", String.valueOf(event.getResultStatus())));
     }
   }
 
@@ -1058,6 +1100,9 @@ public class PaymentService {
         intent.setReviewReason(seat.reason() + ": " + ex.getMessage());
       }
       intent = paymentIntentRepository.save(intent);
+      if (intent.getStatus() == PaymentIntentStatus.REQUIRES_REVIEW) {
+        notifyPaymentRequiresReview(intent);
+      }
       return intent;
     }
 

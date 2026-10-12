@@ -7,11 +7,13 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import kz.hrms.splitupauth.dto.CreateRefundRequest;
 import kz.hrms.splitupauth.dto.FinancePayoutDto;
 import kz.hrms.splitupauth.dto.FinanceRefundDto;
 import kz.hrms.splitupauth.dto.FinanceTransactionDto;
 import kz.hrms.splitupauth.dto.FinanceWebhookDto;
 import kz.hrms.splitupauth.dto.PagedResponse;
+import kz.hrms.splitupauth.dto.RefundTransactionResponse;
 import kz.hrms.splitupauth.entity.AdminActionLog;
 import kz.hrms.splitupauth.entity.AdminActionType;
 import kz.hrms.splitupauth.entity.User;
@@ -20,6 +22,7 @@ import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.service.AdminFinanceService;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxTransactions;
+import kz.hrms.splitupauth.service.RefundService;
 import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -51,6 +54,7 @@ public class AdminFinanceController {
   private final FreedomWebhookInboxTransactions inboxTransactions;
   private final FreedomWebhookInboxCoordinator inboxCoordinator;
   private final AdminActionLogRepository adminActionLogRepository;
+  private final RefundService refundService;
 
   /** Operator justification is mandatory for every manual money-path action. */
   public record RequeueWebhookRequest(@NotBlank @Size(max = 500) String reason) {}
@@ -93,6 +97,23 @@ public class AdminFinanceController {
             .build());
     inboxCoordinator.processInbox(id);
     return ResponseEntity.ok(java.util.Map.of("id", id, "requeued", true));
+  }
+
+  /**
+   * Manual refund for a captured charge that is NOT tied to a dispute/refund-request ticket — the
+   * only way an operator can return money for a "clean" capture anomaly or requires-review intent
+   * where no Dispute exists. Delegates to the same idempotent, remaining-balance-aware refund logic
+   * used by the dispute flow; a repeated {@code idempotencyKey} returns the existing refund without
+   * charging again. Errors: {@code REFUND_NOT_CAPTURED} / {@code REFUND_NO_BALANCE} / {@code
+   * REFUND_AMOUNT_EXCEEDS_BALANCE} (all HTTP 400). The refund itself is audited in AdminActionLog.
+   */
+  @PostMapping("/refunds/manual")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<RefundTransactionResponse> createManualRefund(
+      @Valid @RequestBody CreateRefundRequest request,
+      @AuthenticationPrincipal User admin,
+      HttpServletRequest httpRequest) {
+    return ResponseEntity.ok(refundService.createRefund(admin, request, httpRequest));
   }
 
   @GetMapping("/transactions")

@@ -15,7 +15,10 @@ public class CreateRefundRequest {
 
   private Long disputeId;
 
-  @NotNull(message = "Amount is required")
+  /**
+   * Optional: when omitted the whole still-refundable balance of the charge is refunded. When
+   * present it must be positive.
+   */
   @DecimalMin(value = "0.01", message = "Amount must be greater than zero")
   private BigDecimal amount;
 

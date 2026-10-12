@@ -57,7 +57,17 @@ public enum NotificationType {
 
   // ---- account ----
   ACCOUNT_BANNED(NotificationCategory.ACCOUNT, true),
-  ACCOUNT_UNBANNED(NotificationCategory.ACCOUNT, true);
+  ACCOUNT_UNBANNED(NotificationCategory.ACCOUNT, true),
+
+  // ---- operational alerts to admins (money stuck at the provider) ----
+  // Captured funds the system could not reconcile to the intent (amount/currency mismatch, etc.).
+  PAYMENT_CAPTURE_ANOMALY(NotificationCategory.PAYMENTS, true),
+  // A captured payment that succeeded at the provider but needs an operator decision.
+  PAYMENT_REQUIRES_REVIEW(NotificationCategory.PAYMENTS, true),
+  // A payout the provider left in an ambiguous/failed state that needs an operator decision.
+  PAYOUT_REQUIRES_REVIEW(NotificationCategory.PAYMENTS, true),
+  // A refund the provider left in an ambiguous/failed state that needs an operator decision.
+  REFUND_REQUIRES_REVIEW(NotificationCategory.PAYMENTS, true);
 
   private final NotificationCategory category;
   private final boolean emailEligible;

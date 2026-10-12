@@ -5,10 +5,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
+import kz.hrms.splitupauth.service.RateLimiter;
+import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.MultiValueMap;
@@ -34,6 +38,15 @@ public class FreedomPayWebhookController {
 
   private final FreedomPayGateway gateway;
   private final FreedomWebhookInboxCoordinator inboxCoordinator;
+  private final RateLimiter rateLimiter;
+
+  /**
+   * Per-IP cap on callbacks accepted into the durable inbox per minute. This is a public,
+   * unauthenticated URL, so an abusive sender could otherwise cost one DB row per request. The
+   * default is far above a single provider's real retry rate; set to 0 to disable.
+   */
+  @Value("${app.webhooks.freedompay.rate-limit-per-minute:120}")
+  private int rateLimitPerMinute = 120;
 
   @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
   public ResponseEntity<String> result(@RequestParam MultiValueMap<String, String> params) {
@@ -65,6 +78,17 @@ public class FreedomPayWebhookController {
 
   private ResponseEntity<String> processWebhook(
       String script, MultiValueMap<String, String> params) {
+    if (rateLimitPerMinute > 0) {
+      String ip = ClientIp.current();
+      try {
+        rateLimiter.check("freedompay-webhook:" + ip, rateLimitPerMinute, 60, "rate limited");
+      } catch (TooManyRequestsException ex) {
+        // Reject before any inbox write; a signed error reply makes Freedom Pay retry later.
+        log.warn("Freedom Pay {} callback rate limited for ip={}", script, ip);
+        return errorResponse(script, "rate limited");
+      }
+    }
+
     if (payloadTooLarge(params)) {
       log.warn("Freedom Pay {} callback rejected before inbox store: payload too large", script);
       return errorResponse(script, "payload too large");

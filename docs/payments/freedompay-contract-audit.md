@@ -46,3 +46,23 @@ Only money-free calls: an unpaid payment page, status reads, an uncompleted payo
 
 Still not exercised (needs a card entered on the hosted page or real funds flow): result /
 payout-card callbacks, captured status, `/revoke`, `/cancel`, `reg2reg`, `make_recurring_payment`.
+
+## Chargebacks & 3-D Secure (UNVERIFIED — ask account manager)
+
+The public FreedomPay documentation (docs.freedompay.kz) does **not** describe how a merchant is told
+about a chargeback/dispute, and documents 3-D Secure only for Apple Pay / Google Pay tokens
+(`pg_token_3ds`), not for ordinary card payments. These are launch-blocking questions for the
+FreedomPay account manager, not code changes — the code side is already defensive (see below).
+
+- **Chargeback / dispute notification path.** How does EcoPay learn that an issuing bank reversed a
+  settled payment — a dedicated webhook, an email, the FreedomPay merchant cabinet, or does the
+  merchant learn nothing and have to monitor its own balance? Today `applyWebhookEvent` only acts on
+  SUCCESS / FAILED / PENDING-like order statuses. A chargeback that arrived as a separate webhook
+  with a different `pg_order_id` (or none) would currently be either `MISSING_INTENT_ID` or, with the
+  B9 fix, logged to the append-only event log as `WEBHOOK_UNRECOGNIZED_STATUS` (visible under the
+  `/admin/finance/webhooks` filter). Either way no money moves automatically — which is correct — but
+  an operator must be told, so we need to know which channel actually carries the signal.
+- **3-D Secure liability shift for ordinary cards on this tariff.** Is there a liability shift to the
+  issuer for 3DS-authenticated ordinary (non-wallet) card payments on our merchant tariff, and what
+  happens when the issuer declines the 3DS check — is the payment refused outright, or captured
+  without the shift? This determines whether a resulting chargeback is disputable by us.

@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.repository;
 
 import java.time.LocalDateTime;
 import kz.hrms.splitupauth.entity.Notification;
+import kz.hrms.splitupauth.entity.NotificationType;
 import kz.hrms.splitupauth.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,9 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
   Page<Notification> findByUserOrderByCreatedAtDesc(User user, Pageable pageable);
 
   long countByUserAndReadAtIsNull(User user);
+
+  /** True once any admin alert of this type already exists for the given entity id. */
+  boolean existsByTypeAndRelatedEntityId(NotificationType type, Long relatedEntityId);
 
   /**
    * Bulk mark-all-read. Returns affected row count. {@code @Modifying} bypasses the persistence

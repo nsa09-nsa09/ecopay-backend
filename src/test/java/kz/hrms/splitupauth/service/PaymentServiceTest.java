@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,6 +15,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.NotificationType;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
@@ -166,6 +169,62 @@ class PaymentServiceTest {
     verify(roomMemberService, never()).markMembershipAsPaid(any());
     verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
     verify(paymentTransactionRepository, never()).save(any());
+  }
+
+  @Test
+  void captureAnomaly_alertsActiveAdminsOnceForTheIntent() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1822.50"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("SUCCESS")
+            .amount(new BigDecimal("1.00"))
+            .currency("KZT")
+            .externalPaymentId("EXT-2")
+            .providerRequestId("req-2")
+            .build();
+
+    paymentService.applyWebhookEvent(event);
+
+    // Exactly one admin alert is emitted for this intent; de-duplication across repeats is the
+    // responsibility of NotificationService.notifyAdminsOnce (covered by its own test).
+    verify(notificationService, times(1))
+        .notifyAdminsOnce(
+            eq(NotificationType.PAYMENT_CAPTURE_ANOMALY), eq(100L), anyMap(), any(), anyMap());
+  }
+
+  @Test
+  void webhookWithUnrecognizedStatus_isRecordedInEventLogAndDoesNotBreak() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("1000.00"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("CHARGEBACK") // never emitted today; must not vanish into an INFO line
+            .providerRequestId("req-cb")
+            .build();
+
+    paymentService.applyWebhookEvent(event);
+
+    // Still PENDING — an unknown status never advances or fails the intent.
+    assertEquals(PaymentIntentStatus.PENDING, intent.getStatus());
+    verify(eventLogger)
+        .log(
+            eq("INTENT"),
+            eq(100L),
+            eq("WEBHOOK_UNRECOGNIZED_STATUS"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            anyMap());
+    verify(roomMemberService, never()).markMembershipAsPaid(any());
   }
 
   @Test
