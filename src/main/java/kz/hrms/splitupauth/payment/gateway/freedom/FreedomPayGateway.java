@@ -91,16 +91,30 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_user_id", request.getUserId());
     params.put("pg_post_link", urlResolver.payoutCardResultUrl());
     params.put("pg_back_link", request.getBackUrl());
+    boolean universal = properties.isUniversalPayoutCardStorage();
+    if (universal) {
+      params.put("pg_order_id", "cardbind-" + request.getBindingId());
+    }
     params.put("pg_salt", randomSalt());
 
+    // Sandbox: universal storage (add2, merchant secret). Its callback still goes to
+    // pg_post_link = /payout-card-result, so the same handler verifies and applies it.
     FreedomPayResponse response =
-        client.call(
-            "payout_card_add",
-            "/v1/merchant/" + merchantId + "/cardstoragepayout/add",
-            properties.getPayoutCardStorageScript(),
-            params,
-            payoutCardSecret(),
-            false);
+        universal
+            ? client.call(
+                "card_add2",
+                "/v1/merchant/" + merchantId + "/cardstorage/add2",
+                "add2",
+                params,
+                merchantSecret(),
+                false)
+            : client.call(
+                "payout_card_add",
+                "/v1/merchant/" + merchantId + "/cardstoragepayout/add",
+                properties.getPayoutCardStorageScript(),
+                params,
+                payoutCardSecret(),
+                false);
     String paymentId = response.get("pg_payment_id");
     if (response.isOk() && notBlank(paymentId) && notBlank(response.get("pg_redirect_url"))) {
       return GatewayCardBindingResponse.builder()

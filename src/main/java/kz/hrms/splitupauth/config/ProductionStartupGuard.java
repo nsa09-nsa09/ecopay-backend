@@ -183,6 +183,10 @@ public class ProductionStartupGuard implements ApplicationRunner, SmartInitializ
     rejectBlank("ecopay.payments.freedompay.payout-secret-key", violations);
     reject(!payoutDispatchEnabled, violations, "payout dispatch is disabled in live-money mode");
     reject(!refundDispatchEnabled, violations, "refund dispatch is disabled in live-money mode");
+    reject(
+        freedomPayProperties.isUniversalPayoutCardStorage(),
+        violations,
+        "payout cards use universal storage (add2) in live-money mode");
     reject(intProp("app.payout.hold-days", -1) != 30, violations, "payout hold is not 30 days");
     reject(
         !freedomPayProperties.isAutoClearing(),

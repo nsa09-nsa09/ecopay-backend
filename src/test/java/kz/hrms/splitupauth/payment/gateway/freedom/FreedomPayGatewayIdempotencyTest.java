@@ -214,6 +214,47 @@ class FreedomPayGatewayIdempotencyTest {
   }
 
   @Test
+  void universalModeBindsPayoutCardWithAdd2ForSandboxPayouts() {
+    properties.setPayoutCardStorageMode("universal");
+    when(urlResolver.payoutCardResultUrl()).thenReturn("https://api.test/payout-card-result");
+    when(client.call(
+            eq("card_add2"),
+            eq("/v1/merchant/merchant/cardstorage/add2"),
+            eq("add2"),
+            anyMap(),
+            eq("merchant-secret"),
+            eq(false)))
+        .thenReturn(
+            signed(
+                Map.of(
+                    "pg_status", "ok",
+                    "pg_payment_id", "binding-provider-2",
+                    "pg_redirect_url", "https://pay.test/cardstorage/view")));
+
+    var response =
+        gateway.initCardBinding(
+            GatewayCardBindingRequest.builder()
+                .bindingId(17L)
+                .userId("42")
+                .backUrl("https://app.test/payment/card-connected?binding=17")
+                .build());
+
+    ArgumentCaptor<Map<String, String>> params = ArgumentCaptor.forClass(Map.class);
+    verify(client)
+        .call(
+            eq("card_add2"),
+            eq("/v1/merchant/merchant/cardstorage/add2"),
+            eq("add2"),
+            params.capture(),
+            eq("merchant-secret"),
+            eq(false));
+    assertEquals("cardbind-17", params.getValue().get("pg_order_id"));
+    assertEquals("https://api.test/payout-card-result", params.getValue().get("pg_post_link"));
+    assertTrue(response.isSuccess());
+    assertEquals("binding-provider-2", response.getExternalBindingId());
+  }
+
+  @Test
   void payoutCallbackUsesPaymentIdOrderIdAndAmount() {
     Map<String, String> params = new LinkedHashMap<>();
     params.put("pg_payment_id", "provider-payout-3");

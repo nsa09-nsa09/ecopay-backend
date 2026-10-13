@@ -198,6 +198,29 @@ class PayoutCardBindingServiceTest {
   }
 
   @Test
+  void universalStorageCallbackFallsBackToCardbindOrderId() {
+    PayoutCardBinding binding = pending("provider-binding-17", LocalDateTime.now());
+    PayoutMethod method =
+        PayoutMethod.builder().id(9L).user(user).providerCardToken("add2-token").build();
+    when(bindingRepository.findById(17L)).thenReturn(Optional.of(binding));
+    when(payoutService.registerVerifiedPayoutMethod(user, "add2-token", "411111******1111"))
+        .thenReturn(method);
+
+    service.applyPayoutCardWebhook(
+        GatewayWebhookEvent.builder()
+            .kind("PAYOUT_CARD")
+            .resultStatus("SUCCESS")
+            .orderId("cardbind-17")
+            .cardToken("add2-token")
+            .cardPanMask("411111******1111")
+            .userId("42")
+            .build());
+
+    assertEquals("SUCCESS", binding.getStatus());
+    assertEquals(method, binding.getPayoutMethod());
+  }
+
+  @Test
   void unknownBindingIsRetryableSoTheInboxCanRetryLater() {
     when(bindingRepository.findByExternalPaymentId("provider-binding-17"))
         .thenReturn(Optional.empty());

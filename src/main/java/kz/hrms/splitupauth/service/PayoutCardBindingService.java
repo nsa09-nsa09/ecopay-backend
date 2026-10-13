@@ -168,11 +168,19 @@ public class PayoutCardBindingService {
   @Transactional
   public void applyPayoutCardWebhook(GatewayWebhookEvent event) {
     String providerId = event.getExternalPaymentId();
-    if (providerId == null || providerId.isBlank()) {
+    Long orderBindingId = bindingIdFromOrderId(event.getOrderId());
+    if ((providerId == null || providerId.isBlank()) && orderBindingId == null) {
       throw new FreedomWebhookProcessingException(
           "MISSING_PROVIDER_ID", "Payout-card callback has no pg_payment_id", false);
     }
-    PayoutCardBinding binding = bindingRepository.findByExternalPaymentId(providerId).orElse(null);
+    PayoutCardBinding binding =
+        providerId == null || providerId.isBlank()
+            ? null
+            : bindingRepository.findByExternalPaymentId(providerId).orElse(null);
+    if (binding == null && orderBindingId != null) {
+      // Universal storage (add2, sandbox) carries our "cardbind-<id>" order id.
+      binding = bindingRepository.findById(orderBindingId).orElse(null);
+    }
     if (binding == null) {
       throw new FreedomWebhookProcessingException(
           "BINDING_NOT_FOUND", "Payout-card callback references an unknown binding", true);
@@ -251,6 +259,17 @@ public class PayoutCardBindingService {
     binding.setCompletedAt(LocalDateTime.now(clock));
     bindingRepository.save(binding);
     return method;
+  }
+
+  private static Long bindingIdFromOrderId(String orderId) {
+    if (orderId == null || !orderId.startsWith("cardbind-")) {
+      return null;
+    }
+    try {
+      return Long.valueOf(orderId.substring("cardbind-".length()));
+    } catch (NumberFormatException ex) {
+      return null;
+    }
   }
 
   private static String appendQuery(String url, String extra) {

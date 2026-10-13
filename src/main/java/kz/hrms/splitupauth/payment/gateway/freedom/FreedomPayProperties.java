@@ -68,6 +68,19 @@ public class FreedomPayProperties {
   private String payoutCardStorageScript = "add";
 
   /**
+   * Which card storage tokenizes owner payout cards: {@code payout} ({@code cardstoragepayout/add})
+   * or {@code universal} ({@code cardstorage/add2}). FreedomPay support (2026-10-13): in test mode
+   * payouts only work to cards saved with {@code add2}; {@code cardstoragepayout/add} cards work
+   * only in live mode. So the sandbox needs {@code universal}; production stays on {@code payout}
+   * (enforced by ProductionStartupGuard).
+   */
+  private String payoutCardStorageMode = "payout";
+
+  public boolean isUniversalPayoutCardStorage() {
+    return "universal".equalsIgnoreCase(payoutCardStorageMode);
+  }
+
+  /**
    * Sign the payout-card tokenization with the payout secret instead of the merchant (payment)
    * secret. The sandbox accepts only the merchant secret for {@code cardstoragepayout/add} (payout
    * secret = error 1100, verified 2026-10-06), so the default is false.
