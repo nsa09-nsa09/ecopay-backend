@@ -13,6 +13,7 @@ import kz.hrms.splitupauth.entity.*;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SupportMessageRepository;
@@ -38,6 +39,7 @@ public class SupportTicketService {
   private final SupportTicketRealtimeService supportTicketRealtimeService;
   private final NotificationService notificationService;
   private final PayoutBlockService payoutBlockService;
+  private final DisputeRepository disputeRepository;
 
   @Transactional
   public SupportTicketResponse createTicket(User currentUser, CreateSupportTicketRequest request) {
@@ -382,18 +384,48 @@ public class SupportTicketService {
       throw new InvalidRequestException("Cannot escalate closed ticket");
     }
 
-    if (ticket.getRoomMember() == null) {
-      throw new InvalidRequestException("Only membership-linked tickets can be escalated for now");
+    // B2: before the fix the escalate button only set requires_admin_review and enqueued
+    // moderation;
+    // no Dispute was ever persisted, so /admin/disputes stayed empty while the admin UI thought the
+    // case had been escalated. Now a Dispute is created for every escalate so the admin queue sees
+    // it. The room link is required (a Dispute is a room-scoped case); the membership link is not
+    // (owner-only reports, chat issues on a shared room, etc. still produce a dispute).
+    if (ticket.getRoom() == null) {
+      throw new InvalidRequestException(
+          "TICKET_NOT_LINKED_TO_ROOM",
+          "Чтобы открыть спор, заявка должна быть привязана к комнате");
     }
 
     RoomMember roomMember = ticket.getRoomMember();
 
-    if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
-      roomMember.setRequiresAdminReview(true);
-      roomMemberRepository.save(roomMember);
+    // Moderation queue + requiresAdminReview still only applies when there is a specific
+    // membership to review; owner-only tickets go straight to the dispute queue.
+    if (roomMember != null) {
+      if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
+        roomMember.setRequiresAdminReview(true);
+        roomMemberRepository.save(roomMember);
+      }
+      moderationService.enqueueMembershipForReview(
+          roomMember, "SUPPORT_ESCALATION", BigDecimal.ZERO);
     }
 
-    moderationService.enqueueMembershipForReview(roomMember, "SUPPORT_ESCALATION", BigDecimal.ZERO);
+    Dispute dispute =
+        disputeRepository
+            .findByTicket(ticket)
+            .orElseGet(
+                () ->
+                    disputeRepository.save(
+                        Dispute.builder()
+                            .room(ticket.getRoom())
+                            .roomMember(roomMember)
+                            .ticket(ticket)
+                            .openedByUser(ticket.getUser())
+                            .assignedAdmin(currentUser.getRole() == Role.ADMIN ? currentUser : null)
+                            .reasonCode(
+                                ticket.getTopic() != null ? ticket.getTopic() : "SUPPORT_TICKET")
+                            .description(ticket.getSubject())
+                            .status(DisputeStatus.OPEN)
+                            .build()));
 
     ticket.setAssignedAdmin(
         currentUser.getRole() == Role.ADMIN ? currentUser : ticket.getAssignedAdmin());
@@ -405,11 +437,19 @@ public class SupportTicketService {
             .ticket(ticket)
             .senderUser(currentUser)
             .senderRole(resolveStaffSenderRole(currentUser))
-            .message("Ticket escalated to admin moderation")
+            .message("Заявка передана администратору как спор #" + dispute.getId())
             .build();
 
     supportMessageRepository.save(systemMessage);
     supportTicketRepository.save(ticket);
+
+    // Let the user who filed the ticket know their case is now an admin dispute.
+    notificationService.notify(
+        ticket.getUser(),
+        NotificationType.DISPUTE_OPENED,
+        java.util.Map.of(),
+        "/support",
+        java.util.Map.of("ticketId", ticket.getId(), "disputeId", dispute.getId()));
 
     return publishAndReturn(ticket);
   }
@@ -496,6 +536,8 @@ public class SupportTicketService {
                         .build())
             .toList();
 
+    Long disputeId = disputeRepository.findByTicket(ticket).map(Dispute::getId).orElse(null);
+
     return SupportTicketResponse.builder()
         .id(ticket.getId())
         .userId(ticket.getUser().getId())
@@ -507,6 +549,7 @@ public class SupportTicketService {
         .status(ticket.getStatus().name())
         .priority(ticket.getPriority().name())
         .escalatedToDispute(ticket.getEscalatedToDispute())
+        .disputeId(disputeId)
         .assignedAdminId(
             ticket.getAssignedAdmin() != null ? ticket.getAssignedAdmin().getId() : null)
         .assignedAdminDisplayName(
