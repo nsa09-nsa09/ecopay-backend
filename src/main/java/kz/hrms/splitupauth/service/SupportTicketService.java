@@ -77,11 +77,16 @@ public class SupportTicketService {
     // the caller must be the owner or an actual member of that room.
     if (room != null && roomMember == null) {
       boolean isOwner = room.getOwner().getId().equals(currentUser.getId());
-      boolean isMember =
-          roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, currentUser).isPresent();
-      if (!isOwner && !isMember) {
+      RoomMember ownMembership =
+          roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, currentUser).orElse(null);
+      if (!isOwner && ownMembership == null) {
         throw new ForbiddenOperationException(
             "You cannot create a ticket for a room you are not part of");
+      }
+      // A member's ticket about their room concerns their own membership: link it so the ticket
+      // blocks that membership's payout and can be escalated.
+      if (!isOwner) {
+        roomMember = ownMembership;
       }
     }
 
