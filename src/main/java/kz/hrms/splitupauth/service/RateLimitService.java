@@ -8,6 +8,7 @@ import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -64,12 +65,18 @@ public class RateLimitService {
     }
   }
 
-  @Transactional
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void recordLoginAttempt(String email, boolean successful) {
     recordLoginAttempt(email, successful, currentIp());
   }
 
-  @Transactional
+  /**
+   * Records a login attempt in its own transaction so a rollback of the outer login flow (triggered
+   * by {@code InvalidCredentialsException}) does not wipe out the attempt counter. Without
+   * REQUIRES_NEW the counter never increments past 0 and the lockout in {@link
+   * #checkLoginAttempts(String, String)} never trips.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void recordLoginAttempt(String email, boolean successful, String ip) {
     LoginAttempt attempt =
         LoginAttempt.builder()

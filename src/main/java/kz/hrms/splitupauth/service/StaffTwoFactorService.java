@@ -92,9 +92,14 @@ public class StaffTwoFactorService {
    * reused; on failure the attempt counter is bumped and the challenge is marked FAILED once max
    * attempts is reached.
    *
+   * <p>{@code noRollbackFor} is load-bearing: the wrong-code / expired branches bump the attempt
+   * counter (or flip the status) and then throw. A plain {@code @Transactional} would roll those
+   * writes back together with the exception and the lockout would never trip. Same reasoning as in
+   * {@link PhoneVerificationService#verifyCode}.
+   *
    * @return the staff user whose challenge was successfully verified.
    */
-  @Transactional
+  @Transactional(noRollbackFor = TwoFactorChallengeException.class)
   public User verifyChallenge(String challengeId, String submittedCode) {
     StaffTwoFactorChallenge challenge =
         challengeRepository

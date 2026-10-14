@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import kz.hrms.splitupauth.AbstractIntegrationTest;
+import kz.hrms.splitupauth.dto.LoginRequest;
 import kz.hrms.splitupauth.dto.PasswordResetRequest;
 import kz.hrms.splitupauth.dto.RegisterRequest;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.exception.InvalidCredentialsException;
 import kz.hrms.splitupauth.exception.TooManyLoginAttemptsException;
 import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.repository.UserRepository;
@@ -38,6 +40,9 @@ class AuthAntiAbuseIntegrationTest extends AbstractIntegrationTest {
 
   @Value("${app.rate-limit.login.ip-attempts}")
   int loginIpAttempts;
+
+  @Value("${app.rate-limit.login.attempts}")
+  int loginMaxAttempts;
 
   private static final AtomicInteger SEQ = new AtomicInteger();
 
@@ -139,6 +144,38 @@ class AuthAntiAbuseIntegrationTest extends AbstractIntegrationTest {
 
     // The same fresh email from a clean IP is fine.
     assertDoesNotThrow(() -> rateLimitService.checkLoginAttempts(freshEmail(), "198.51.100.23"));
+  }
+
+  /**
+   * B1: regression. {@code AuthService.login} is {@code @Transactional}; the attempt-save it
+   * performs on wrong-password must survive the rollback that follows {@code
+   * InvalidCredentialsException}. Before the fix every attempt rolled back together with the
+   * exception, {@code checkLoginAttempts} always saw zero failures, and the lockout never tripped.
+   */
+  @Test
+  void loginLockout_persistsAttemptsAcrossRollback() {
+    // Create a verified user we can log in against with a KNOWN password hash.
+    String email = freshEmail();
+    authService.register(registerReq(email), MailLocale.RU);
+    User user = userRepository.findByEmail(email).orElseThrow();
+    user.setEmailVerified(true);
+    userRepository.save(user);
+
+    MockHttpServletRequest http = requestFrom("203.0.113.44");
+
+    // Hit the account exactly `loginMaxAttempts` times with the wrong password.
+    for (int i = 0; i < loginMaxAttempts; i++) {
+      LoginRequest bad = new LoginRequest();
+      bad.setEmail(email);
+      bad.setPassword("wrong-password-" + i);
+      assertThrows(InvalidCredentialsException.class, () -> authService.login(bad, http));
+    }
+
+    // Now the correct password must be refused with 429, not accepted — attempts persisted.
+    LoginRequest good = new LoginRequest();
+    good.setEmail(email);
+    good.setPassword("Test1234");
+    assertThrows(TooManyLoginAttemptsException.class, () -> authService.login(good, http));
   }
 
   private String currentResetToken(Long userId) {
