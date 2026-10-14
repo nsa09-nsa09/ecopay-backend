@@ -71,6 +71,7 @@ class DisputeServiceComplaintTest {
   @Mock private RefundService refundService;
   @Mock private ReputationService reputationService;
   @Mock private NotificationService notificationService;
+  @Mock private PayoutBlockService payoutBlockService;
   @Mock private PaymentGatewayRegistry gatewayRegistry;
   @Mock private PaymentGateway paymentGateway;
 
@@ -91,7 +92,8 @@ class DisputeServiceComplaintTest {
             userRepository,
             refundService,
             reputationService,
-            notificationService);
+            notificationService,
+            payoutBlockService);
   }
 
   @Test

@@ -43,4 +43,20 @@ public interface PaymentTransactionRepository
   /** Captured member charges in a room, used after a confirmed owner breach. */
   List<PaymentTransaction> findByRoom_IdAndStatusAndTypeOrderByCreatedAtAsc(
       Long roomId, PaymentTransactionStatus status, PaymentTransactionType type);
+
+  /**
+   * Batch sum of successful CHARGE transaction amounts, grouped by room_member_id. B3: lets the
+   * dispute list fill paidAmountKzt for a whole admin page in one query instead of N.
+   */
+  @Query(
+      """
+      select t.roomMember.id, coalesce(sum(t.amount), 0)
+      from PaymentTransaction t
+      where t.roomMember.id in :roomMemberIds
+        and t.type = kz.hrms.splitupauth.entity.PaymentTransactionType.CHARGE
+        and t.status = kz.hrms.splitupauth.entity.PaymentTransactionStatus.SUCCESS
+      group by t.roomMember.id
+      """)
+  List<Object[]> sumSuccessChargesByRoomMemberIds(
+      @Param("roomMemberIds") java.util.Collection<Long> roomMemberIds);
 }

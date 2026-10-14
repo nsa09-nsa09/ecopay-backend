@@ -85,6 +85,25 @@ public interface RefundTransactionRepository
         .reduce(BigDecimal.ZERO, BigDecimal::add);
   }
 
+  /**
+   * Batch sum of active (PENDING + PENDING_PROVIDER + SUCCESS) refunds, grouped by the charge's
+   * roomMember id. B3: paired with the sum of success charges per member, this is the admin-list
+   * input for refundedAmountKzt / refundableAmountKzt without an N+1 scan.
+   */
+  @Query(
+      """
+      select t.roomMember.id, coalesce(sum(r.amount), 0)
+      from RefundTransaction r join r.paymentTransaction t
+      where t.roomMember.id in :roomMemberIds
+        and r.status in (
+          kz.hrms.splitupauth.entity.RefundStatus.PENDING,
+          kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER,
+          kz.hrms.splitupauth.entity.RefundStatus.SUCCESS)
+      group by t.roomMember.id
+      """)
+  List<Object[]> sumActiveRefundsByRoomMemberIds(
+      @Param("roomMemberIds") java.util.Collection<Long> roomMemberIds);
+
   @Query(
       "select r.id from RefundTransaction r "
           + "where r.status = kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER "

@@ -41,6 +41,53 @@ public class PayoutBlockService {
     }
   }
 
+  /**
+   * Release any blocks created for this room member under a given (sourceType, sourceId). Mirrors
+   * {@link #releaseForPaymentIntent} but keyed on the member — the dispute case does not know which
+   * payment intents are involved, so looking them up here keeps the caller simple. If a payout is
+   * only held by this one block, it transitions back to PENDING / PENDING_METHOD and can resume
+   * normal dispatch.
+   */
+  @Transactional
+  public void releaseForRoomMember(
+      RoomMember roomMember, PayoutBlockSourceType sourceType, Long sourceId) {
+    if (roomMember == null || sourceId == null) return;
+    // Include every non-terminal status so a payout already PROCESSING/COMPLETED is not touched.
+    List<PayoutStatus> allHoldable =
+        List.of(
+            PayoutStatus.PENDING,
+            PayoutStatus.PENDING_METHOD,
+            PayoutStatus.FROZEN,
+            PayoutStatus.PROCESSING);
+    for (Payout payout :
+        payoutRepository.findWithLockByRoomMemberAndStatusIn(roomMember, allHoldable)) {
+      PayoutBlock block =
+          payoutBlockRepository
+              .findByPayoutAndSourceTypeAndSourceId(payout, sourceType, sourceId)
+              .orElse(null);
+      if (block == null || block.getStatus() == PayoutBlockStatus.RELEASED) continue;
+
+      block.setStatus(PayoutBlockStatus.RELEASED);
+      block.setReleasedAt(LocalDateTime.now());
+      payoutBlockRepository.saveAndFlush(block);
+
+      if (!payoutBlockRepository.existsByPayoutAndStatus(payout, PayoutBlockStatus.ACTIVE)
+          && payout.getStatus() == PayoutStatus.FROZEN) {
+        if (payout.getPayableAmount() != null
+            && payout.getPayableAmount().compareTo(BigDecimal.ZERO) <= 0) {
+          payout.setStatus(PayoutStatus.REVERSED);
+        } else {
+          payout.setStatus(
+              payout.getPayoutMethod() == null
+                  ? PayoutStatus.PENDING_METHOD
+                  : PayoutStatus.PENDING);
+        }
+        payout.setFailureReason(null);
+        payoutRepository.save(payout);
+      }
+    }
+  }
+
   @Transactional
   public void releaseForPaymentIntent(
       PaymentIntent intent, PayoutBlockSourceType sourceType, Long sourceId) {

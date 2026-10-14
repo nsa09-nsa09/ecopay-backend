@@ -409,23 +409,31 @@ public class SupportTicketService {
           roomMember, "SUPPORT_ESCALATION", BigDecimal.ZERO);
     }
 
-    Dispute dispute =
-        disputeRepository
-            .findByTicket(ticket)
-            .orElseGet(
-                () ->
-                    disputeRepository.save(
-                        Dispute.builder()
-                            .room(ticket.getRoom())
-                            .roomMember(roomMember)
-                            .ticket(ticket)
-                            .openedByUser(ticket.getUser())
-                            .assignedAdmin(currentUser.getRole() == Role.ADMIN ? currentUser : null)
-                            .reasonCode(
-                                ticket.getTopic() != null ? ticket.getTopic() : "SUPPORT_TICKET")
-                            .description(ticket.getSubject())
-                            .status(DisputeStatus.OPEN)
-                            .build()));
+    Dispute existingDispute = disputeRepository.findByTicket(ticket).orElse(null);
+    Dispute dispute;
+    if (existingDispute != null) {
+      dispute = existingDispute;
+    } else {
+      dispute =
+          disputeRepository.save(
+              Dispute.builder()
+                  .room(ticket.getRoom())
+                  .roomMember(roomMember)
+                  .ticket(ticket)
+                  .openedByUser(ticket.getUser())
+                  .assignedAdmin(currentUser.getRole() == Role.ADMIN ? currentUser : null)
+                  .reasonCode(ticket.getTopic() != null ? ticket.getTopic() : "SUPPORT_TICKET")
+                  .description(ticket.getSubject())
+                  .status(DisputeStatus.OPEN)
+                  .build());
+
+      // B3: new dispute → freeze the owner's payout for this membership (if any) until it is
+      // decided. Keyed on the dispute id so release-on-REJECTED knows exactly which block to lift.
+      if (roomMember != null) {
+        payoutBlockService.blockForRoomMember(
+            roomMember, PayoutBlockSourceType.DISPUTE, dispute.getId(), "DISPUTE");
+      }
+    }
 
     ticket.setAssignedAdmin(
         currentUser.getRole() == Role.ADMIN ? currentUser : ticket.getAssignedAdmin());
