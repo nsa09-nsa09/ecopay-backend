@@ -207,26 +207,118 @@ public class SupportTicketService {
         .toList();
   }
 
-  // Get staff queue with pagination
+  /**
+   * B8: paged staff queue with status + search filters. {@code statusFilter} accepts the string
+   * aliases {@code ALL / ACTIVE / CLOSED} (case-insensitive) or a concrete {@link
+   * SupportTicketStatus} name. {@code search} does a case-insensitive LIKE over subject + author
+   * displayName + email, or an exact id match if the term parses as a number. Sort order is
+   * ascending by createdAt for ACTIVE / OPEN-ish filters, descending by updatedAt for CLOSED and
+   * for the catch-all ALL.
+   */
+  @Transactional(readOnly = true)
+  public PageResponse<SupportTicketResponse> getStaffQueuePaged(
+      User currentUser, String statusFilter, String search, int page, int size) {
+    ensureStaff(currentUser);
+
+    if (page < 0) page = 0;
+    if (size <= 0 || size > 100) size = 20;
+
+    QueueFilter filter = resolveFilter(statusFilter);
+    Pageable pageable =
+        PageRequest.of(
+            page,
+            size,
+            filter.descendingByUpdatedAt
+                ? org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Direction.DESC, "updatedAt")
+                : org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Direction.ASC, "createdAt"));
+
+    org.springframework.data.jpa.domain.Specification<SupportTicket> spec =
+        (root, q, cb) -> cb.conjunction();
+    if (filter.statuses != null) {
+      final List<SupportTicketStatus> ss = filter.statuses;
+      spec = spec.and((root, q, cb) -> root.get("status").in(ss));
+    }
+    if (search != null && !search.isBlank()) {
+      final String trimmed = search.trim();
+      final String like = "%" + trimmed.toLowerCase() + "%";
+      final Long asId = parseLongOrNull(trimmed);
+      spec =
+          spec.and(
+              (root, q, cb) -> {
+                var subjectPred = cb.like(cb.lower(root.get("subject")), like);
+                var userJoin = root.<SupportTicket, User>join("user");
+                var namePred = cb.like(cb.lower(userJoin.get("displayName")), like);
+                var emailPred = cb.like(cb.lower(cb.coalesce(userJoin.get("email"), "")), like);
+                if (asId != null) {
+                  return cb.or(subjectPred, namePred, emailPred, cb.equal(root.get("id"), asId));
+                }
+                return cb.or(subjectPred, namePred, emailPred);
+              });
+    }
+
+    Page<SupportTicket> result = supportTicketRepository.findAll(spec, pageable);
+    List<SupportTicketResponse> items = result.getContent().stream().map(this::mapTicket).toList();
+    return PageResponse.from(result, items);
+  }
+
+  /** Backward-compatible overload — defaults to ACTIVE / no search. */
   @Transactional(readOnly = true)
   public PageResponse<SupportTicketResponse> getStaffQueuePaged(
       User currentUser, int page, int size) {
-    ensureStaff(currentUser);
+    return getStaffQueuePaged(currentUser, "ACTIVE", null, page, size);
+  }
 
-    Pageable pageable = PageRequest.of(page, size);
+  private static final List<SupportTicketStatus> ACTIVE_STATUSES =
+      List.of(
+          SupportTicketStatus.OPEN,
+          SupportTicketStatus.IN_PROGRESS,
+          SupportTicketStatus.WAITING_USER,
+          SupportTicketStatus.ESCALATED);
 
-    Page<SupportTicket> result =
-        supportTicketRepository.findByStatusInOrderByCreatedAtAsc(
-            List.of(
-                SupportTicketStatus.OPEN,
-                SupportTicketStatus.IN_PROGRESS,
-                SupportTicketStatus.WAITING_USER,
-                SupportTicketStatus.ESCALATED),
-            pageable);
+  /**
+   * Filter + sort choice for the staff queue. {@code statuses == null} means "every status" (the
+   * ALL alias). {@code descendingByUpdatedAt} swaps the default createdAt-asc sort for the closed /
+   * all views, mirroring the spec's expectation.
+   */
+  private static final class QueueFilter {
+    final List<SupportTicketStatus> statuses;
+    final boolean descendingByUpdatedAt;
 
-    List<SupportTicketResponse> items = result.getContent().stream().map(this::mapTicket).toList();
+    QueueFilter(List<SupportTicketStatus> statuses, boolean descendingByUpdatedAt) {
+      this.statuses = statuses;
+      this.descendingByUpdatedAt = descendingByUpdatedAt;
+    }
+  }
 
-    return PageResponse.from(result, items);
+  private QueueFilter resolveFilter(String s) {
+    if (s == null || s.isBlank()) return new QueueFilter(ACTIVE_STATUSES, false);
+    String token = s.trim().toUpperCase();
+    switch (token) {
+      case "ALL":
+        return new QueueFilter(null, true);
+      case "CLOSED":
+        return new QueueFilter(List.of(SupportTicketStatus.CLOSED), true);
+      case "ACTIVE":
+        return new QueueFilter(ACTIVE_STATUSES, false);
+      default:
+        try {
+          SupportTicketStatus concrete = SupportTicketStatus.valueOf(token);
+          boolean closedLike = concrete == SupportTicketStatus.CLOSED;
+          return new QueueFilter(List.of(concrete), closedLike);
+        } catch (IllegalArgumentException ex) {
+          return new QueueFilter(ACTIVE_STATUSES, false);
+        }
+    }
+  }
+
+  private static Long parseLongOrNull(String s) {
+    try {
+      return Long.parseLong(s.trim());
+    } catch (NumberFormatException e) {
+      return null;
+    }
   }
 
   @Transactional(readOnly = true)

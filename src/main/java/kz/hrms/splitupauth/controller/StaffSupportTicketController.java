@@ -25,12 +25,20 @@ public class StaffSupportTicketController {
   //    ) {
   //        return ResponseEntity.ok(supportTicketService.getStaffQueue(user));
   //    }
+  /**
+   * B8: supports {@code status=ALL|ACTIVE|CLOSED|<SupportTicketStatus>} (default ACTIVE) and a
+   * {@code search} term matched against subject / author name / email / numeric id. Active tickets
+   * sort by createdAt ASC, closed by updatedAt DESC.
+   */
   @GetMapping("/queue")
   public ResponseEntity<PageResponse<SupportTicketResponse>> getQueue(
       @AuthenticationPrincipal User user,
+      @RequestParam(required = false, defaultValue = "ACTIVE") String status,
+      @RequestParam(required = false) String search,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size) {
-    return ResponseEntity.ok(supportTicketService.getStaffQueuePaged(user, page, size));
+    return ResponseEntity.ok(
+        supportTicketService.getStaffQueuePaged(user, status, search, page, size));
   }
 
   //    @GetMapping("/assigned")

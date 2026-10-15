@@ -10,7 +10,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface SupportTicketRepository extends JpaRepository<SupportTicket, Long> {
+public interface SupportTicketRepository
+    extends JpaRepository<SupportTicket, Long>,
+        org.springframework.data.jpa.repository.JpaSpecificationExecutor<SupportTicket> {
 
   List<SupportTicket> findByUserOrderByCreatedAtDesc(User user);
 
