@@ -29,6 +29,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class RoomChatController {
 
   private final RoomChatService roomChatService;
+  private final kz.hrms.splitupauth.service.RateLimiter rateLimiter;
+
+  /** B15: 20 chat messages per minute per user. */
+  @org.springframework.beans.factory.annotation.Value(
+      "${app.rate-limit.room-chat.per-minute-max:20}")
+  private int chatPerMinuteMax;
 
   @GetMapping("/messages")
   @PreAuthorize("isAuthenticated()")
@@ -46,6 +52,13 @@ public class RoomChatController {
       @AuthenticationPrincipal User user,
       @PathVariable Long roomId,
       @Valid @RequestBody SendRoomChatMessageRequest request) {
+    if (chatPerMinuteMax > 0) {
+      rateLimiter.check(
+          "room-chat:" + user.getId(),
+          chatPerMinuteMax,
+          60,
+          "Слишком много сообщений. Подождите минуту");
+    }
     return ResponseEntity.ok(roomChatService.send(user, roomId, request.getBody()));
   }
 }
