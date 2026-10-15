@@ -126,6 +126,9 @@ public class AvatarStorageService {
           "Изображение слишком большое (" + decoded.getWidth() + "x" + decoded.getHeight() + ")");
     }
 
+    // B17: apply EXIF orientation BEFORE resize so a phone photo lands upright. Resize operates
+    // on the oriented buffer so the thumbnail is already rotated correctly.
+    decoded = ImageOrientation.normalize(bytes, decoded);
     BufferedImage normalized = downscale(decoded, properties.getAvatar().getTargetSize());
     byte[] jpeg = encodeJpeg(normalized);
 

@@ -103,6 +103,9 @@ public class ServiceLogoStorageService {
           "Изображение слишком большое (" + decoded.getWidth() + "x" + decoded.getHeight() + ")");
     }
 
+    // B17: honour EXIF orientation before resize (shouldn't matter for admin-uploaded SVG-ish
+    // logos, but phone-shot PNG logos exist in the wild).
+    decoded = ImageOrientation.normalize(bytes, decoded);
     BufferedImage normalized = downscale(decoded, properties.getServiceLogo().getTargetWidth());
     byte[] jpeg = encodeJpeg(normalized);
 

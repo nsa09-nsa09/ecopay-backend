@@ -228,6 +228,8 @@ public class MediaImageStore {
     if (decoded == null) {
       throw new IllegalStateException("Cannot decode image for thumbnail");
     }
+    // B17: honour the EXIF orientation of the ORIGINAL bytes before downscaling.
+    decoded = ImageOrientation.normalize(originalJpeg, decoded);
     BufferedImage scaled = downscale(decoded, width);
     return encodeJpeg(scaled, 0.8f);
   }

@@ -42,6 +42,16 @@
             <version>${jackson-bom.version}</version>
             <scope>compile</scope>
         </dependency>
+        <!--
+          B17: metadata-extractor reads EXIF Orientation (1–8) from JPEG/TIFF/HEIC so phone
+          photos taken sideways end up upright after we re-encode them. ImageIO ignores the EXIF
+          tag entirely, which is why pre-fix avatars rendered rotated 90°.
+        -->
+        <dependency>
+            <groupId>com.drewnoakes</groupId>
+            <artifactId>metadata-extractor</artifactId>
+            <version>2.19.0</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
