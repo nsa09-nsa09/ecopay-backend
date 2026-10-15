@@ -79,13 +79,18 @@ public class AdminUserController {
   public ResponseEntity<PagedResponse<AdminUserDto>> list(
       @RequestParam(required = false) String search,
       @RequestParam(required = false) UserStatus status,
-      @RequestParam(required = false) Role role,
+      // B6: `role` now accepts repeats (?role=USER&role=SUPPORT) and a comma-separated list
+      // (?role=SUPPORT,ADMIN) so the admin UI can show more than one group at a time. A single
+      // value still works unchanged.
+      @RequestParam(name = "role", required = false) java.util.List<String> roleParams,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
       @RequestParam(required = false) String sort,
       @RequestParam(required = false) String direction) {
     if (page < 0) page = 0;
     if (size <= 0 || size > 100) size = 20;
+
+    java.util.List<Role> roles = parseRoles(roleParams);
 
     String sortField =
         (sort == null) ? "createdAt" : SORT_FIELD_MAP.getOrDefault(sort, "createdAt");
@@ -99,9 +104,9 @@ public class AdminUserController {
       final UserStatus s = status;
       spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), s));
     }
-    if (role != null) {
-      final Role r = role;
-      spec = spec.and((root, q, cb) -> cb.equal(root.get("role"), r));
+    if (!roles.isEmpty()) {
+      final java.util.List<Role> rs = roles;
+      spec = spec.and((root, q, cb) -> root.get("role").in(rs));
     }
     if (search != null && !search.isBlank()) {
       final String trimmed = search.trim();
@@ -224,6 +229,17 @@ public class AdminUserController {
 
     Role prev = target.getRole();
     Role next = request.getRole();
+
+    // B6: never leave the system without a single ADMIN. The self-demotion guard above handles
+    // the "I'm demoting myself" case; this covers "another admin demotes the only remaining admin
+    // who isn't me" (which can happen on a two-admin team where one just left).
+    if (prev == Role.ADMIN && next != Role.ADMIN) {
+      long remaining = userRepository.countByRole(Role.ADMIN);
+      if (remaining <= 1) {
+        throw new ForbiddenOperationException(
+            "Нельзя снять роль администратора у последнего администратора");
+      }
+    }
 
     // Staff sign-in is gated on an emailed 2FA code, so an account with no
     // confirmed email cannot complete it. Since V52 made users.email nullable,
@@ -485,5 +501,27 @@ public class AdminUserController {
     } catch (NumberFormatException e) {
       return null;
     }
+  }
+
+  /**
+   * Accept either repeated ?role= query params or a single comma-separated value, and skip
+   * unrecognised entries so a typo doesn't 400 the whole listing.
+   */
+  private static java.util.List<Role> parseRoles(java.util.List<String> raw) {
+    if (raw == null || raw.isEmpty()) return java.util.List.of();
+    java.util.LinkedHashSet<Role> out = new java.util.LinkedHashSet<>();
+    for (String entry : raw) {
+      if (entry == null) continue;
+      for (String part : entry.split(",")) {
+        String token = part.trim();
+        if (token.isEmpty()) continue;
+        try {
+          out.add(Role.valueOf(token.toUpperCase()));
+        } catch (IllegalArgumentException ignored) {
+          // Unknown role → ignore (defensive — the filter should never 400).
+        }
+      }
+    }
+    return new java.util.ArrayList<>(out);
   }
 }

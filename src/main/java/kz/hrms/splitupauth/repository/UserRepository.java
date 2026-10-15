@@ -26,6 +26,9 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
   /** Active admins — recipients of operational money-path alerts. */
   List<User> findByRoleAndStatus(Role role, UserStatus status);
 
+  /** B6: used to prevent admin role-change from removing the last ADMIN. */
+  long countByRole(Role role);
+
   Optional<User> findByPhone(String phone);
 
   boolean existsByPhone(String phone);
