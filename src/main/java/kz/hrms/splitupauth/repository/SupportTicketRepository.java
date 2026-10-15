@@ -37,4 +37,10 @@ public interface SupportTicketRepository
       User assignedAdmin, Pageable pageable);
 
   long countByUser(User user);
+
+  /** B14: ban-appeal rate limits and dedupe. */
+  boolean existsByUserAndTopicAndStatusIn(
+      User user, String topic, List<SupportTicketStatus> statuses);
+
+  long countByUserAndTopicAndCreatedAtAfter(User user, String topic, java.time.LocalDateTime after);
 }

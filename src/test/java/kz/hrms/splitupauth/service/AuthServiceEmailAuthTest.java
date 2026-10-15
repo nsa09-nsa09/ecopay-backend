@@ -71,6 +71,8 @@ class AuthServiceEmailAuthTest {
             emailService,
             rateLimitService,
             userMapper,
+            org.mockito.Mockito.mock(kz.hrms.splitupauth.repository.SupportTicketRepository.class),
+            org.mockito.Mockito.mock(kz.hrms.splitupauth.repository.SupportMessageRepository.class),
             staffTwoFactorService,
             legalDocumentService,
             slugService,

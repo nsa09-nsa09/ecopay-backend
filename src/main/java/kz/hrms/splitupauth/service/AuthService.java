@@ -63,6 +63,8 @@ public class AuthService {
   private final EmailService emailService;
   private final RateLimitService rateLimitService;
   private final UserMapper userMapper;
+  private final kz.hrms.splitupauth.repository.SupportTicketRepository supportTicketRepository;
+  private final kz.hrms.splitupauth.repository.SupportMessageRepository supportMessageRepository;
   private final StaffTwoFactorService staffTwoFactorService;
   private final LegalDocumentService legalDocumentService;
   private final SlugService slugService;
@@ -307,6 +309,93 @@ public class AuthService {
         .refreshToken(refreshToken)
         .user(userMapper.toDto(user))
         .build();
+  }
+
+  /**
+   * B14: lets a banned user plead their case even though they cannot /login. The request shape
+   * mirrors login (email + password + rate limit on both buckets), then creates a BAN_APPEAL
+   * SupportTicket at HIGH priority — but only when the user is actually banned/restricted. All
+   * error codes are the usual ones so an unbanned attacker cannot distinguish "wrong password" from
+   * "unknown email".
+   */
+  @Transactional
+  public kz.hrms.splitupauth.dto.BanAppealResponse submitBanAppeal(
+      kz.hrms.splitupauth.dto.BanAppealRequest request, HttpServletRequest httpRequest) {
+    String email = emailValidationService.normalizeAndValidateFormat(request.getEmail());
+    final String ip = kz.hrms.splitupauth.util.ClientIpResolver.resolve(httpRequest);
+
+    // Same shared bucket as /login — a banned-appeal attempt counts as a failed login attempt
+    // from a rate-limit perspective so this endpoint cannot be used to bypass B1.
+    rateLimitService.checkLoginAttempts(email, ip);
+
+    kz.hrms.splitupauth.entity.User user =
+        userRepository
+            .findByEmail(email)
+            .orElseThrow(
+                () -> {
+                  passwordEncoder.matches(request.getPassword(), timingEqualizerHash());
+                  rateLimitService.recordLoginAttempt(email, false, ip);
+                  return new InvalidCredentialsException("Invalid credentials");
+                });
+
+    if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+      rateLimitService.recordLoginAttempt(email, false, ip);
+      throw new InvalidCredentialsException("Invalid credentials");
+    }
+
+    // The spec explicitly wants NOT_BANNED when the account is in good standing — this is only
+    // reachable past the password check, so it is not a free enumeration signal.
+    if (user.getStatus() != kz.hrms.splitupauth.entity.UserStatus.BANNED
+        && user.getBanUntil() == null) {
+      throw new kz.hrms.splitupauth.exception.InvalidRequestException(
+          "NOT_BANNED", "Account is not banned");
+    }
+
+    // At most one open BAN_APPEAL per user.
+    boolean existingOpen =
+        supportTicketRepository.existsByUserAndTopicAndStatusIn(
+            user,
+            "BAN_APPEAL",
+            java.util.List.of(
+                kz.hrms.splitupauth.entity.SupportTicketStatus.OPEN,
+                kz.hrms.splitupauth.entity.SupportTicketStatus.IN_PROGRESS,
+                kz.hrms.splitupauth.entity.SupportTicketStatus.WAITING_USER,
+                kz.hrms.splitupauth.entity.SupportTicketStatus.ESCALATED));
+    if (existingOpen) {
+      throw new kz.hrms.splitupauth.exception.ResourceConflictException(
+          "APPEAL_ALREADY_OPEN", "You already have an open ban appeal");
+    }
+
+    // At most 3 appeals per 24 hours per user (open or closed).
+    long recent =
+        supportTicketRepository.countByUserAndTopicAndCreatedAtAfter(
+            user, "BAN_APPEAL", LocalDateTime.now().minusHours(24));
+    if (recent >= 3) {
+      throw new TooManyRequestsException("Too many ban appeals. Try again later.");
+    }
+
+    kz.hrms.splitupauth.entity.SupportTicket ticket =
+        kz.hrms.splitupauth.entity.SupportTicket.builder()
+            .user(user)
+            .subject("Ban appeal")
+            .topic("BAN_APPEAL")
+            .status(kz.hrms.splitupauth.entity.SupportTicketStatus.OPEN)
+            .priority(kz.hrms.splitupauth.entity.SupportTicketPriority.HIGH)
+            .escalatedToDispute(false)
+            .build();
+    ticket = supportTicketRepository.save(ticket);
+
+    kz.hrms.splitupauth.entity.SupportMessage message =
+        kz.hrms.splitupauth.entity.SupportMessage.builder()
+            .ticket(ticket)
+            .senderUser(user)
+            .senderRole(kz.hrms.splitupauth.entity.SupportSenderRole.USER)
+            .message(kz.hrms.splitupauth.util.TextSanitizer.sanitize(request.getMessage()))
+            .build();
+    supportMessageRepository.save(message);
+
+    rateLimitService.recordLoginAttempt(email, true, ip);
+    return new kz.hrms.splitupauth.dto.BanAppealResponse(ticket.getId());
   }
 
   @Transactional

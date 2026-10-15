@@ -49,6 +49,19 @@ public class AuthController {
   @Value("${app.auth.refresh-token-body-enabled:false}")
   private boolean refreshTokenBodyEnabled;
 
+  /**
+   * B14: lets a banned user open a BAN_APPEAL support ticket. Permit-all in SecurityConfig; the
+   * service performs its own password check with the same rate limits as /login so an unbanned
+   * attacker gains nothing by probing it.
+   */
+  @PostMapping("/ban-appeal")
+  public ResponseEntity<kz.hrms.splitupauth.dto.BanAppealResponse> submitBanAppeal(
+      @Valid @RequestBody kz.hrms.splitupauth.dto.BanAppealRequest request,
+      HttpServletRequest httpRequest) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(authService.submitBanAppeal(request, httpRequest));
+  }
+
   @PostMapping("/register")
   public ResponseEntity<AuthResponse> register(
       @Valid @RequestBody RegisterRequest request,

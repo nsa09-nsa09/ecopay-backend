@@ -91,6 +91,7 @@ public class SecurityConfig {
                       "/api/v1/auth/verify-email",
                       "/api/v1/auth/verify-email-code",
                       "/api/v1/auth/resend-verification",
+                      "/api/v1/auth/ban-appeal",
                       "/api/v1/webhooks/**",
                       "/actuator/health",
                       "/actuator/health/**")
