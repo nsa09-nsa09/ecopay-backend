@@ -66,6 +66,7 @@ class RoomServiceTest {
   @Mock private RefundService refundService;
   @Mock private CommissionCalculator commissionCalculator;
   @Mock private RoomSettingsService roomSettingsService;
+  @Mock private NotificationService notificationService;
 
   private RoomService roomService;
 
@@ -88,7 +89,8 @@ class RoomServiceTest {
             payoutMethodRepository,
             paymentTransactionRepository,
             refundService,
-            roomSettingsService);
+            roomSettingsService,
+            notificationService);
 
     lenient().when(roomSettingsService.getMinimumRoomMembers()).thenReturn(5);
 

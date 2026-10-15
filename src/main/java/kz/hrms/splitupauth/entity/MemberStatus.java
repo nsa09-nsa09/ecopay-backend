@@ -6,5 +6,11 @@ public enum MemberStatus {
   ACTIVE,
   REJECTED,
   CANCELLED_BEFORE_PAYMENT,
+  /**
+   * B10: terminal state for a member whose room the owner cancelled after the member had already
+   * paid. Separate from {@link #CANCELLED_BEFORE_PAYMENT} because that one implies "no money
+   * changed hands"; here the member had a successful charge which the cancellation refunds.
+   */
+  ROOM_CANCELLED,
   BLOCKED_BY_ADMIN
 }

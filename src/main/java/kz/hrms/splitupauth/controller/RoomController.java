@@ -103,8 +103,9 @@ public class RoomController {
   }
 
   @GetMapping("/{id}")
-  public ResponseEntity<RoomResponse> getRoom(@PathVariable Long id) {
-    return ResponseEntity.ok(roomService.getRoom(id));
+  public ResponseEntity<RoomResponse> getRoom(
+      @PathVariable Long id, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(roomService.getRoom(id, user));
   }
 
   /**
@@ -133,8 +134,10 @@ public class RoomController {
 
   @PostMapping("/{id}/cancel")
   public ResponseEntity<RoomResponse> cancelRoom(
-      @PathVariable Long id, @AuthenticationPrincipal User user) {
-    return ResponseEntity.ok(roomService.cancelRoom(id, user));
+      @PathVariable Long id,
+      @AuthenticationPrincipal User user,
+      @Valid @RequestBody kz.hrms.splitupauth.dto.CancelRoomRequest request) {
+    return ResponseEntity.ok(roomService.cancelRoom(id, user, request));
   }
 
   @PostMapping("/{id}/complete")

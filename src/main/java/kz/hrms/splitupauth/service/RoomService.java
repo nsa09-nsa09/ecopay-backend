@@ -27,6 +27,7 @@ import kz.hrms.splitupauth.entity.Category;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import kz.hrms.splitupauth.entity.Currency;
 import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.NotificationType;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.PaymentTransactionType;
 import kz.hrms.splitupauth.entity.PeriodType;
@@ -88,6 +89,7 @@ public class RoomService {
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RefundService refundService;
   private final RoomSettingsService roomSettingsService;
+  private final NotificationService notificationService;
 
   @Transactional(readOnly = true)
   public RoomPricingPreviewResponse previewPricing(
@@ -196,11 +198,16 @@ public class RoomService {
   }
 
   private void ensureStatusTransition(RoomStatus currentStatus, RoomStatus targetStatus) {
+    // B10: ACTIVE → CANCELLED was previously rejected here, so cancelRoom() checked ACTIVE as
+    // allowed up top but then hit the transition guard. The owner-visible intent is "cancel this
+    // room from any pre-COMPLETED state"; the paid-member refunds that follow are what makes it
+    // safe.
     boolean allowed =
         (currentStatus == RoomStatus.OPEN && targetStatus == RoomStatus.IN_VERIFICATION)
             || (currentStatus == RoomStatus.OPEN && targetStatus == RoomStatus.CANCELLED)
             || (currentStatus == RoomStatus.IN_VERIFICATION && targetStatus == RoomStatus.CANCELLED)
             || (currentStatus == RoomStatus.IN_VERIFICATION && targetStatus == RoomStatus.ACTIVE)
+            || (currentStatus == RoomStatus.ACTIVE && targetStatus == RoomStatus.CANCELLED)
             || (currentStatus == RoomStatus.ACTIVE && targetStatus == RoomStatus.COMPLETED)
             || targetStatus == RoomStatus.BLOCKED;
 
@@ -390,6 +397,11 @@ public class RoomService {
 
   @Transactional(readOnly = true)
   public RoomResponse getRoom(Long roomId) {
+    return getRoom(roomId, null);
+  }
+
+  @Transactional(readOnly = true)
+  public RoomResponse getRoom(Long roomId, User viewer) {
     Room room =
         roomRepository
             .findByIdAndDeletedAtIsNull(roomId)
@@ -406,6 +418,15 @@ public class RoomService {
     int freeSeats = RoomSeatMath.freeSeats(room, memberOccupied);
     response.setFreeSeats(freeSeats);
     response.setJoinable(computeJoinable(room, freeSeats));
+
+    // B10: owner-only transition hints. Non-owners get null → the UI hides the controls.
+    if (viewer != null && viewer.getId().equals(room.getOwner().getId())) {
+      RoomStatus s = room.getStatus();
+      response.setCanCancel(
+          s == RoomStatus.OPEN || s == RoomStatus.IN_VERIFICATION || s == RoomStatus.ACTIVE);
+      response.setCanComplete(s == RoomStatus.ACTIVE);
+      response.setCanEdit(s == RoomStatus.OPEN || s == RoomStatus.ACTIVE);
+    }
     return response;
   }
 
@@ -715,12 +736,22 @@ public class RoomService {
       throw new ForbiddenOperationException("Only room owner can update the room");
     }
 
-    if (room.getStatus() != RoomStatus.OPEN) {
-      throw new InvalidRequestException("Only OPEN rooms can be updated");
-    }
+    // B10: title/description are editable in OPEN *and* ACTIVE (even after start_date, so an
+    // owner can fix a typo mid-period). Every other owner-facing field still needs the stricter
+    // OPEN-and-not-started window: pricing, seats, tariff, access rules etc. are promises the
+    // marketplace made to existing paid members and shouldn't change under them.
+    boolean titleOrDescriptionOnly = hasOnlyTitleOrDescriptionChanges(request);
+    boolean strictGate =
+        room.getStatus() != RoomStatus.OPEN || !room.getStartDate().isAfter(LocalDateTime.now());
+    boolean canEditAnything =
+        room.getStatus() == RoomStatus.OPEN || room.getStatus() == RoomStatus.ACTIVE;
 
-    if (!room.getStartDate().isAfter(LocalDateTime.now())) {
-      throw new InvalidRequestException("Room cannot be updated after start date");
+    if (!canEditAnything) {
+      throw new InvalidRequestException("Only OPEN or ACTIVE rooms can be updated");
+    }
+    if (strictGate && !titleOrDescriptionOnly) {
+      throw new InvalidRequestException(
+          "After the room is active or started, only title and description can be edited");
     }
 
     if (request.getTitle() != null) {
@@ -782,6 +813,21 @@ public class RoomService {
     room = roomRepository.save(room);
 
     return roomMapper.toResponse(room);
+  }
+
+  /** B10: everything other than title/description must be null for the lenient (ACTIVE) path. */
+  private static boolean hasOnlyTitleOrDescriptionChanges(UpdateRoomRequest r) {
+    return r.getCancellationPolicy() == null
+        && r.getProviderName() == null
+        && r.getTariffNameSnapshot() == null
+        && r.getConnectionType() == null
+        && r.getOperatorRestrictions() == null
+        && r.getOperatorTermsConfirmed() == null
+        && r.getAccessType() == null
+        && r.getRegionRestriction() == null
+        && r.getRequiresEmailForInvite() == null
+        && r.getEmailChangeForbidden() == null
+        && r.getAccessGrantSlaHours() == null;
   }
 
   @Transactional
@@ -971,7 +1017,8 @@ public class RoomService {
   }
 
   @Transactional
-  public RoomResponse cancelRoom(Long roomId, User currentUser) {
+  public RoomResponse cancelRoom(
+      Long roomId, User currentUser, kz.hrms.splitupauth.dto.CancelRoomRequest request) {
     Room room =
         roomRepository
             .findById(roomId)
@@ -995,7 +1042,10 @@ public class RoomService {
 
     ensureStatusTransition(room.getStatus(), RoomStatus.CANCELLED);
 
+    String reason =
+        request != null && request.getReason() != null ? request.getReason().trim() : "";
     room.setStatus(RoomStatus.CANCELLED);
+    room.setBlockReason(reason);
 
     room = roomRepository.save(room);
     cancelMembershipsAfterRoomCancellation(room);
@@ -1004,19 +1054,41 @@ public class RoomService {
             room.getId(), PaymentTransactionStatus.SUCCESS, PaymentTransactionType.CHARGE)
         .forEach(tx -> refundService.createAutomaticCompensationRefund(tx, "ROOM_CANCELLED"));
 
+    // B10: notify every live member that the room is gone, and leave a trail in room_event_log
+    // with the reason the owner typed.
+    for (RoomMember member :
+        roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
+      if (member.getUser() != null) {
+        notificationService.notify(
+            member.getUser(),
+            NotificationType.ROOM_CANCELLED,
+            java.util.Map.of("reason", reason),
+            "/rooms/member/" + room.getId(),
+            java.util.Map.of("roomId", room.getId(), "reason", reason));
+      }
+    }
+    roomEventLogger.log(
+        room, null, currentUser, "OWNER", "room_cancelled", java.util.Map.of("reason", reason));
+
     return roomMapper.toResponse(room);
   }
 
   private void cancelMembershipsAfterRoomCancellation(Room room) {
     for (RoomMember member :
         roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
-      if (member.getStatus() == MemberStatus.APPLIED
-          || member.getStatus() == MemberStatus.PENDING
-          || member.getStatus() == MemberStatus.ACTIVE) {
+      MemberStatus prev = member.getStatus();
+      if (prev == MemberStatus.APPLIED) {
+        // Never paid → the real "cancelled before payment" case.
         member.setStatus(MemberStatus.CANCELLED_BEFORE_PAYMENT);
-        member.setEndedAt(LocalDateTime.now());
-        roomMemberRepository.save(member);
+      } else if (prev == MemberStatus.PENDING || prev == MemberStatus.ACTIVE) {
+        // Had a successful charge → distinguish via ROOM_CANCELLED. The refund that follows is
+        // what makes this move safe to make.
+        member.setStatus(MemberStatus.ROOM_CANCELLED);
+      } else {
+        continue;
       }
+      member.setEndedAt(LocalDateTime.now());
+      roomMemberRepository.save(member);
     }
   }
 
@@ -1044,10 +1116,22 @@ public class RoomService {
     // A completed room counts toward activity-based reputation for the owner and everyone
     // who actively participated, so refresh their scores now.
     reputationService.recompute(room.getOwner());
-    roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room).stream()
-        .filter(m -> m.getStatus() == MemberStatus.ACTIVE)
-        .map(RoomMember::getUser)
-        .forEach(reputationService::recompute);
+    for (RoomMember member :
+        roomMemberRepository.findByRoomAndDeletedAtIsNullOrderByCreatedAtAsc(room)) {
+      if (member.getStatus() == MemberStatus.ACTIVE) {
+        reputationService.recompute(member.getUser());
+        // B10: let the member know the room has ended so the review entry point in /rooms/member
+        // becomes meaningful.
+        if (member.getUser() != null) {
+          notificationService.notify(
+              member.getUser(),
+              NotificationType.ROOM_COMPLETED,
+              java.util.Map.of(),
+              "/rooms/member/" + room.getId(),
+              java.util.Map.of("roomId", room.getId()));
+        }
+      }
+    }
 
     return roomMapper.toResponse(room);
   }
