@@ -13,9 +13,10 @@ public class CreateReviewRequest {
   private Long recipientId;
 
   /**
-   * Optional anchor room. When present the review is attributed to that room; when {@code null} it
-   * is treated as a profile-level rating.
+   * B5: review must be anchored to a specific shared room — profile-level reviews are no longer
+   * accepted since any user could rate any other user from the search page.
    */
+  @NotNull(message = "Room id is required")
   private Long roomId;
 
   @NotNull

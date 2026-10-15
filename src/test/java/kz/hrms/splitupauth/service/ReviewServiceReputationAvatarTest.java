@@ -33,6 +33,7 @@ class ReviewServiceReputationAvatarTest {
   @Mock UserRepository userRepository;
   @Mock RoomRepository roomRepository;
   @Mock RoomMemberRepository roomMemberRepository;
+  @Mock kz.hrms.splitupauth.repository.PaymentTransactionRepository paymentTransactionRepository;
   @Mock ReputationService reputationService;
   @Mock AvatarStorageService avatarStorageService;
 
@@ -42,6 +43,7 @@ class ReviewServiceReputationAvatarTest {
         userRepository,
         roomRepository,
         roomMemberRepository,
+        paymentTransactionRepository,
         reputationService,
         avatarStorageService);
   }
