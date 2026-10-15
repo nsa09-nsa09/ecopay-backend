@@ -511,7 +511,11 @@ public class RoomMemberService {
           "ROOM_OWNER_CANNOT_JOIN", "Room owner cannot join own room");
     }
 
-    if (!(room.getStatus() == RoomStatus.OPEN)) {
+    // B9: ACTIVE used to be rejected here, which locked the catalog out as soon as the first paid
+    // member transitioned the room to ACTIVE — even when free seats remained. A room is joinable
+    // in OPEN and in ACTIVE while startDate is still in the future (that is checked immediately
+    // after). The marketplace-slots check further below is what enforces capacity atomically.
+    if (room.getStatus() != RoomStatus.OPEN && room.getStatus() != RoomStatus.ACTIVE) {
       throw new InvalidRequestException("ROOM_NOT_JOINABLE", "Room is not available for joining");
     }
 

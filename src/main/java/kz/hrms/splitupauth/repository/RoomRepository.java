@@ -92,4 +92,12 @@ public interface RoomRepository extends JpaRepository<Room, Long>, JpaSpecificat
    */
   List<Room> findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
       Long serviceId, RoomStatus status, LocalDateTime startDateAfter);
+
+  /**
+   * B9: catalog match now considers ACTIVE rooms too — a room becomes ACTIVE as soon as the first
+   * paid member joins, but it stays joinable while seats remain and the start_date is still in the
+   * future.
+   */
+  List<Room> findByService_IdAndStatusInAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+      Long serviceId, java.util.Collection<RoomStatus> statuses, LocalDateTime startDateAfter);
 }

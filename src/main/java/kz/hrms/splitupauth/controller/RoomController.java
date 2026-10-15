@@ -74,6 +74,7 @@ public class RoomController {
       @RequestParam(required = false) AccessType accessType,
       @RequestParam(required = false) String region,
       @RequestParam(required = false) Boolean verifiedOwnerOnly,
+      @RequestParam(required = false) Boolean joinable,
       @RequestParam(required = false) String sortBy,
       @RequestParam(required = false) String sortDir) {
     RoomFilter filter =
@@ -88,6 +89,7 @@ public class RoomController {
             .accessType(accessType)
             .region(region)
             .verifiedOwnerOnly(verifiedOwnerOnly)
+            .joinable(joinable)
             .build();
     return ResponseEntity.ok(roomService.getRooms(page, size, filter, sortBy, sortDir));
   }

@@ -109,4 +109,21 @@ public class RoomResponse {
   private String blockReason;
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
+
+  /**
+   * B9: true when a new user can actually join right now — OPEN or ACTIVE status, free seats > 0,
+   * start_date still in the future. Precomputed server-side so the frontend doesn't have to redo
+   * the rule.
+   */
+  private Boolean joinable;
+
+  /**
+   * B10: owner-visible transition hints — null for non-owners. The frontend decides which action
+   * buttons to show, the service layer is still the single source of truth for the actual
+   * transition (it re-validates on the request).
+   */
+  private Boolean canCancel;
+
+  private Boolean canComplete;
+  private Boolean canEdit;
 }

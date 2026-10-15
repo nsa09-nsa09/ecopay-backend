@@ -56,4 +56,11 @@ public class RoomSummaryDto {
   private String operatorRestrictions;
   private String tariffNameSnapshot;
   private PeriodType periodType;
+
+  /**
+   * B9: same semantics as {@code RoomResponse.joinable} — OPEN or ACTIVE status, free seats {@code
+   * > 0}, start_date still in the future. Lets the catalog grid colour the "Join" button without
+   * duplicating the rule client-side.
+   */
+  private Boolean joinable;
 }

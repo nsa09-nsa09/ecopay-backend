@@ -150,10 +150,15 @@ public class CatalogService {
       throw new ResourceNotFoundException("Service not found");
     }
 
+    // B9: ACTIVE rooms are still joinable while seats remain and startDate is in the future, so
+    // the matcher must consider them too — otherwise "подберём комнату" skipped every room that
+    // had already welcomed its first paid member.
     List<Room> candidates =
         roomRepository
-            .findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
-                serviceId, RoomStatus.OPEN, LocalDateTime.now());
+            .findByService_IdAndStatusInAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+                serviceId,
+                java.util.List.of(RoomStatus.OPEN, RoomStatus.ACTIVE),
+                LocalDateTime.now());
 
     for (Room room : candidates) {
       if (currentUser != null

@@ -403,8 +403,22 @@ public class RoomService {
     response.setExistingMembersCount(RoomSeatMath.existingMembersCount(room));
     response.setMarketplaceCapacity(RoomSeatMath.marketplaceCapacity(room));
     response.setFilledSeats(RoomSeatMath.filledSeats(room, memberOccupied));
-    response.setFreeSeats(RoomSeatMath.freeSeats(room, memberOccupied));
+    int freeSeats = RoomSeatMath.freeSeats(room, memberOccupied);
+    response.setFreeSeats(freeSeats);
+    response.setJoinable(computeJoinable(room, freeSeats));
     return response;
+  }
+
+  /**
+   * B9: a room is joinable when its status is OPEN or ACTIVE, it has at least one free marketplace
+   * seat and its start_date is still in the future. Centralised so RoomController, the catalog
+   * matcher and the summary list all agree.
+   */
+  public static boolean computeJoinable(Room room, long freeSeats) {
+    if (room == null) return false;
+    if (room.getStatus() != RoomStatus.OPEN && room.getStatus() != RoomStatus.ACTIVE) return false;
+    if (freeSeats <= 0) return false;
+    return room.getStartDate() != null && room.getStartDate().isAfter(LocalDateTime.now());
   }
 
   @Transactional(readOnly = true)
@@ -446,6 +460,31 @@ public class RoomService {
     }
     if (Boolean.TRUE.equals(f.getVerifiedOwnerOnly())) {
       spec = spec.and((root, q, cb) -> cb.isTrue(root.get("owner").get("ownerVerified")));
+    }
+    if (Boolean.TRUE.equals(f.getJoinable())) {
+      // B9: a joinable room is OPEN or ACTIVE, has at least one free marketplace seat and its
+      // start_date is still in the future. Status gets ANDed with any explicit status filter the
+      // caller passed; the free-seats and startDate checks are inlined so the SQL does the heavy
+      // lifting and we never materialize an unjoinable row.
+      spec =
+          spec.and(
+              (root, q, cb) ->
+                  root.get("status")
+                      .in(
+                          java.util.List.of(
+                              kz.hrms.splitupauth.entity.RoomStatus.OPEN,
+                              kz.hrms.splitupauth.entity.RoomStatus.ACTIVE)));
+      spec = spec.and((root, q, cb) -> cb.greaterThan(root.get("startDate"), LocalDateTime.now()));
+      spec =
+          spec.and(
+              (root, q, cb) -> {
+                Subquery<Long> occupied = occupiedSubquery(q, cb, root);
+                return cb.lt(
+                    occupied.as(Integer.class),
+                    cb.diff(
+                        root.<Integer>get("maxMembers"),
+                        root.<Integer>get("existingMembersCount")));
+              });
     }
     if (f.getMinFreeSeats() != null && f.getMinFreeSeats() > 0) {
       int minFree = f.getMinFreeSeats();
@@ -636,10 +675,14 @@ public class RoomService {
           Room.builder()
               .maxMembers(summary.getMaxMembers())
               .existingMembersCount(summary.getExistingMembersCount())
+              .status(summary.getStatus())
+              .startDate(summary.getStartDate())
               .build();
       summary.setMarketplaceCapacity(RoomSeatMath.marketplaceCapacity(seatRoom));
       summary.setFilledSeats(RoomSeatMath.filledSeats(seatRoom, memberOccupied));
-      summary.setFreeSeats(RoomSeatMath.freeSeats(seatRoom, memberOccupied));
+      int free = RoomSeatMath.freeSeats(seatRoom, memberOccupied);
+      summary.setFreeSeats(free);
+      summary.setJoinable(computeJoinable(seatRoom, free));
     }
   }
 
