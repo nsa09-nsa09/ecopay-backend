@@ -33,6 +33,8 @@ public class ModerationService {
   private final UserRepository userRepository;
   private final SupportTicketRepository supportTicketRepository;
   private final DisputeRepository disputeRepository;
+  private final kz.hrms.splitupauth.repository.PaymentTransactionRepository
+      paymentTransactionRepository;
   private final NotificationService notificationService;
   private final TokenRevocationService tokenRevocationService;
   private final AccountRealtimeService accountRealtimeService;
@@ -348,18 +350,68 @@ public class ModerationService {
   }
 
   private ModerationQueueItemDto mapQueueItem(ModerationQueue item) {
+    kz.hrms.splitupauth.entity.Room room = item.getRoom();
+    kz.hrms.splitupauth.entity.RoomMember member = item.getRoomMember();
+    kz.hrms.splitupauth.entity.User owner = room != null ? room.getOwner() : null;
+    kz.hrms.splitupauth.entity.User memberUser = member != null ? member.getUser() : null;
+
+    // B13: paid amount for the specific membership (one SUCCESS CHARGE row expected) and payment
+    // status so the admin page shows "paid X ₸" without a second lookup.
+    java.math.BigDecimal paid = java.math.BigDecimal.ZERO;
+    String paymentStatus = null;
+    if (member != null) {
+      var charges =
+          paymentTransactionRepository.findByRoomMember_IdAndStatusAndTypeOrderByCreatedAtDesc(
+              member.getId(),
+              kz.hrms.splitupauth.entity.PaymentTransactionStatus.SUCCESS,
+              kz.hrms.splitupauth.entity.PaymentTransactionType.CHARGE);
+      if (!charges.isEmpty()) {
+        for (var tx : charges) {
+          paid = paid.add(tx.getAmount());
+        }
+        paymentStatus = "SUCCESS";
+      }
+    }
+
     return ModerationQueueItemDto.builder()
         .id(item.getId())
         .entityType(item.getEntityType())
         .entityId(item.getEntityId())
-        .roomId(item.getRoom() != null ? item.getRoom().getId() : null)
-        .roomMemberId(item.getRoomMember() != null ? item.getRoomMember().getId() : null)
+        .roomId(room != null ? room.getId() : null)
+        .roomMemberId(member != null ? member.getId() : null)
         .reasonCode(item.getReasonCode())
         .riskScore(item.getRiskScore())
         .status(item.getStatus().name())
         .assignedAdminId(item.getAssignedAdmin() != null ? item.getAssignedAdmin().getId() : null)
         .createdAt(item.getCreatedAt())
         .updatedAt(item.getUpdatedAt())
+        .roomTitle(room != null ? room.getTitle() : null)
+        .serviceName(room != null && room.getService() != null ? room.getService().getName() : null)
+        .roomStatus(room != null && room.getStatus() != null ? room.getStatus().name() : null)
+        .owner(
+            owner == null
+                ? null
+                : ModerationQueueItemDto.PartyRef.builder()
+                    .id(owner.getId())
+                    .displayName(owner.getDisplayName())
+                    .publicId(owner.getPublicId())
+                    .build())
+        .member(
+            member == null
+                ? null
+                : ModerationQueueItemDto.MemberCtx.builder()
+                    .id(member.getId())
+                    .userId(memberUser != null ? memberUser.getId() : null)
+                    .displayName(memberUser != null ? memberUser.getDisplayName() : null)
+                    .publicId(memberUser != null ? memberUser.getPublicId() : null)
+                    .status(member.getStatus() != null ? member.getStatus().name() : null)
+                    .identifierValid(null)
+                    .ownerAccessConfirmedAt(member.getOwnerAccessConfirmedAt())
+                    .memberConfirmedAt(member.getMemberConfirmedAt())
+                    .build())
+        .paidAmountKzt(paid)
+        .paymentStatus(paymentStatus)
+        .reasonDescription(AdminLogLabels.reasonDescription(item.getReasonCode()))
         .build();
   }
 

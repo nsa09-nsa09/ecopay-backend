@@ -111,32 +111,7 @@ public class AdminLogService {
     ensureAdmin(currentUser);
 
     return roomEventLogRepository.findAllByOrderByCreatedAtDesc().stream()
-        .map(
-            log ->
-                RoomEventLogDto.builder()
-                    .id(log.getId())
-                    .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
-                    .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
-                    .actorDisplayName(
-                        log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
-                    .actorRole(log.getActorRole())
-                    .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
-                    .roomOwnerUserId(
-                        log.getRoom() != null && log.getRoom().getOwner() != null
-                            ? log.getRoom().getOwner().getId()
-                            : null)
-                    .roomOwnerDisplayName(
-                        log.getRoom() != null && log.getRoom().getOwner() != null
-                            ? log.getRoom().getOwner().getDisplayName()
-                            : null)
-                    .roomMemberId(log.getRoomMember() != null ? log.getRoomMember().getId() : null)
-                    .eventType(log.getEventType())
-                    .oldState(log.getOldState())
-                    .newState(log.getNewState())
-                    .ipAddress(log.getIpAddress())
-                    .userAgent(log.getUserAgent())
-                    .createdAt(log.getCreatedAt())
-                    .build())
+        .map(AdminLogService::mapEventLog)
         .toList();
   }
 
@@ -150,32 +125,7 @@ public class AdminLogService {
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
     return roomEventLogRepository.findByRoomOrderByCreatedAtDesc(room).stream()
-        .map(
-            log ->
-                RoomEventLogDto.builder()
-                    .id(log.getId())
-                    .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
-                    .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
-                    .actorDisplayName(
-                        log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
-                    .actorRole(log.getActorRole())
-                    .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
-                    .roomOwnerUserId(
-                        log.getRoom() != null && log.getRoom().getOwner() != null
-                            ? log.getRoom().getOwner().getId()
-                            : null)
-                    .roomOwnerDisplayName(
-                        log.getRoom() != null && log.getRoom().getOwner() != null
-                            ? log.getRoom().getOwner().getDisplayName()
-                            : null)
-                    .roomMemberId(log.getRoomMember() != null ? log.getRoomMember().getId() : null)
-                    .eventType(log.getEventType())
-                    .oldState(log.getOldState())
-                    .newState(log.getNewState())
-                    .ipAddress(log.getIpAddress())
-                    .userAgent(log.getUserAgent())
-                    .createdAt(log.getCreatedAt())
-                    .build())
+        .map(AdminLogService::mapEventLog)
         .toList();
   }
 
@@ -192,6 +142,9 @@ public class AdminLogService {
 
           if (filter.getRoomId() != null) {
             predicates.add(cb.equal(root.get("room").get("id"), filter.getRoomId()));
+          }
+          if (filter.getRoomMemberId() != null) {
+            predicates.add(cb.equal(root.get("roomMember").get("id"), filter.getRoomMemberId()));
           }
           if (filter.getActorUserId() != null) {
             predicates.add(cb.equal(root.get("actorUser").get("id"), filter.getActorUserId()));
@@ -213,35 +166,7 @@ public class AdminLogService {
     Page<RoomEventLog> result = roomEventLogRepository.findAll(spec, pageable);
 
     List<RoomEventLogDto> items =
-        result.getContent().stream()
-            .map(
-                log ->
-                    RoomEventLogDto.builder()
-                        .id(log.getId())
-                        .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
-                        .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
-                        .actorDisplayName(
-                            log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
-                        .actorRole(log.getActorRole())
-                        .roomId(log.getRoom() != null ? log.getRoom().getId() : null)
-                        .roomOwnerUserId(
-                            log.getRoom() != null && log.getRoom().getOwner() != null
-                                ? log.getRoom().getOwner().getId()
-                                : null)
-                        .roomOwnerDisplayName(
-                            log.getRoom() != null && log.getRoom().getOwner() != null
-                                ? log.getRoom().getOwner().getDisplayName()
-                                : null)
-                        .roomMemberId(
-                            log.getRoomMember() != null ? log.getRoomMember().getId() : null)
-                        .eventType(log.getEventType())
-                        .oldState(log.getOldState())
-                        .newState(log.getNewState())
-                        .ipAddress(log.getIpAddress())
-                        .userAgent(log.getUserAgent())
-                        .createdAt(log.getCreatedAt())
-                        .build())
-            .toList();
+        result.getContent().stream().map(AdminLogService::mapEventLog).toList();
 
     return PageResponse.from(result, items);
   }
@@ -250,5 +175,35 @@ public class AdminLogService {
     if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
       throw new ForbiddenOperationException("Admin access required");
     }
+  }
+
+  /** B13: single mapper so eventLabel/summary/room title/member display stay consistent. */
+  private static RoomEventLogDto mapEventLog(RoomEventLog log) {
+    kz.hrms.splitupauth.entity.Room room = log.getRoom();
+    kz.hrms.splitupauth.entity.RoomMember member = log.getRoomMember();
+    kz.hrms.splitupauth.entity.User memberUser = member != null ? member.getUser() : null;
+    return RoomEventLogDto.builder()
+        .id(log.getId())
+        .eventId(log.getEventId() != null ? log.getEventId().toString() : null)
+        .actorUserId(log.getActorUser() != null ? log.getActorUser().getId() : null)
+        .actorDisplayName(log.getActorUser() != null ? log.getActorUser().getDisplayName() : null)
+        .actorRole(log.getActorRole())
+        .roomId(room != null ? room.getId() : null)
+        .roomTitle(room != null ? room.getTitle() : null)
+        .roomOwnerUserId(room != null && room.getOwner() != null ? room.getOwner().getId() : null)
+        .roomOwnerDisplayName(
+            room != null && room.getOwner() != null ? room.getOwner().getDisplayName() : null)
+        .roomMemberId(member != null ? member.getId() : null)
+        .memberUserId(memberUser != null ? memberUser.getId() : null)
+        .memberDisplayName(memberUser != null ? memberUser.getDisplayName() : null)
+        .eventType(log.getEventType())
+        .eventLabel(AdminLogLabels.eventLabel(log.getEventType()))
+        .summary(AdminLogLabels.summarize(log.getOldState(), log.getNewState()))
+        .oldState(log.getOldState())
+        .newState(log.getNewState())
+        .ipAddress(log.getIpAddress())
+        .userAgent(log.getUserAgent())
+        .createdAt(log.getCreatedAt())
+        .build();
   }
 }
