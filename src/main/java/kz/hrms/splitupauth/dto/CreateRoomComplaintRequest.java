@@ -8,11 +8,11 @@ import lombok.Data;
 @Data
 public class CreateRoomComplaintRequest {
 
-  @NotBlank(message = "Complaint reason is required")
-  @Size(max = 50, message = "Complaint reason must be at most 50 characters")
+  @NotBlank(message = "Укажите причину жалобы")
+  @Size(max = 50, message = "Код причины должен быть не длиннее 50 символов")
   private String reasonCode;
 
-  @NotBlank(message = "Complaint details are required")
-  @Size(min = 10, max = 5000, message = "Complaint details must be between 10 and 5000 characters")
+  @NotBlank(message = "Опишите проблему")
+  @Size(min = 10, max = 5000, message = "Описание должно быть от 10 до 5000 символов")
   private String description;
 }

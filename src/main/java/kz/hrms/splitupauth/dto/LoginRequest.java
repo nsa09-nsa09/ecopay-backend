@@ -9,11 +9,11 @@ import lombok.Data;
 public class LoginRequest {
 
   /** Required: EcoPay accounts log in by email + password. */
-  @NotBlank(message = "Email is required")
-  @Email(message = "Email must be valid")
+  @NotBlank(message = "Укажите email")
+  @Email(message = "Укажите корректный email")
   private String email;
 
-  @NotBlank(message = "Password is required")
+  @NotBlank(message = "Укажите пароль")
   private String password;
 
   /** Canonical identifier used for rate-limit keying and lookups. */

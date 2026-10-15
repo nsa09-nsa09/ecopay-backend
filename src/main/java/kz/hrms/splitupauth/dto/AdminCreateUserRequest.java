@@ -12,22 +12,23 @@ import lombok.Data;
 @Data
 public class AdminCreateUserRequest {
 
-  @NotBlank(message = "Email is required")
-  @Email(message = "Email must be valid")
+  @NotBlank(message = "Укажите email")
+  @Email(message = "Укажите корректный email")
   private String email;
 
-  @NotBlank(message = "Display name is required")
+  @NotBlank(message = "Укажите имя для отображения")
+  @Size(min = 2, max = 50, message = "Имя должно быть от 2 до 50 символов")
   private String displayName;
 
-  @NotBlank(message = "Password is required")
-  @Size(min = 8, message = "Password must be at least 8 characters")
+  @NotBlank(message = "Укажите пароль")
+  @Size(min = 8, max = 100, message = "Пароль должен быть от 8 до 100 символов")
   private String password;
 
-  @NotNull(message = "Role is required")
+  @NotNull(message = "Выберите роль")
   private Role role;
 
   // Phone is optional for admin-created accounts; staff/admin profiles may not have one.
-  @Pattern(regexp = "^\\+7\\d{10}$", message = "Phone must be in +7XXXXXXXXXX format")
+  @Pattern(regexp = "^\\+7\\d{10}$", message = "Телефон должен быть в формате +7XXXXXXXXXX")
   private String phone;
 
   /**

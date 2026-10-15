@@ -10,15 +10,15 @@ public class CreateSupportTicketRequest {
   private Long roomId;
   private Long roomMemberId;
 
-  @NotBlank(message = "Subject is required")
-  @Size(max = 200, message = "Subject must be at most 200 characters")
+  @NotBlank(message = "Укажите тему обращения")
+  @Size(min = 3, max = 200, message = "Тема должна быть от 3 до 200 символов")
   private String subject;
 
-  @NotBlank(message = "Topic is required")
-  @Size(max = 50, message = "Topic must be at most 50 characters")
+  @NotBlank(message = "Выберите категорию")
+  @Size(max = 50, message = "Код категории должен быть не длиннее 50 символов")
   private String topic;
 
-  @NotBlank(message = "Message is required")
-  @Size(max = 5000, message = "Message must be at most 5000 characters")
+  @NotBlank(message = "Опишите вопрос")
+  @Size(min = 10, max = 5000, message = "Сообщение должно быть от 10 до 5000 символов")
   private String message;
 }

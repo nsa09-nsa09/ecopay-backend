@@ -12,15 +12,16 @@ import lombok.Data;
 public class RegisterRequest {
 
   /** Required: EcoPay accounts are registered by email and confirmed via an emailed code. */
-  @NotBlank(message = "Email is required")
-  @Email(message = "Email must be valid")
+  @NotBlank(message = "Укажите email")
+  @Email(message = "Укажите корректный email")
   private String email;
 
-  @NotBlank(message = "Password is required")
-  @Size(min = 8, message = "Password must be at least 8 characters")
+  @NotBlank(message = "Укажите пароль")
+  @Size(min = 8, max = 100, message = "Пароль должен быть от 8 до 100 символов")
   private String password;
 
-  @NotBlank(message = "Display name is required")
+  @NotBlank(message = "Укажите имя для отображения")
+  @Size(min = 2, max = 50, message = "Имя должно быть от 2 до 50 символов")
   private String displayName;
 
   /**
@@ -32,8 +33,8 @@ public class RegisterRequest {
    * as valid, so a payload that simply omits the field would slip through. {@code @NotNull} closes
    * that gap; {@code @AssertTrue} then rejects an explicit {@code false}.
    */
-  @NotNull(message = "You must accept the Terms of Service")
-  @AssertTrue(message = "You must accept the Terms of Service")
+  @NotNull(message = "Необходимо принять условия использования")
+  @AssertTrue(message = "Необходимо принять условия использования")
   private Boolean termsAccepted;
 
   /** Optional: version of Terms of Service the user saw when accepting. */
