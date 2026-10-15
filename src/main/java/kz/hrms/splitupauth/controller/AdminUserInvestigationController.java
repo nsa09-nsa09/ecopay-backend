@@ -73,6 +73,8 @@ public class AdminUserInvestigationController {
             .toList(),
         against.stream().map(r -> UserReportDto.from(r, false)).toList(),
         by.stream().map(r -> UserReportDto.from(r, false)).toList(),
+        reportRepository.countByTargetUser_Id(userId),
+        reportRepository.countByReporter_Id(userId),
         tickets,
         disputes,
         events.stream()

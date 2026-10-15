@@ -17,14 +17,19 @@ public record UserReportDto(
     LocalDateTime updatedAt,
     LocalDateTime resolvedAt,
     Long assignedAdminId,
+    /** B12: full admin info so the UI can show the assignee's name without a second lookup. */
+    AssignedAdmin assignedAdmin,
     String resolutionNote) {
   public record Person(Long id, String publicId, String displayName) {}
 
   public record Target(Long id, String publicId, String slug, String displayName, String status) {}
 
+  public record AssignedAdmin(Long id, String displayName) {}
+
   public static UserReportDto from(UserReport report, boolean detail) {
     User reporter = report.getReporter();
     User target = report.getTargetUser();
+    User admin = report.getAssignedAdmin();
     return new UserReportDto(
         report.getId(),
         report.getCategory(),
@@ -40,7 +45,8 @@ public record UserReportDto(
         report.getCreatedAt(),
         report.getUpdatedAt(),
         report.getResolvedAt(),
-        report.getAssignedAdmin() == null ? null : report.getAssignedAdmin().getId(),
+        admin == null ? null : admin.getId(),
+        admin == null ? null : new AssignedAdmin(admin.getId(), admin.getDisplayName()),
         detail ? report.getResolutionNote() : null);
   }
 }

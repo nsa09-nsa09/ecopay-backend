@@ -140,10 +140,15 @@ public class UserReportService {
     if (change.status() == UserReportStatus.OPEN) {
       throw new InvalidRequestException("Invalid status transition");
     }
-    if ((change.status() == UserReportStatus.RESOLVED
-            || change.status() == UserReportStatus.DISMISSED)
-        && (resolutionNote == null || resolutionNote.isBlank())) {
-      throw new InvalidRequestException("Resolution note required");
+    // B12: closing a report (RESOLVED / DISMISSED) requires a resolution note of at least
+    // 5 characters so the admin audit log has real context. Russian message is shown to the
+    // admin UI.
+    if (change.status() == UserReportStatus.RESOLVED
+        || change.status() == UserReportStatus.DISMISSED) {
+      if (resolutionNote == null || resolutionNote.length() < 5) {
+        throw new InvalidRequestException(
+            "RESOLUTION_NOTE_TOO_SHORT", "Укажите комментарий решения (не менее 5 символов)");
+      }
     }
     UserReport report = find(id);
     if (report.getStatus() == UserReportStatus.RESOLVED

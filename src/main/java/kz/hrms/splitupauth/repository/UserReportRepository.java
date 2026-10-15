@@ -27,6 +27,11 @@ public interface UserReportRepository
 
   long countByReporter_IdAndCreatedAtAfter(Long reporterId, LocalDateTime since);
 
+  /** B12: investigation page shows totals, not just the first-20 lists. */
+  long countByTargetUser_Id(Long targetId);
+
+  long countByReporter_Id(Long reporterId);
+
   @EntityGraph(attributePaths = {"reporter", "targetUser", "assignedAdmin"})
   List<UserReport> findByTargetUser_IdOrderByCreatedAtDesc(Long targetId, Pageable pageable);
 

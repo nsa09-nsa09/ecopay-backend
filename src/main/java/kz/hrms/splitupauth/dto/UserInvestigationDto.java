@@ -9,6 +9,9 @@ public record UserInvestigationDto(
     List<Membership> memberships,
     List<UserReportDto> reportsAgainst,
     List<UserReportDto> reportsBy,
+    /** B12: numeric totals that match the lists above (sized for easy badge display). */
+    long reportsAgainstCount,
+    long reportsByCount,
     long supportTicketsCount,
     long disputesCount,
     List<RoomEvent> recentRoomEvents,
