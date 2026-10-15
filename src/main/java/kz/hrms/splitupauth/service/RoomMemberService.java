@@ -31,6 +31,7 @@ public class RoomMemberService {
   private final RoomMemberMapper roomMemberMapper;
   private final FieldEncryptionService fieldEncryptionService;
   private final PaymentTransactionRepository paymentTransactionRepository;
+  private final PaymentIntentRepository paymentIntentRepository;
   private final SupportTicketRepository supportTicketRepository;
   private final ModerationService moderationService;
   private final DisputeRepository disputeRepository;
@@ -79,6 +80,17 @@ public class RoomMemberService {
             .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
     validateJoin(room, currentUser, request);
+
+    // B11: on a re-join, soft-delete any terminal record from a previous attempt so the partial
+    // unique index uq_room_member_active (room_id, user_id) WHERE deleted_at IS NULL stays
+    // satisfied. validateJoin already filtered out non-terminal records above.
+    roomMemberRepository
+        .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+        .ifPresent(
+            prior -> {
+              prior.setDeletedAt(LocalDateTime.now());
+              roomMemberRepository.save(prior);
+            });
 
     RoomMember roomMember =
         RoomMember.builder()
@@ -171,6 +183,73 @@ public class RoomMemberService {
         .hasNext(resultPage.hasNext())
         .hasPrevious(resultPage.hasPrevious())
         .build();
+  }
+
+  /**
+   * B11: lets a user withdraw their APPLIED membership before paying. Soft-deletes nothing — the
+   * row stays with status CANCELLED_BEFORE_PAYMENT and ended_at set, and the join-flow's partial
+   * unique-index guard handles the re-join case by soft-deleting the row on next join. Rejected
+   * when any payment attempt is in flight (PENDING/RECONCILING) or already succeeded (SUCCESS):
+   * those paths go through refund/dispute, not self-cancel.
+   */
+  @Transactional
+  public RoomMemberDto cancelOwnMembership(Long roomId, User currentUser) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getDeletedAt() == null)
+            .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
+    RoomMember member =
+        roomMemberRepository
+            .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+            .orElseThrow(() -> new ResourceNotFoundException("Membership not found"));
+
+    if (member.getStatus() != MemberStatus.APPLIED) {
+      throw new InvalidRequestException(
+          "MEMBERSHIP_NOT_CANCELLABLE",
+          "Отменить можно только заявку, по которой ещё не прошла оплата");
+    }
+
+    boolean hasActiveIntent =
+        paymentIntentRepository
+            .findFirstByRoomMember_IdAndStatusInOrderByCreatedAtDesc(
+                member.getId(),
+                List.of(
+                    PaymentIntentStatus.PENDING,
+                    PaymentIntentStatus.RECONCILING,
+                    PaymentIntentStatus.SUCCESS))
+            .isPresent();
+    if (hasActiveIntent) {
+      throw new InvalidRequestException(
+          "MEMBERSHIP_PAYMENT_IN_PROGRESS", "По заявке уже идёт оплата — отмена невозможна");
+    }
+
+    member.setStatus(MemberStatus.CANCELLED_BEFORE_PAYMENT);
+    member.setEndedAt(LocalDateTime.now());
+    member = roomMemberRepository.save(member);
+
+    roomEventLogger.log(
+        room,
+        member,
+        currentUser,
+        "MEMBER",
+        "member_cancelled",
+        java.util.Map.of("memberId", member.getId()));
+
+    if (room.getOwner() != null) {
+      notificationService.notify(
+          room.getOwner(),
+          NotificationType.ROOM_CANCELLED, // closest existing bucket; owner sees "member withdrew"
+          java.util.Map.of(),
+          "/rooms/owner/" + room.getId(),
+          java.util.Map.of(
+              "roomId", room.getId(),
+              "memberId", member.getId(),
+              "event", "MEMBER_CANCELLED"));
+    }
+
+    return roomMemberMapper.toDto(member);
   }
 
   @Transactional(readOnly = true)
@@ -529,8 +608,20 @@ public class RoomMemberService {
       throw new InvalidRequestException("CONSENT_REQUIRED", "Consent must be accepted");
     }
 
+    // B11: a terminal (CANCELLED_BEFORE_PAYMENT / REJECTED / ROOM_CANCELLED) record from a
+    // previous attempt should not block a re-join; it is moved out of the way by the join flow
+    // below (soft-deleted) so the uq_room_member_active partial index stays satisfied. Only an
+    // in-flight APPLIED or seat-holding (PENDING/ACTIVE/BLOCKED_BY_ADMIN) membership counts as
+    // "already joined".
     roomMemberRepository
         .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
+        .filter(
+            existing -> {
+              MemberStatus s = existing.getStatus();
+              return s != MemberStatus.CANCELLED_BEFORE_PAYMENT
+                  && s != MemberStatus.REJECTED
+                  && s != MemberStatus.ROOM_CANCELLED;
+            })
         .ifPresent(
             existing -> {
               throw new InvalidRequestException(

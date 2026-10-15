@@ -50,6 +50,16 @@ public class RoomMemberController {
         .body(roomMemberService.joinRoom(id, user, request));
   }
 
+  /**
+   * B11: lets a user cancel their own APPLIED membership before paying. The service checks there is
+   * no in-flight / successful payment; a successful payment goes through the dispute flow.
+   */
+  @PostMapping("/{roomId}/members/me/cancel")
+  public ResponseEntity<RoomMemberDto> cancelOwnMembership(
+      @PathVariable Long roomId, @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(roomMemberService.cancelOwnMembership(roomId, user));
+  }
+
   @GetMapping("/joined")
   public ResponseEntity<List<JoinedRoomDto>> getMyJoinedRooms(@AuthenticationPrincipal User user) {
     return ResponseEntity.ok(roomMemberService.getMyJoinedRooms(user));

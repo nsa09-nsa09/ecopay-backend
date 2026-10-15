@@ -50,6 +50,7 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.repository.DisputeRepository;
 import kz.hrms.splitupauth.repository.ModerationQueueRepository;
+import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberIdentifierRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
@@ -76,6 +77,7 @@ class RoomMemberServiceTest {
   @Mock private RoomMemberMapper roomMemberMapper;
   @Mock private FieldEncryptionService fieldEncryptionService;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
+  @Mock private PaymentIntentRepository paymentIntentRepository;
   @Mock private SupportTicketRepository supportTicketRepository;
   @Mock private ModerationService moderationService;
   @Mock private DisputeRepository disputeRepository;
@@ -98,6 +100,7 @@ class RoomMemberServiceTest {
             roomMemberMapper,
             fieldEncryptionService,
             paymentTransactionRepository,
+            paymentIntentRepository,
             supportTicketRepository,
             moderationService,
             disputeRepository,
