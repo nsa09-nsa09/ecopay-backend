@@ -80,6 +80,15 @@ public class User {
   @Builder.Default
   private Boolean ownerVerified = false;
 
+  /**
+   * B7: tri-state admin override for the "проверенный владелец" badge. {@code null} = never set
+   * explicitly by an admin, phone-verification logic owns the ownerVerified flag. {@code
+   * true}/{@code false} = admin set it explicitly, phone-verification must leave ownerVerified
+   * alone so the admin's decision isn't overwritten (common on phone-change).
+   */
+  @Column(name = "owner_verified_by_admin")
+  private Boolean ownerVerifiedByAdmin;
+
   @Column(name = "public_id", nullable = false, unique = true, length = 16)
   private String publicId;
 

@@ -425,6 +425,9 @@ public class AdminUserController {
             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
     boolean prev = Boolean.TRUE.equals(u.getOwnerVerified());
     u.setOwnerVerified(request.getVerified());
+    // B7: pin the admin's decision so the next phone-verification cycle (which auto-sets
+    // owner_verified) doesn't quietly undo it.
+    u.setOwnerVerifiedByAdmin(request.getVerified());
     userRepository.save(u);
 
     ObjectNode oldState = objectMapper.createObjectNode();

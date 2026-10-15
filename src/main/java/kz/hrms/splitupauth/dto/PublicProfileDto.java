@@ -24,6 +24,10 @@ public class PublicProfileDto {
   private String avatar;
   private Integer reputation;
   private String reputationLevel;
+
+  /** B7: public "проверенный владелец" badge. */
+  private Boolean ownerVerified;
+
   private UserStatus status;
   private Double averageRating;
   private Long reviewsCount;

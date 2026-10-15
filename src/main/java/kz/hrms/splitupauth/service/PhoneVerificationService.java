@@ -92,7 +92,13 @@ public class PhoneVerificationService {
     if (!phone.equals(user.getPhone())) {
       user.setPhone(phone);
       user.setPhoneVerifiedAt(null);
-      user.setOwnerVerified(false);
+      // B7: never overwrite an admin pin on ownerVerified. If an admin explicitly set the flag
+      // (ownerVerifiedByAdmin != null), honour it; otherwise reset to false as before.
+      if (user.getOwnerVerifiedByAdmin() == null) {
+        user.setOwnerVerified(false);
+      } else {
+        user.setOwnerVerified(Boolean.TRUE.equals(user.getOwnerVerifiedByAdmin()));
+      }
       userRepository.save(user);
     }
 
@@ -126,7 +132,12 @@ public class PhoneVerificationService {
     if (devBypassCode != null && !devBypassCode.isBlank() && devBypassCode.equals(code)) {
       user.setPhone(phone);
       user.setPhoneVerifiedAt(LocalDateTime.now());
-      user.setOwnerVerified(true);
+      // B7: an admin pin wins over phone-auto-verify so unmarking stays sticky across phone cycles.
+      if (user.getOwnerVerifiedByAdmin() == null) {
+        user.setOwnerVerified(true);
+      } else {
+        user.setOwnerVerified(Boolean.TRUE.equals(user.getOwnerVerifiedByAdmin()));
+      }
       userRepository.save(user);
       log.warn("[DEV] phone {} verified via dev-bypass code for user {}", phone, user.getId());
       return;
@@ -157,7 +168,12 @@ public class PhoneVerificationService {
 
     user.setPhone(phone);
     user.setPhoneVerifiedAt(LocalDateTime.now());
-    user.setOwnerVerified(true);
+    // B7: honour an admin pin instead of blindly setting true.
+    if (user.getOwnerVerifiedByAdmin() == null) {
+      user.setOwnerVerified(true);
+    } else {
+      user.setOwnerVerified(Boolean.TRUE.equals(user.getOwnerVerifiedByAdmin()));
+    }
     userRepository.save(user);
   }
 

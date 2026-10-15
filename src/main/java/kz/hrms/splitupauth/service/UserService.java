@@ -156,6 +156,7 @@ public class UserService {
         .avatar(avatarStorageService.publicUrl(user.getAvatar()))
         .reputation(user.getReputation())
         .reputationLevel(reputationService.levelOf(user.getReputation()).name())
+        .ownerVerified(Boolean.TRUE.equals(user.getOwnerVerified()))
         .status(user.getStatus())
         .averageRating(Math.round(avg * 10.0) / 10.0)
         .reviewsCount((long) reviews.size())

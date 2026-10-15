@@ -20,6 +20,16 @@ public class AdminUserDto {
   private String role;
   private String status;
   private Integer reputation;
+
+  /**
+   * B7: lets the admin UI render the "проверенный владелец" badge and decide between "Mark as
+   * verified" and "Unmark". {@code ownerVerifiedByAdmin} tracks whether an admin set it manually
+   * (so the phone-verification logic in PhoneVerificationService leaves it alone).
+   */
+  private Boolean ownerVerified;
+
+  private Boolean ownerVerifiedByAdmin;
+
   // Risk score is not yet stored on the User entity. We return 0 so the
   // frontend type stays stable; introduce a real column + scorer later.
   private Integer riskScore;
@@ -64,6 +74,8 @@ public class AdminUserDto {
         .role(u.getRole() == null ? null : u.getRole().name())
         .status(u.getStatus() == null ? null : u.getStatus().name())
         .reputation(u.getReputation())
+        .ownerVerified(Boolean.TRUE.equals(u.getOwnerVerified()))
+        .ownerVerifiedByAdmin(Boolean.TRUE.equals(u.getOwnerVerifiedByAdmin()))
         .riskScore(0)
         .createdAt(u.getCreatedAt())
         .lastLoginAt(u.getLastLoginAt())
