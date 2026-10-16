@@ -10,6 +10,10 @@ import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.PaymentIntent;
 import kz.hrms.splitupauth.entity.PaymentIntentPurpose;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
+import kz.hrms.splitupauth.entity.PaymentTransaction;
+import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
+import kz.hrms.splitupauth.entity.PaymentTransactionType;
+import kz.hrms.splitupauth.entity.RefundRequest;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
@@ -23,6 +27,9 @@ import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
+import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
+import kz.hrms.splitupauth.repository.RefundRequestRepository;
+import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -64,6 +71,9 @@ public class RenewalPaymentService {
 
   private final RoomMemberRepository roomMemberRepository;
   private final PaymentIntentRepository paymentIntentRepository;
+  private final PaymentTransactionRepository paymentTransactionRepository;
+  private final RefundTransactionRepository refundTransactionRepository;
+  private final RefundRequestRepository refundRequestRepository;
   private final PaymentGatewayRegistry gatewayRegistry;
   private final PaymentService paymentService;
   private final LiveMoneyGuard liveMoneyGuard;
@@ -80,6 +90,9 @@ public class RenewalPaymentService {
   public RenewalPaymentService(
       RoomMemberRepository roomMemberRepository,
       PaymentIntentRepository paymentIntentRepository,
+      PaymentTransactionRepository paymentTransactionRepository,
+      RefundTransactionRepository refundTransactionRepository,
+      RefundRequestRepository refundRequestRepository,
       PaymentGatewayRegistry gatewayRegistry,
       PaymentService paymentService,
       LiveMoneyGuard liveMoneyGuard,
@@ -88,6 +101,9 @@ public class RenewalPaymentService {
       PlatformTransactionManager transactionManager) {
     this.roomMemberRepository = roomMemberRepository;
     this.paymentIntentRepository = paymentIntentRepository;
+    this.paymentTransactionRepository = paymentTransactionRepository;
+    this.refundTransactionRepository = refundTransactionRepository;
+    this.refundRequestRepository = refundRequestRepository;
     this.gatewayRegistry = gatewayRegistry;
     this.paymentService = paymentService;
     this.liveMoneyGuard = liveMoneyGuard;
@@ -293,6 +309,32 @@ public class RenewalPaymentService {
             ex.getClass().getSimpleName());
       }
     }
+
+    // C2: latest success CHARGE for this member (if any), plus the refund situation around it.
+    List<PaymentTransaction> charges =
+        paymentTransactionRepository.findByRoomMember_IdAndStatusAndTypeOrderByCreatedAtDesc(
+            roomMemberId, PaymentTransactionStatus.SUCCESS, PaymentTransactionType.CHARGE);
+    if (!charges.isEmpty()) {
+      PaymentTransaction last = charges.get(0);
+      dto.chargeTransactionId(last.getId());
+      java.math.BigDecimal refunded = refundTransactionRepository.sumActiveRefundAmounts(last);
+      java.math.BigDecimal refundable =
+          last.getAmount().subtract(refunded == null ? java.math.BigDecimal.ZERO : refunded);
+      if (refundable.signum() < 0) refundable = java.math.BigDecimal.ZERO;
+      dto.refundableAmountKzt(refundable);
+    }
+
+    List<RefundRequest> openClaims = refundRequestRepository.findOpenForMember(user, member);
+    if (!openClaims.isEmpty()) {
+      RefundRequest open = openClaims.get(0);
+      dto.openRefundRequest(
+          MemberBillingDto.OpenRefundRequestDto.builder()
+              .id(open.getId())
+              .status(open.getStatus())
+              .createdAt(open.getCreatedAt())
+              .build());
+    }
+
     return dto.build();
   }
 

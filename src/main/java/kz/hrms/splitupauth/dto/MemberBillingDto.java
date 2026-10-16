@@ -31,4 +31,34 @@ public class MemberBillingDto {
 
   /** The period has expired with no payment and the grace window is running. */
   private boolean overdue;
+
+  /**
+   * C2: id of the latest successful CHARGE PaymentTransaction for this membership, so the FE's
+   * "запросить возврат" button can hand it to {@code POST /refund-requests}. Null when no capture
+   * has succeeded yet.
+   */
+  private Long chargeTransactionId;
+
+  /**
+   * C2: remaining captured balance in KZT ({@code chargeAmount - active refunds}). 0 or null when
+   * {@link #chargeTransactionId} is absent or already fully refunded.
+   */
+  private java.math.BigDecimal refundableAmountKzt;
+
+  /**
+   * C2: in-flight refund request for this participation (REQUESTED or UNDER_REVIEW); null when the
+   * member has no open claim. Keeps the UI from offering a duplicate claim.
+   */
+  private OpenRefundRequestDto openRefundRequest;
+
+  /** Compact view of a member's in-flight refund request. */
+  @lombok.Data
+  @lombok.Builder
+  @lombok.NoArgsConstructor
+  @lombok.AllArgsConstructor
+  public static class OpenRefundRequestDto {
+    private Long id;
+    private kz.hrms.splitupauth.entity.RefundRequestStatus status;
+    private java.time.LocalDateTime createdAt;
+  }
 }

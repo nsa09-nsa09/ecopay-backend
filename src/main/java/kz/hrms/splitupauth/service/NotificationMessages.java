@@ -226,6 +226,15 @@ final class NotificationMessages {
               "{amount} {currency} сомасындағы қаражатты қайтару рәсімделді.",
               "Refund issued",
               "A refund of {amount} {currency} has been issued.");
+      case REFUND_REJECTED ->
+          copy(
+              locale,
+              "Запрос на возврат отклонён",
+              "Ваш запрос на возврат отклонён. Причина: {reason}",
+              "Қайтару сұранысы қабылданбады",
+              "Қайтару сұранысыңыз қабылданбады. Себебі: {reason}",
+              "Refund request rejected",
+              "Your refund request was rejected. Reason: {reason}");
       case PAYOUT_SENT ->
           copy(
               locale,

@@ -20,6 +20,7 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RefundRequestRepository;
+import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,7 +34,9 @@ class RefundRequestServiceTest {
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private PayoutBlockService payoutBlockService;
   @Mock private RefundService refundService;
+  @Mock private RefundTransactionRepository refundTransactionRepository;
   @Mock private AdminActionLogRepository adminActionLogRepository;
+  @Mock private NotificationService notificationService;
 
   private RefundRequestService service;
 
@@ -45,7 +48,9 @@ class RefundRequestServiceTest {
             paymentTransactionRepository,
             payoutBlockService,
             refundService,
+            refundTransactionRepository,
             adminActionLogRepository,
+            notificationService,
             Clock.systemUTC());
   }
 

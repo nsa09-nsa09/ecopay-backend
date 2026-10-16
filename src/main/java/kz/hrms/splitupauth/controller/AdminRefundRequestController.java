@@ -2,8 +2,8 @@ package kz.hrms.splitupauth.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import kz.hrms.splitupauth.dto.ApproveRefundClaimRequest;
+import kz.hrms.splitupauth.dto.PagedResponse;
 import kz.hrms.splitupauth.dto.RefundRequestResponse;
 import kz.hrms.splitupauth.dto.RejectRefundClaimRequest;
 import kz.hrms.splitupauth.entity.RefundRequestStatus;
@@ -22,10 +22,12 @@ public class AdminRefundRequestController {
   private final RefundRequestService refundRequestService;
 
   @GetMapping
-  public ResponseEntity<List<RefundRequestResponse>> list(
+  public ResponseEntity<PagedResponse<RefundRequestResponse>> list(
       @AuthenticationPrincipal User user,
-      @RequestParam(required = false) RefundRequestStatus status) {
-    return ResponseEntity.ok(refundRequestService.listForAdmin(user, status));
+      @RequestParam(required = false) RefundRequestStatus status,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(refundRequestService.listForAdmin(user, status, page, size));
   }
 
   @PostMapping("/{requestId}/approve")

@@ -48,6 +48,9 @@ public enum NotificationType {
 
   // ---- money out ----
   REFUND_ISSUED(NotificationCategory.PAYMENTS, true),
+  // C2: a filed refund claim was rejected. Separate from REFUND_ISSUED so the copy can say "why"
+  // instead of "sum" and the member knows no money is coming back.
+  REFUND_REJECTED(NotificationCategory.PAYMENTS, true),
   PAYOUT_SENT(NotificationCategory.PAYMENTS, true),
 
   // ---- disputes & support ----
