@@ -151,6 +151,18 @@ public class SecurityConfig {
             })
         .sessionManagement(
             session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        // B18: default handlers return 403 with an empty body for both no-token and insufficient-
+        // role failures. The frontend's refresh-on-401 logic never trips, and the user sees a
+        // blank error instead of a JSON {code, message}. Install explicit handlers that write
+        // 401 and 403 as structured JSON.
+        .exceptionHandling(
+            ex ->
+                ex.authenticationEntryPoint(
+                        (req, resp, authEx) ->
+                            writeJsonError(resp, 401, "UNAUTHORIZED", "Требуется вход"))
+                    .accessDeniedHandler(
+                        (req, resp, deniedEx) ->
+                            writeJsonError(resp, 403, "FORBIDDEN", "Доступ запрещён")))
         .addFilterBefore(sameOriginCookieEndpointFilter, UsernamePasswordAuthenticationFilter.class)
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
@@ -176,5 +188,58 @@ public class SecurityConfig {
   @Bean
   public PasswordEncoder passwordEncoder() {
     return new BCryptPasswordEncoder();
+  }
+
+  /**
+   * Write the usual error envelope so the frontend treats the response identically to one from
+   * {@code GlobalExceptionHandler}. Hand-rolled to avoid pulling an ObjectMapper into the security
+   * filter chain.
+   */
+  private static void writeJsonError(
+      jakarta.servlet.http.HttpServletResponse resp, int status, String code, String message)
+      throws java.io.IOException {
+    resp.setStatus(status);
+    resp.setContentType("application/json;charset=UTF-8");
+    String body =
+        "{\"code\":\""
+            + code
+            + "\",\"message\":\""
+            + escapeJson(message)
+            + "\",\"status\":"
+            + status
+            + "}";
+    resp.getWriter().write(body);
+  }
+
+  private static String escapeJson(String s) {
+    if (s == null) return "";
+    StringBuilder sb = new StringBuilder(s.length() + 8);
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      switch (c) {
+        case '\\':
+          sb.append("\\\\");
+          break;
+        case '"':
+          sb.append("\\\"");
+          break;
+        case '\n':
+          sb.append("\\n");
+          break;
+        case '\r':
+          sb.append("\\r");
+          break;
+        case '\t':
+          sb.append("\\t");
+          break;
+        default:
+          if (c < 0x20) {
+            sb.append(String.format("\\u%04x", (int) c));
+          } else {
+            sb.append(c);
+          }
+      }
+    }
+    return sb.toString();
   }
 }

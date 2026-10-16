@@ -68,6 +68,20 @@ public class EmailValidationService {
     String normalized = normalizeAndValidateFormat(raw);
     String domain = EmailNormalizer.domainOf(normalized);
 
+    // B18: RFC 2606 reserved domains and the obvious placeholder examples never accept mail —
+    // and a real user never signs up on them. Reject up front so dev / QA / fuzzers don't fill
+    // the users table with addresses that cannot even receive a confirmation email.
+    if (isReservedDomain(domain)) {
+      log.info(
+          "Rejecting {}: reserved placeholder domain '{}'",
+          EmailNormalizer.mask(normalized),
+          domain);
+      throw new InvalidEmailException(
+          InvalidEmailException.Reason.EMAIL_DOMAIN_NOT_FOUND,
+          "Укажите настоящий адрес почты",
+          null);
+    }
+
     EmailDomainService.DomainStatus status = emailDomainService.resolve(domain);
     if (status == EmailDomainService.DomainStatus.NO_MX) {
       log.info(
@@ -79,6 +93,18 @@ public class EmailValidationService {
     }
 
     return normalized;
+  }
+
+  private static boolean isReservedDomain(String domain) {
+    if (domain == null || domain.isEmpty()) return false;
+    String d = domain.toLowerCase();
+    if (d.endsWith(".invalid")
+        || d.endsWith(".test")
+        || d.endsWith(".example")
+        || d.endsWith(".localhost")) {
+      return true;
+    }
+    return d.equals("example.com") || d.equals("example.org") || d.equals("example.net");
   }
 
   /**

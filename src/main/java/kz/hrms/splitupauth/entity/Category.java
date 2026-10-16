@@ -22,6 +22,19 @@ public class Category {
   @Column(nullable = false, length = 100)
   private String name;
 
+  /**
+   * B18: localised names so the catalog UI can pick the user's language without the frontend owning
+   * its own translation table. Falls back to {@link #name} when a locale value is null.
+   */
+  @Column(name = "name_ru", length = 100)
+  private String nameRu;
+
+  @Column(name = "name_kz", length = 100)
+  private String nameKz;
+
+  @Column(name = "name_en", length = 100)
+  private String nameEn;
+
   @Column(nullable = false, unique = true, length = 120)
   private String slug;
 

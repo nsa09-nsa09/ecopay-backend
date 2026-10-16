@@ -26,6 +26,9 @@ public class CatalogMapper {
     return CategoryDto.builder()
         .id(category.getId())
         .name(category.getName())
+        .nameRu(category.getNameRu())
+        .nameKz(category.getNameKz())
+        .nameEn(category.getNameEn())
         .slug(category.getSlug())
         .sortOrder(category.getSortOrder())
         .build();

@@ -52,6 +52,14 @@ public class ServiceEntity {
   @Column(name = "logo_key", length = 255)
   private String logoKey;
 
+  /**
+   * B18: comma-separated list of search aliases (RU/KZ/EN transliterations and common typos) so
+   * {@code searchActiveByName} finds "YouTube" when a user types "ютуб". Lowercased, {@code
+   * contains}-matched. Admin-editable via the service CRUD DTOs.
+   */
+  @Column(name = "search_aliases", columnDefinition = "TEXT")
+  private String searchAliases;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 

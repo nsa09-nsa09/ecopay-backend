@@ -185,11 +185,13 @@ public class RenewalReminderScheduler {
         "/rooms/member/" + room.getId(),
         Map.of("roomId", room.getId(), "roomMemberId", member.getId()));
     if (room.getOwner() != null) {
+      // B18: was "/rooms/<id>" which does not exist on the frontend (404). The owner view is
+      // /rooms/owner/<id>; the member view is /rooms/member/<id>.
       notificationService.notify(
           room.getOwner(),
           NotificationType.RENEWAL_OVERDUE,
           params,
-          "/rooms/" + room.getId(),
+          "/rooms/owner/" + room.getId(),
           Map.of("roomId", room.getId(), "roomMemberId", member.getId()));
     }
   }
