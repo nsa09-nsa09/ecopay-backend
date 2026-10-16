@@ -1,19 +1,27 @@
 package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import kz.hrms.splitupauth.dto.CreateReviewRequest;
+import kz.hrms.splitupauth.entity.MemberStatus;
+import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
 import kz.hrms.splitupauth.entity.Review;
+import kz.hrms.splitupauth.entity.Room;
+import kz.hrms.splitupauth.entity.RoomMember;
+import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
+import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.ReviewRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
@@ -25,8 +33,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Covers the open-review flow: any authenticated user may rate any other user with or without a
- * room, and repeating the rating updates the existing row (upsert) instead of duplicating it.
+ * B5 rewrite: reviews must be anchored to a shared room and only after the review window opens.
+ * These tests exercise the author-is-owner + recipient-is-paid-member happy path, the upsert, and
+ * the key rejection paths.
  */
 @ExtendWith(MockitoExtension.class)
 class ReviewServiceCreateTest {
@@ -35,7 +44,7 @@ class ReviewServiceCreateTest {
   @Mock UserRepository userRepository;
   @Mock RoomRepository roomRepository;
   @Mock RoomMemberRepository roomMemberRepository;
-  @Mock kz.hrms.splitupauth.repository.PaymentTransactionRepository paymentTransactionRepository;
+  @Mock PaymentTransactionRepository paymentTransactionRepository;
   @Mock ReputationService reputationService;
   @Mock AvatarStorageService avatarStorageService;
 
@@ -63,58 +72,85 @@ class ReviewServiceCreateTest {
     return r;
   }
 
+  /**
+   * Author (room owner) rates recipient (paid member) in a COMPLETED room — the canonical happy
+   * path after B5.
+   */
+  private Room setupSharedCompletedRoom(User owner, User member, Long roomId, Long memberRowId) {
+    Room room = Room.builder().id(roomId).owner(owner).status(RoomStatus.COMPLETED).build();
+    RoomMember rm =
+        RoomMember.builder()
+            .id(memberRowId)
+            .room(room)
+            .user(member)
+            .status(MemberStatus.ACTIVE)
+            .build();
+    when(roomRepository.findById(roomId)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, member))
+        .thenReturn(Optional.of(rm));
+    when(paymentTransactionRepository.existsByRoomMember_IdAndStatus(
+            eq(memberRowId), eq(PaymentTransactionStatus.SUCCESS)))
+        .thenReturn(true);
+    return room;
+  }
+
   @Test
-  void createReview_withoutRoom_persistsRoomlessReviewAndRecomputes() {
-    User author = user(1L);
-    User recipient = user(2L);
-    when(userRepository.findById(2L)).thenReturn(Optional.of(recipient));
-    when(reviewRepository.findFirstByAuthorAndRecipientOrderByCreatedAtDesc(author, recipient))
+  void createReview_sharedCompletedRoom_persistsAndRecomputes() {
+    User owner = user(1L);
+    User member = user(2L);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(member));
+    setupSharedCompletedRoom(owner, member, 10L, 100L);
+    when(reviewRepository.findByAuthorAndRecipientAndRoom_Id(owner, member, 10L))
         .thenReturn(Optional.empty());
     when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    service().createReview(author, req(2L, null, 5, "great"));
+    service().createReview(owner, req(2L, 10L, 5, "great"));
 
     ArgumentCaptor<Review> cap = ArgumentCaptor.forClass(Review.class);
     verify(reviewRepository).save(cap.capture());
     Review saved = cap.getValue();
-    assertSame(author, saved.getAuthor());
-    assertSame(recipient, saved.getRecipient());
-    assertNull(saved.getRoom(), "roomless review has no room binding");
+    assertSame(owner, saved.getAuthor());
+    assertSame(member, saved.getRecipient());
+    assertEquals(10L, saved.getRoom().getId(), "B5: review is anchored to the shared room");
     assertEquals(5, saved.getRating());
-    assertEquals("great", saved.getText());
-    verify(reputationService).recompute(recipient);
-    // No lookup into rooms is attempted when roomId is absent.
-    verify(roomRepository, never()).findById(any());
+    verify(reputationService).recompute(member);
   }
 
   @Test
   void createReview_secondSubmission_updatesExistingRowInsteadOfCreatingSecond() {
-    User author = user(1L);
-    User recipient = user(2L);
+    User owner = user(1L);
+    User member = user(2L);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(member));
+    Room room = setupSharedCompletedRoom(owner, member, 10L, 100L);
     Review existing =
-        Review.builder().id(99L).author(author).recipient(recipient).rating(4).text("okay").build();
+        Review.builder()
+            .id(99L)
+            .author(owner)
+            .recipient(member)
+            .room(room)
+            .rating(4)
+            .text("okay")
+            .build();
 
-    when(userRepository.findById(2L)).thenReturn(Optional.of(recipient));
-    when(reviewRepository.findFirstByAuthorAndRecipientOrderByCreatedAtDesc(author, recipient))
+    when(reviewRepository.findByAuthorAndRecipientAndRoom_Id(owner, member, 10L))
         .thenReturn(Optional.of(existing));
     when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    service().createReview(author, req(2L, null, 2, "changed my mind"));
+    service().createReview(owner, req(2L, 10L, 2, "changed my mind"));
 
-    // Same row is saved — no new instance created.
     ArgumentCaptor<Review> cap = ArgumentCaptor.forClass(Review.class);
     verify(reviewRepository).save(cap.capture());
     Review saved = cap.getValue();
-    assertSame(existing, saved, "must upsert the same row, not create a second review");
+    assertSame(existing, saved, "B5: upsert the (author, recipient, room) row, don't duplicate");
     assertEquals(2, saved.getRating());
     assertEquals("changed my mind", saved.getText());
-    verify(reputationService).recompute(recipient);
+    verify(reputationService).recompute(member);
   }
 
   @Test
   void createReview_selfReview_rejected() {
     User self = user(1L);
-    CreateReviewRequest req = req(1L, null, 5, "flattering");
+    CreateReviewRequest req = req(1L, 10L, 5, "flattering");
 
     assertThrows(InvalidRequestException.class, () -> service().createReview(self, req));
     verify(reviewRepository, never()).save(any());
@@ -122,16 +158,33 @@ class ReviewServiceCreateTest {
   }
 
   @Test
-  void createReview_alwaysCallsRecompute() {
+  void createReview_notSameRoom_rejected() {
+    // B5: author and recipient must have shared the room. Here the recipient was never a member.
+    User author = user(1L);
+    User recipient = user(2L);
+    Room room = Room.builder().id(10L).owner(user(99L)).status(RoomStatus.COMPLETED).build();
+    when(userRepository.findById(2L)).thenReturn(Optional.of(recipient));
+    when(roomRepository.findById(10L)).thenReturn(Optional.of(room));
+    when(roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, author))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        ForbiddenOperationException.class,
+        () -> service().createReview(author, req(2L, 10L, 5, "x")));
+    verify(reviewRepository, never()).save(any());
+    verify(reputationService, never()).recompute(any());
+  }
+
+  @Test
+  void createReview_unknownRoom_404() {
     User author = user(1L);
     User recipient = user(2L);
     when(userRepository.findById(2L)).thenReturn(Optional.of(recipient));
-    when(reviewRepository.findFirstByAuthorAndRecipientOrderByCreatedAtDesc(author, recipient))
-        .thenReturn(Optional.empty());
-    when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(roomRepository.findById(10L)).thenReturn(Optional.empty());
 
-    service().createReview(author, req(2L, null, 3, null));
-
-    verify(reputationService).recompute(recipient);
+    assertThrows(
+        ResourceNotFoundException.class,
+        () -> service().createReview(author, req(2L, 10L, 5, "x")));
+    verify(reviewRepository, never()).save(any());
   }
 }

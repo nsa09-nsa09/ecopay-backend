@@ -219,9 +219,10 @@ class CatalogServiceTest {
             .startDate(java.time.LocalDateTime.now().plusDays(1))
             .build();
     when(serviceRepository.existsById(1L)).thenReturn(true);
+    // B9: matcher now consults OPEN *and* ACTIVE rooms via the Status-In variant.
     when(roomRepository
-            .findByService_IdAndStatusAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
-                eq(1L), eq(RoomStatus.OPEN), any()))
+            .findByService_IdAndStatusInAndDeletedAtIsNullAndStartDateAfterOrderByCreatedAtAsc(
+                eq(1L), any(), any()))
         .thenReturn(List.of(mixedRoom));
     when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(eq(mixedRoom), any()))
         .thenReturn(3L);

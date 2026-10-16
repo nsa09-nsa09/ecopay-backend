@@ -48,10 +48,12 @@ class EmailValidationServiceTest {
 
   @Test
   void deliverableCheck_acceptsDomainWithMx() {
-    when(emailDomainService.resolve("example.com"))
+    // B18: can't use example.com here — it is now rejected as an RFC 2606 placeholder before the
+    // DNS stub even runs. Pick a plausible-looking real-world domain instead.
+    when(emailDomainService.resolve("realsite.io"))
         .thenReturn(EmailDomainService.DomainStatus.HAS_MX);
 
-    assertEquals("user@example.com", service.normalizeAndValidateDeliverable("User@Example.com"));
+    assertEquals("user@realsite.io", service.normalizeAndValidateDeliverable("User@Realsite.io"));
   }
 
   @Test
@@ -71,10 +73,30 @@ class EmailValidationServiceTest {
   void deliverableCheck_passesWhenDnsIsUnreachable() {
     // A resolver outage on our side must not stop a user with a perfectly good
     // address from signing up — the confirmation email is still the real test.
-    when(emailDomainService.resolve("example.com"))
+    // B18: using realsite.io because example.com is now rejected as a reserved placeholder.
+    when(emailDomainService.resolve("realsite.io"))
         .thenReturn(EmailDomainService.DomainStatus.UNVERIFIABLE);
 
-    assertEquals("user@example.com", service.normalizeAndValidateDeliverable("user@example.com"));
+    assertEquals("user@realsite.io", service.normalizeAndValidateDeliverable("user@realsite.io"));
+  }
+
+  @Test
+  void deliverableCheck_rejectsReservedPlaceholderDomains() {
+    // B18 regression: RFC 2606 reserved domains and example.{com,org,net} must be rejected
+    // before any DNS lookup, so dev/QA accounts can't be created on them.
+    for (String addr :
+        new String[] {
+          "qa@example.com", "foo@example.org", "bar@example.net",
+          "baz@test.invalid", "qux@service.test", "x@dev.localhost"
+        }) {
+      InvalidEmailException ex =
+          assertThrows(
+              InvalidEmailException.class,
+              () -> service.normalizeAndValidateDeliverable(addr),
+              "Expected reserved-domain rejection for " + addr);
+      assertEquals(InvalidEmailException.Reason.EMAIL_DOMAIN_NOT_FOUND, ex.getReason());
+    }
+    verifyNoInteractions(emailDomainService);
   }
 
   @Test
