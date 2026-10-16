@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import kz.hrms.splitupauth.dto.AdminFinanceConfigDto;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
 import kz.hrms.splitupauth.dto.FinancePayoutDto;
 import kz.hrms.splitupauth.dto.FinanceRefundDto;
@@ -19,6 +20,7 @@ import kz.hrms.splitupauth.entity.AdminActionType;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
+import kz.hrms.splitupauth.service.AdminFinanceConfigService;
 import kz.hrms.splitupauth.service.AdminFinanceService;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxTransactions;
@@ -51,10 +53,22 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminFinanceController {
 
   private final AdminFinanceService financeService;
+  private final AdminFinanceConfigService financeConfigService;
   private final FreedomWebhookInboxTransactions inboxTransactions;
   private final FreedomWebhookInboxCoordinator inboxCoordinator;
   private final AdminActionLogRepository adminActionLogRepository;
   private final RefundService refundService;
+
+  /**
+   * C3: snapshot of the live-money gates + commission tiers so QA / admin UI can tell at a glance
+   * whether this environment actually dispatches money or just logs intent. Admin-only; secrets
+   * stay out of the response.
+   */
+  @GetMapping("/config")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<AdminFinanceConfigDto> config() {
+    return ResponseEntity.ok(financeConfigService.describe());
+  }
 
   /** Operator justification is mandatory for every manual money-path action. */
   public record RequeueWebhookRequest(@NotBlank @Size(max = 500) String reason) {}

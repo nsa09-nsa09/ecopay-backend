@@ -25,7 +25,7 @@ class AdminFinanceControllerManualRefundTest {
   @Test
   void manualRefundEndpointDelegatesToRefundService() {
     AdminFinanceController controller =
-        new AdminFinanceController(null, null, null, null, refundService);
+        new AdminFinanceController(null, null, null, null, null, refundService);
     CreateRefundRequest request = new CreateRefundRequest();
     User admin = User.builder().id(1L).role(Role.ADMIN).build();
     HttpServletRequest httpRequest = mock(HttpServletRequest.class);
