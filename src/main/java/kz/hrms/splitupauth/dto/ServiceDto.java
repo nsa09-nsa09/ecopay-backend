@@ -34,4 +34,10 @@ public class ServiceDto {
 
   /** Backend-served URL for the service logo, or null when none uploaded. */
   private String logoUrl;
+
+  /**
+   * C1: comma-separated search synonyms the frontend uses in the home page's client-side filter so
+   * typing "ютуб" surfaces "YouTube" without a round-trip. Null when the admin never set any.
+   */
+  private String searchAliases;
 }

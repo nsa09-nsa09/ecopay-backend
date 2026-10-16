@@ -168,6 +168,21 @@ class CatalogServiceTest {
   }
 
   @Test
+  void searchServices_foldsYoToYe_beforeHittingTheRepo() {
+    // "ё" folds to "е" on the caller side so the SQL's two-sided REPLACE finds aliases that
+    // were seeded with either spelling. Important for "ютуб" <-> "ютюб" style typos.
+    ServiceEntity yt = svc(1L, "YouTube");
+    yt.setSearchAliases("ютуб, youtube");
+    when(serviceRepository.searchActiveByName(eq("етуб"), any(Pageable.class)))
+        .thenReturn(List.of(yt));
+
+    List<CatalogSearchResultDto> result = service.searchServices("ЁТУБ", 5);
+
+    assertEquals(1, result.size());
+    assertEquals(1L, result.get(0).getServiceId());
+  }
+
+  @Test
   void searchServices_passesLowercaseQuery_andMapsCompactDto() {
     ServiceEntity netflix = svc(1L, "Netflix");
     when(serviceRepository.searchActiveByName(eq("net"), any(Pageable.class)))

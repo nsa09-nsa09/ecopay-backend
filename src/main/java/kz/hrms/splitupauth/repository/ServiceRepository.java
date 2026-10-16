@@ -28,17 +28,23 @@ public interface ServiceRepository extends JpaRepository<ServiceEntity, Long> {
   long countByCategoryId(Long categoryId);
 
   /**
-   * Case-insensitive substring match on service name, scoped to active services. Backs the public
-   * navbar "Поиск планов…" lookup; the {@code LOWER(name)} index (V33) covers the prefix-match
-   * path.
+   * Case-insensitive substring match on service name OR V95 search_aliases, scoped to active
+   * services. Backs the public navbar "Поиск планов…" lookup. "ё" is folded to "е" on BOTH sides
+   * (caller lowercases + replaces, SQL does the same on the stored value) so "ёжик" matches "ежик"
+   * and vice versa; aliases seeded with either spelling are reachable.
    *
-   * <p>Caller must already have lower-cased {@code qLower}; passing a pre-lowered value keeps the
-   * SQL simpler and means the index is used for prefix patterns ({@code foo%}).
+   * <p>Caller must already have lower-cased {@code qLower} AND replaced "ё"→"е"; passing a
+   * normalized value keeps the SQL simpler and lets the {@code LOWER(name)} index (V33) assist when
+   * the stored name contains no "ё" (prefix-match path).
    */
   @Query(
       "SELECT s FROM ServiceEntity s "
           + "WHERE s.isActive = true "
-          + "AND LOWER(s.name) LIKE CONCAT('%', :qLower, '%') "
+          + "AND ("
+          + "REPLACE(LOWER(s.name), 'ё', 'е') LIKE CONCAT('%', :qLower, '%') "
+          + "OR REPLACE(LOWER(COALESCE(s.searchAliases, '')), 'ё', 'е') "
+          + "   LIKE CONCAT('%', :qLower, '%')"
+          + ") "
           + "ORDER BY s.name ASC, s.id ASC")
   List<ServiceEntity> searchActiveByName(@Param("qLower") String qLower, Pageable pageable);
 }

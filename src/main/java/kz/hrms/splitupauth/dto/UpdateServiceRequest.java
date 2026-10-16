@@ -27,4 +27,8 @@ public class UpdateServiceRequest {
   private ServiceAccessType accessType;
 
   private Boolean isActive;
+
+  /** Comma-separated search synonyms (RU/KZ/EN typos). Pass {@code ""} to clear. */
+  @Size(max = 500)
+  private String searchAliases;
 }

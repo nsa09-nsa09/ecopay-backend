@@ -52,6 +52,7 @@ public class CatalogMapper {
         .currency(currency)
         .tariffCount(tariffCount)
         .logoUrl(logoStorage == null ? null : logoStorage.publicUrl(service.getLogoKey()))
+        .searchAliases(service.getSearchAliases())
         .build();
   }
 

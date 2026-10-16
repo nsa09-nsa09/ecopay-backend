@@ -31,4 +31,8 @@ public class CreateServiceRequest {
   private ServiceAccessType accessType;
 
   private Boolean isActive;
+
+  /** Comma-separated search synonyms (RU/KZ/EN typos). Optional; max 500 chars. */
+  @Size(max = 500)
+  private String searchAliases;
 }

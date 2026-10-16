@@ -43,6 +43,7 @@ public class AdminCatalogMapper {
         .createdAt(service.getCreatedAt())
         .updatedAt(service.getUpdatedAt())
         .logoUrl(logoStorage == null ? null : logoStorage.publicUrl(service.getLogoKey()))
+        .searchAliases(service.getSearchAliases())
         .build();
   }
 

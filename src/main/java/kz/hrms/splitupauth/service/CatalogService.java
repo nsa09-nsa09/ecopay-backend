@@ -118,7 +118,9 @@ public class CatalogService {
     if (trimmed.length() < SEARCH_MIN_QUERY_LENGTH) return List.of();
 
     int effective = limit <= 0 ? SEARCH_DEFAULT_LIMIT : Math.min(limit, SEARCH_MAX_LIMIT);
-    String qLower = trimmed.toLowerCase(Locale.ROOT);
+    // V95: aliases live in search_aliases; fold "ё"→"е" both-sides so "ютуб"/"йотюб"-type typos
+    // reach "YouTube" seeded aliases regardless of which spelling the admin typed.
+    String qLower = trimmed.toLowerCase(Locale.ROOT).replace('ё', 'е');
 
     return serviceRepository.searchActiveByName(qLower, PageRequest.of(0, effective)).stream()
         .map(

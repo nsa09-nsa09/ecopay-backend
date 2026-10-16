@@ -30,4 +30,10 @@ public class AdminServiceDto {
 
   /** Backend-served URL for the service logo, or null when none uploaded. */
   private String logoUrl;
+
+  /**
+   * B18/C1: comma-separated search synonyms admins can edit from the catalog screen; a null surface
+   * means "no overrides" (never persisted blank). Feeds {@code searchActiveByName}.
+   */
+  private String searchAliases;
 }

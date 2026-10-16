@@ -223,6 +223,7 @@ public class AdminCatalogService {
                 req.getAccessType() != null
                     ? req.getAccessType()
                     : defaultAccessTypeFor(req.getProviderType()))
+            .searchAliases(normalizeAliases(req.getSearchAliases()))
             .isActive(req.getIsActive() != null ? req.getIsActive() : true)
             .build();
     service = serviceRepository.save(service);
@@ -234,6 +235,7 @@ public class AdminCatalogService {
     newState.put("providerType", service.getProviderType().name());
     newState.put("accessType", service.getAccessType().name());
     newState.put("isActive", service.getIsActive());
+    newState.put("searchAliases", service.getSearchAliases());
     writeLog(
         admin,
         AdminActionType.SERVICE_CREATED,
@@ -265,6 +267,7 @@ public class AdminCatalogService {
     oldState.put("providerType", service.getProviderType().name());
     oldState.put("accessType", service.getAccessType().name());
     oldState.put("isActive", service.getIsActive());
+    oldState.put("searchAliases", service.getSearchAliases());
 
     if (req.getCategoryId() != null && !req.getCategoryId().equals(service.getCategory().getId())) {
       Category category =
@@ -288,6 +291,10 @@ public class AdminCatalogService {
     if (req.getIsActive() != null) {
       service.setIsActive(req.getIsActive());
     }
+    if (req.getSearchAliases() != null) {
+      // Explicit null-vs-set contract: a null field keeps the stored value, "" clears it.
+      service.setSearchAliases(normalizeAliases(req.getSearchAliases()));
+    }
 
     service = serviceRepository.save(service);
 
@@ -298,6 +305,7 @@ public class AdminCatalogService {
     newState.put("providerType", service.getProviderType().name());
     newState.put("accessType", service.getAccessType().name());
     newState.put("isActive", service.getIsActive());
+    newState.put("searchAliases", service.getSearchAliases());
     writeLog(
         admin,
         AdminActionType.SERVICE_UPDATED,
@@ -563,6 +571,23 @@ public class AdminCatalogService {
   }
 
   // ===================== Helpers =====================
+
+  /**
+   * Lower-case, comma-separate, deduplicate, drop blanks. Returns null for a blank input so the DB
+   * stores NULL rather than "", keeping the SQL alias match simpler. The query folds "ё"→"е"
+   * both-sides, so we leave the stored string as the admin typed it (minus trim/dedupe).
+   */
+  private String normalizeAliases(String raw) {
+    if (raw == null) return null;
+    String[] parts = raw.toLowerCase(java.util.Locale.ROOT).split(",");
+    java.util.LinkedHashSet<String> dedup = new java.util.LinkedHashSet<>();
+    for (String p : parts) {
+      String t = p.trim();
+      if (!t.isEmpty()) dedup.add(t);
+    }
+    if (dedup.isEmpty()) return null;
+    return String.join(", ", dedup);
+  }
 
   private java.util.List<String> sanitizeFeatures(java.util.List<String> features) {
     if (features == null) {
