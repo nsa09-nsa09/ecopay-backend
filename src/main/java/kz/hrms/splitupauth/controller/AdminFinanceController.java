@@ -8,7 +8,9 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.AdminFinanceConfigDto;
+import kz.hrms.splitupauth.dto.AdminOverdueRenewalDto;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
+import kz.hrms.splitupauth.dto.EndOverdueMemberRequest;
 import kz.hrms.splitupauth.dto.FinancePayoutDto;
 import kz.hrms.splitupauth.dto.FinanceRefundDto;
 import kz.hrms.splitupauth.dto.FinanceTransactionDto;
@@ -22,6 +24,7 @@ import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.service.AdminFinanceConfigService;
 import kz.hrms.splitupauth.service.AdminFinanceService;
+import kz.hrms.splitupauth.service.AdminOverdueRenewalService;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxTransactions;
 import kz.hrms.splitupauth.service.RefundService;
@@ -54,6 +57,7 @@ public class AdminFinanceController {
 
   private final AdminFinanceService financeService;
   private final AdminFinanceConfigService financeConfigService;
+  private final AdminOverdueRenewalService overdueRenewalService;
   private final FreedomWebhookInboxTransactions inboxTransactions;
   private final FreedomWebhookInboxCoordinator inboxCoordinator;
   private final AdminActionLogRepository adminActionLogRepository;
@@ -68,6 +72,25 @@ public class AdminFinanceController {
   @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<AdminFinanceConfigDto> config() {
     return ResponseEntity.ok(financeConfigService.describe());
+  }
+
+  /** C4: ACTIVE members whose renewal is past grace (scheduler-stamped). */
+  @GetMapping("/overdue-renewals")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<PagedResponse<AdminOverdueRenewalDto>> overdueRenewals(
+      @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(overdueRenewalService.list(page, size));
+  }
+
+  /** C4: admin ends an overdue participation (new status EXPIRED). */
+  @PostMapping("/overdue-renewals/{memberId}/end")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<AdminOverdueRenewalDto> endOverdueMember(
+      @PathVariable Long memberId,
+      @Valid @RequestBody EndOverdueMemberRequest request,
+      @AuthenticationPrincipal User admin,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(overdueRenewalService.end(memberId, admin, request.getReason(), http));
   }
 
   /** Operator justification is mandatory for every manual money-path action. */

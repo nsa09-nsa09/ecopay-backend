@@ -1212,8 +1212,9 @@ public class PaymentService {
         || (member.getStatus() != MemberStatus.APPLIED
             && member.getStatus() != MemberStatus.PENDING
             && member.getStatus() != MemberStatus.ACTIVE)) {
-      // REJECTED / CANCELLED_BEFORE_PAYMENT / BLOCKED_BY_ADMIN cannot be marked paid; without this
-      // the whole finalize would roll back and the captured money would sit in the DLQ.
+      // REJECTED / CANCELLED_BEFORE_PAYMENT / BLOCKED_BY_ADMIN / ROOM_CANCELLED / EXPIRED cannot
+      // be marked paid; without this the whole finalize would roll back and the captured money
+      // would sit in the DLQ.
       return SeatConsumptionResult.rejected("MEMBERSHIP_NOT_PAYABLE_" + member.getStatus());
     }
 

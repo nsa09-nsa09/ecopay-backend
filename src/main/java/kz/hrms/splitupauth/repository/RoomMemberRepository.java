@@ -58,6 +58,17 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, Long> {
 
   long countByRoomAndStatusInAndDeletedAtIsNull(Room room, List<MemberStatus> statuses);
 
+  /**
+   * C4: paginated feed of ACTIVE members whose renewal lapsed past grace (as stamped by
+   * RenewalReminderScheduler). Returns oldest-overdue first so the admin screen clears the longest
+   * tail first. Not an index candidate yet — overdue counts stay small in practice.
+   */
+  @Query(
+      "select m from RoomMember m where m.status = kz.hrms.splitupauth.entity.MemberStatus.ACTIVE "
+          + "and m.deletedAt is null and m.renewalOverdueSince is not null "
+          + "order by m.renewalOverdueSince asc, m.id asc")
+  Page<RoomMember> findOverdueRenewals(Pageable pageable);
+
   long countByUserAndDeletedAtIsNull(User user);
 
   long countByUserAndDeletedAtIsNullAndStatusIn(User user, List<MemberStatus> statuses);

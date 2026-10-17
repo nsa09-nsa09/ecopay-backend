@@ -46,6 +46,8 @@ public enum AdminActionType {
   STORY_DELETED,
   LEGAL_DOCUMENT_UPDATED,
   WEBHOOK_REQUEUED,
+  /** C4: admin ended an ACTIVE membership whose renewal lapsed past grace. */
+  MEMBER_EXPIRED,
   /**
    * Read-only sentinel used by {@code AdminActionTypeConverter} when the DB row carries an
    * action_type that this build's enum doesn't know about (e.g. an older deployment wrote a value

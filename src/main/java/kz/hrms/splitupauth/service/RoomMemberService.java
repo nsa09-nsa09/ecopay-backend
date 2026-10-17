@@ -608,10 +608,10 @@ public class RoomMemberService {
       throw new InvalidRequestException("CONSENT_REQUIRED", "Consent must be accepted");
     }
 
-    // B11: a terminal (CANCELLED_BEFORE_PAYMENT / REJECTED / ROOM_CANCELLED) record from a
-    // previous attempt should not block a re-join; it is moved out of the way by the join flow
-    // below (soft-deleted) so the uq_room_member_active partial index stays satisfied. Only an
-    // in-flight APPLIED or seat-holding (PENDING/ACTIVE/BLOCKED_BY_ADMIN) membership counts as
+    // B11: a terminal (CANCELLED_BEFORE_PAYMENT / REJECTED / ROOM_CANCELLED / EXPIRED) record
+    // from a previous attempt should not block a re-join; it is moved out of the way by the join
+    // flow below (soft-deleted) so the uq_room_member_active partial index stays satisfied. Only
+    // an in-flight APPLIED or seat-holding (PENDING/ACTIVE/BLOCKED_BY_ADMIN) membership counts as
     // "already joined".
     roomMemberRepository
         .findByRoomAndUserAndDeletedAtIsNull(room, currentUser)
@@ -620,7 +620,8 @@ public class RoomMemberService {
               MemberStatus s = existing.getStatus();
               return s != MemberStatus.CANCELLED_BEFORE_PAYMENT
                   && s != MemberStatus.REJECTED
-                  && s != MemberStatus.ROOM_CANCELLED;
+                  && s != MemberStatus.ROOM_CANCELLED
+                  && s != MemberStatus.EXPIRED;
             })
         .ifPresent(
             existing -> {
