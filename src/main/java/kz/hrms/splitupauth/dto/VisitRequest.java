@@ -5,6 +5,6 @@ import lombok.Data;
 
 @Data
 public class VisitRequest {
-    @Size(max = 255, message = "Path is too long")
-    private String path;
+  @Size(max = 255, message = "Path is too long")
+  private String path;
 }

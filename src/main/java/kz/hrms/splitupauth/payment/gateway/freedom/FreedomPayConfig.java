@@ -5,5 +5,4 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableConfigurationProperties(FreedomPayProperties.class)
-public class FreedomPayConfig {
-}
+public class FreedomPayConfig {}

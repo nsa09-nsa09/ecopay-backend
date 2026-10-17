@@ -20,25 +20,26 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AnalyticsController {
 
-    private final SiteVisitService siteVisitService;
+  private final SiteVisitService siteVisitService;
 
-    /**
-     * Public ping called by the SPA on each navigation. Issues the HttpOnly
-     * "vid" cookie on the first hit and dedupes additional hits the same day.
-     * If the caller is logged-in, the visit row is attributed to the user.
-     */
-    @PostMapping("/visit")
-    public ResponseEntity<VisitResponse> recordVisit(
-            @RequestBody(required = false) @Valid VisitRequest body,
-            HttpServletRequest request,
-            HttpServletResponse response,
-            @AuthenticationPrincipal User user
-    ) {
-        String path = body == null ? null : body.getPath();
-        SiteVisitService.VisitResult result = siteVisitService.recordVisit(request, response, path, user);
-        return ResponseEntity.ok(VisitResponse.builder()
-                .visitorId(result.visitorId())
-                .newVisitorToday(result.newVisitorToday())
-                .build());
-    }
+  /**
+   * Public ping called by the SPA on each navigation. Issues the HttpOnly "vid" cookie on the first
+   * hit and dedupes additional hits the same day. If the caller is logged-in, the visit row is
+   * attributed to the user.
+   */
+  @PostMapping("/visit")
+  public ResponseEntity<VisitResponse> recordVisit(
+      @RequestBody(required = false) @Valid VisitRequest body,
+      HttpServletRequest request,
+      HttpServletResponse response,
+      @AuthenticationPrincipal User user) {
+    String path = body == null ? null : body.getPath();
+    SiteVisitService.VisitResult result =
+        siteVisitService.recordVisit(request, response, path, user);
+    return ResponseEntity.ok(
+        VisitResponse.builder()
+            .visitorId(result.visitorId())
+            .newVisitorToday(result.newVisitorToday())
+            .build());
+  }
 }

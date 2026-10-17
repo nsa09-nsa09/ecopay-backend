@@ -15,19 +15,82 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Flyway duplicate-version preflight
+        shell: pwsh
+        run: ./scripts/check-flyway-duplicates.ps1
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
+      - name: Ensure Docker is available for Testcontainers
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            sudo systemctl start docker || sudo service docker start
+          fi
+          docker info
+
+      - name: Check Java formatting
+        run: ./mvnw -B spotless:check
+
       - name: Build and test
         run: ./mvnw -B verify
 
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Secrets committed anywhere in history fail the build.
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Dependency vulnerabilities (pom.xml + transitive). CRITICAL/HIGH with a known fix block;
+      # lower severities and unfixed CVEs are reported only — see docs/security/dependency-policy.md.
+      - name: Dependency scan (Trivy fs)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ecopay-backend:scan
+
+      - name: Container scan (Trivy image)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ecopay-backend:scan
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
   build-push:
-    needs: test
+    needs: [test, security-scan]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
+    concurrency:
+      group: ecopay-backend-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -40,27 +103,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # main -> :latest (prod),  dev -> :dev (dev environment)
-      - name: Compute moving tag
-        id: tag
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "moving=latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "moving=dev" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ steps.tag.outputs.moving }}
-            ${{ env.IMAGE }}:${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Save SHA image for deterministic deploy
+        run: |
+          docker pull "${IMAGE}:${GITHUB_SHA}"
+          docker save "${IMAGE}:${GITHUB_SHA}" | gzip > ecopay-backend-image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ecopay-backend-image-${{ github.sha }}
+          path: ecopay-backend-image.tar.gz
+          retention-days: 1
 
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    concurrency:
+      group: ecopay-deploy-${{ github.ref_name }}
+      cancel-in-progress: false
     steps:
       # main -> "backend" (prod service),  dev -> "backend-dev"
       - name: Compute target service
@@ -68,9 +135,39 @@ jobs:
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             echo "name=backend" >> "$GITHUB_OUTPUT"
+            echo "public_url_required=true" >> "$GITHUB_OUTPUT"
           else
             echo "name=backend-dev" >> "$GITHUB_OUTPUT"
+            echo "public_url_required=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Validate frontend public URL config
+        env:
+          FRONTEND_PUBLIC_URL: ${{ vars.FRONTEND_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.svc.outputs.public_url_required }}" = "true" ] && [ -z "${FRONTEND_PUBLIC_URL:-}" ]; then
+            echo "::error::FRONTEND_PUBLIC_URL is not configured for the production GitHub Environment"
+            exit 1
+          fi
+          if [ -n "${FRONTEND_PUBLIC_URL:-}" ] && ! printf '%s' "$FRONTEND_PUBLIC_URL" | grep -Eq '^https://[^[:space:]]+$'; then
+            echo "::error::FRONTEND_PUBLIC_URL must be an HTTPS URL without whitespace"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ecopay-backend-image-${{ github.sha }}
+
+      - name: Copy image archive to EC2
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: ecopay-backend-image.tar.gz
+          target: /tmp/ecopay-backend-${{ github.sha }}
+          overwrite: true
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1
@@ -78,8 +175,123 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 15m
           script: |
+            set -euo pipefail
             cd /opt/ecopay
-            docker compose pull ${{ steps.svc.outputs.name }}
-            docker compose up -d ${{ steps.svc.outputs.name }}
-            docker image prune -f
+
+            SERVICE="${{ steps.svc.outputs.name }}"
+            IMAGE="${{ env.IMAGE }}:${{ github.sha }}"
+            FRONTEND_PUBLIC_URL="${{ vars.FRONTEND_PUBLIC_URL }}"
+            ARCHIVE="/tmp/ecopay-backend-${{ github.sha }}/ecopay-backend-image.tar.gz"
+            READINESS_ATTEMPTS=120
+            READINESS_INTERVAL_SECONDS=5
+            OVERRIDE="$(mktemp)"
+            trap 'rm -f "$OVERRIDE"; rm -rf "/tmp/ecopay-backend-${{ github.sha }}"' EXIT
+
+            cat > "$OVERRIDE" <<EOF
+            services:
+              ${SERVICE}:
+                image: ${IMAGE}
+            EOF
+            if [ -n "${FRONTEND_PUBLIC_URL:-}" ]; then
+              cat >> "$OVERRIDE" <<EOF
+                environment:
+                  APP_FRONTEND_URL: ${FRONTEND_PUBLIC_URL}
+                  APP_PUBLIC_URL: ${FRONTEND_PUBLIC_URL}
+            EOF
+            fi
+
+            echo "Resolved compose images:"
+            docker compose -f docker-compose.yml -f "$OVERRIDE" config --images
+
+            RESOLVED_IMAGE="$(
+              docker compose -f docker-compose.yml -f "$OVERRIDE" config |
+                awk -v service="$SERVICE" '
+                  $0 ~ "^  " service ":" { in_service = 1; next }
+                  in_service && $0 ~ "^  [A-Za-z0-9_.-]+:" { in_service = 0 }
+                  in_service && $1 == "image:" { print $2; exit }
+                '
+            )"
+            if [ "$RESOLVED_IMAGE" != "$IMAGE" ]; then
+              echo "Target service image mismatch: expected $IMAGE, got ${RESOLVED_IMAGE:-<empty>}" >&2
+              exit 1
+            fi
+
+            echo "Disk status before image load:"
+            df -h
+            echo "Memory status before image load:"
+            free -m
+            echo "Docker disk usage before image load:"
+            docker system df
+
+            if [ ! -s "$ARCHIVE" ]; then
+              echo "Image archive missing or empty: $ARCHIVE" >&2
+              exit 1
+            fi
+
+            echo "Loading exact image archive: $IMAGE"
+            gzip -dc "$ARCHIVE" | docker load
+            docker image inspect "$IMAGE" >/dev/null
+            echo "Exact image loaded successfully"
+
+            PREVIOUS_CID="$(docker compose -f docker-compose.yml -f "$OVERRIDE" ps -q "$SERVICE" || true)"
+            PREVIOUS_IMAGE=""
+            if [ -n "$PREVIOUS_CID" ]; then
+              PREVIOUS_IMAGE="$(docker inspect -f '{{.Config.Image}}' "$PREVIOUS_CID" || true)"
+              echo "Previous running image: ${PREVIOUS_IMAGE:-<unknown>}"
+            fi
+
+            docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --no-deps --pull never "$SERVICE"
+
+            CID="$(docker compose -f docker-compose.yml -f "$OVERRIDE" ps -q "$SERVICE")"
+            if [ -z "$CID" ]; then
+              echo "No running container id found for $SERVICE" >&2
+              docker compose -f docker-compose.yml -f "$OVERRIDE" ps -a "$SERVICE" || true
+              exit 1
+            fi
+
+            ACTUAL="$(docker inspect -f '{{.Config.Image}}' "$CID")"
+            echo "Expected running image: $IMAGE"
+            echo "Actual running image:   $ACTUAL"
+            if [ "$ACTUAL" != "$IMAGE" ]; then
+              echo "Running container image mismatch" >&2
+              docker ps -a --filter "id=$CID" || true
+              docker inspect "$CID" --format 'status={{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true
+              exit 1
+            fi
+
+            for i in $(seq 1 "$READINESS_ATTEMPTS"); do
+              if docker exec "$CID" \
+                   curl -fsS http://127.0.0.1:8080/actuator/health/readiness >/dev/null; then
+                echo "Backend readiness OK"
+                docker image prune -f
+                exit 0
+              fi
+
+              CONTAINER_STATE="$(docker inspect -f '{{.State.Status}}' "$CID" 2>/dev/null || true)"
+              if [ "$CONTAINER_STATE" != "running" ]; then
+                echo "Backend container stopped during startup (state: ${CONTAINER_STATE:-missing})" >&2
+                break
+              fi
+
+              echo "Readiness $i/$READINESS_ATTEMPTS"
+              sleep "$READINESS_INTERVAL_SECONDS"
+            done
+            if [ -n "${CID:-}" ]; then
+              docker ps -a --filter "id=$CID" || true
+              docker inspect "$CID" --format 'status={{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true
+              docker logs --tail=200 "$CID" | sed -E 's/(Authorization: Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g; s/(pg_sig=)[^&[:space:]]+/\1[REDACTED]/g; s/(JWT_SECRET|FREEDOMPAY_SECRET_KEY|FREEDOMPAY_PAYOUT_SECRET_KEY)=[^[:space:]]+/\1=[REDACTED]/g'
+            else
+              docker compose -f docker-compose.yml -f "$OVERRIDE" ps -a "$SERVICE" || true
+            fi
+            if [ -n "${PREVIOUS_IMAGE:-}" ] && [ "$PREVIOUS_IMAGE" != "$IMAGE" ]; then
+              echo "Restoring previous image: $PREVIOUS_IMAGE"
+              cat > "$OVERRIDE" <<EOF
+            services:
+              ${SERVICE}:
+                image: ${PREVIOUS_IMAGE}
+            EOF
+              docker compose -f docker-compose.yml -f "$OVERRIDE" up -d --no-deps --pull never "$SERVICE" || true
+            fi
+            exit 1

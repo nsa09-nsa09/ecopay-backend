@@ -1,107 +1,151 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "room_members", indexes = {
-        @Index(name = "idx_room_members_room_status", columnList = "room_id,status"),
-        @Index(name = "idx_room_members_user_created_at", columnList = "user_id,created_at"),
-        @Index(name = "idx_room_members_requires_admin_review", columnList = "requires_admin_review,status")
-}, uniqueConstraints = {
-        @UniqueConstraint(name = "uq_room_member", columnNames = {"room_id", "user_id"})
-})
+@Table(
+    name = "room_members",
+    indexes = {
+      @Index(name = "idx_room_members_room_status", columnList = "room_id,status"),
+      @Index(name = "idx_room_members_user_created_at", columnList = "user_id,created_at"),
+      @Index(
+          name = "idx_room_members_requires_admin_review",
+          columnList = "requires_admin_review,status")
+    },
+    uniqueConstraints = {
+      @UniqueConstraint(
+          name = "uq_room_member",
+          columnNames = {"room_id", "user_id"})
+    })
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class RoomMember {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "room_id", nullable = false)
-    private Room room;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "room_id", nullable = false)
+  private Room room;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "user_id", nullable = false)
+  private User user;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private MemberStatus status;
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
+  private MemberStatus status;
 
-    @Column(name = "requires_admin_review", nullable = false)
-    @Builder.Default
-    private Boolean requiresAdminReview = false;
+  @Column(name = "requires_admin_review", nullable = false)
+  @Builder.Default
+  private Boolean requiresAdminReview = false;
 
-    @Column(name = "access_method", length = 50)
-    private String accessMethod;
+  @Column(name = "access_method", length = 50)
+  private String accessMethod;
 
-    @Column(name = "owner_access_confirmed_at")
-    private LocalDateTime ownerAccessConfirmedAt;
+  @Column(name = "owner_access_confirmed_at")
+  private LocalDateTime ownerAccessConfirmedAt;
 
-    @Column(name = "member_confirmed_at")
-    private LocalDateTime memberConfirmedAt;
+  @Column(name = "member_confirmed_at")
+  private LocalDateTime memberConfirmedAt;
 
-    @Column(name = "activated_at")
-    private LocalDateTime activatedAt;
+  @Column(name = "access_confirmation_deadline_at")
+  private LocalDateTime accessConfirmationDeadlineAt;
 
-    @Column(name = "rejected_at")
-    private LocalDateTime rejectedAt;
+  @Column(name = "access_deemed_confirmed_at")
+  private LocalDateTime accessDeemedConfirmedAt;
 
-    @Column(name = "ended_at")
-    private LocalDateTime endedAt;
+  @Column(name = "activated_at")
+  private LocalDateTime activatedAt;
 
-    @Column(name = "payment_intent_id")
-    private Long paymentIntentId;
+  @Column(name = "rejected_at")
+  private LocalDateTime rejectedAt;
 
-    @Column(name = "latest_payment_tx_id")
-    private Long latestPaymentTxId;
+  @Column(name = "ended_at")
+  private LocalDateTime endedAt;
 
-    @Column(name = "consent_accepted_at")
-    private LocalDateTime consentAcceptedAt;
+  @Column(name = "payment_intent_id")
+  private Long paymentIntentId;
 
-    @Version
-    @Column(nullable = false)
-    @Builder.Default
-    private Long version = 0L;
+  @Column(name = "latest_payment_tx_id")
+  private Long latestPaymentTxId;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+  @Column(name = "billing_anchor_at")
+  private LocalDateTime billingAnchorAt;
 
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
+  @Column(name = "billing_period_start")
+  private LocalDateTime billingPeriodStart;
 
-    @Column(name = "deleted_at")
-    private LocalDateTime deletedAt;
+  @Column(name = "next_billing_at")
+  private LocalDateTime nextBillingAt;
 
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
+  @Column(name = "recurring_retry_count", nullable = false)
+  @Builder.Default
+  private Integer recurringRetryCount = 0;
 
-        if (status == null) {
-            status = MemberStatus.APPLIED;
-        }
+  @Column(name = "recurring_next_retry_at")
+  private LocalDateTime recurringNextRetryAt;
 
-        if (requiresAdminReview == null) {
-            requiresAdminReview = false;
-        }
+  /**
+   * Set when a period lapsed past its grace window with no payment; cleared when a period is paid.
+   */
+  @Column(name = "renewal_overdue_since")
+  private LocalDateTime renewalOverdueSince;
 
-        if (version == null) {
-            version = 0L;
-        }
+  /**
+   * The {@code nextBillingAt} a RENEWAL_DUE reminder was last sent for (one reminder per period).
+   */
+  @Column(name = "renewal_reminded_for")
+  private LocalDateTime renewalRemindedFor;
+
+  @Column(name = "consent_accepted_at")
+  private LocalDateTime consentAcceptedAt;
+
+  @Version
+  @Column(nullable = false)
+  @Builder.Default
+  private Long version = 0L;
+
+  @Column(name = "created_at", nullable = false)
+  private LocalDateTime createdAt;
+
+  @Column(name = "updated_at")
+  private LocalDateTime updatedAt;
+
+  @Column(name = "deleted_at")
+  private LocalDateTime deletedAt;
+
+  @PrePersist
+  protected void onCreate() {
+    createdAt = LocalDateTime.now();
+
+    if (status == null) {
+      status = MemberStatus.APPLIED;
     }
 
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
+    if (requiresAdminReview == null) {
+      requiresAdminReview = false;
     }
+
+    if (version == null) {
+      version = 0L;
+    }
+
+    if (recurringRetryCount == null) {
+      recurringRetryCount = 0;
+    }
+  }
+
+  @PreUpdate
+  protected void onUpdate() {
+    updatedAt = LocalDateTime.now();
+  }
 }

@@ -9,10 +9,10 @@ import lombok.Data;
 @Data
 public class ChangeUserRoleRequest {
 
-    @NotNull(message = "Role is required")
-    private Role role;
+  @NotNull(message = "Role is required")
+  private Role role;
 
-    @NotBlank(message = "Reason is required")
-    @Size(max = 500, message = "Reason must be at most 500 characters")
-    private String reason;
+  @NotBlank(message = "Reason is required")
+  @Size(max = 500, message = "Reason must be at most 500 characters")
+  private String reason;
 }

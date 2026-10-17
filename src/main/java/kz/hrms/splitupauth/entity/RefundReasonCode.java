@@ -1,0 +1,12 @@
+package kz.hrms.splitupauth.entity;
+
+public enum RefundReasonCode {
+  ACCESS_NOT_PROVIDED,
+  ACCESS_NOT_WORKING,
+  ACCESS_REVOKED,
+  MATERIAL_MISMATCH,
+  DUPLICATE_CHARGE,
+  WRONG_AMOUNT,
+  UNAUTHORIZED_PAYMENT,
+  OTHER
+}

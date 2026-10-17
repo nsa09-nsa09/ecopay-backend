@@ -10,8 +10,15 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CategoryDto {
-    private Long id;
-    private String name;
-    private String slug;
-    private Integer sortOrder;
+  private Long id;
+  private String name;
+
+  /** B18: per-locale names; null falls back to {@link #name} on the frontend. */
+  private String nameRu;
+
+  private String nameKz;
+  private String nameEn;
+
+  private String slug;
+  private Integer sortOrder;
 }

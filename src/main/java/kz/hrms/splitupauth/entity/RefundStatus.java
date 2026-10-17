@@ -1,7 +1,9 @@
 package kz.hrms.splitupauth.entity;
 
 public enum RefundStatus {
-    PENDING,
-    SUCCESS,
-    FAILED
+  PENDING,
+  PENDING_PROVIDER,
+  SUCCESS,
+  FAILED,
+  REQUIRES_REVIEW
 }

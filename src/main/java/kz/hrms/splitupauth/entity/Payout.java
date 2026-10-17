@@ -1,89 +1,148 @@
 package kz.hrms.splitupauth.entity;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "payouts", indexes = {
-        @Index(name = "idx_payouts_user_status", columnList = "user_id, status"),
-        @Index(name = "idx_payouts_status_created", columnList = "status, created_at")
-})
+@Table(
+    name = "payouts",
+    indexes = {
+      @Index(name = "idx_payouts_user_status", columnList = "user_id, status"),
+      @Index(name = "idx_payouts_status_created", columnList = "status, created_at")
+    })
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class Payout {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  @JoinColumn(name = "user_id", nullable = false)
+  private User user;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "room_id")
-    private Room room;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "room_id")
+  private Room room;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "payout_method_id")
-    private PayoutMethod payoutMethod;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "payout_method_id")
+  private PayoutMethod payoutMethod;
 
-    @Column(nullable = false, precision = 12, scale = 2)
-    private BigDecimal amount;
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "payout_batch_id")
+  private PayoutBatch payoutBatch;
 
-    @Column(nullable = false, length = 10)
-    @Builder.Default
-    private String currency = "KZT";
+  /** Immutable amount committed for provider submission; refunds must never rewrite it. */
+  @Column(name = "submitted_amount", precision = 12, scale = 2)
+  private BigDecimal submittedAmount;
 
-    /** PENDING | PROCESSING | SUCCESS | FAILED | PENDING_METHOD | CANCELED */
-    @Column(nullable = false, length = 20)
-    @Builder.Default
-    private String status = "PENDING";
+  @Column(name = "provider_order_id", length = 50)
+  private String providerOrderId;
 
-    @Column(name = "provider_payout_id", length = 150)
-    private String providerPayoutId;
+  @Column(name = "clawback_required", nullable = false)
+  @Builder.Default
+  private Boolean clawbackRequired = false;
 
-    @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
-    private String idempotencyKey;
+  @Column(name = "clawback_amount", nullable = false, precision = 12, scale = 2)
+  @Builder.Default
+  private BigDecimal clawbackAmount = BigDecimal.ZERO;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "triggering_payment_intent_id")
-    private PaymentIntent triggeringPaymentIntent;
+  @Column(nullable = false, precision = 12, scale = 2)
+  private BigDecimal amount;
 
-    @Column(name = "failure_reason", columnDefinition = "TEXT")
-    private String failureReason;
+  @Column(name = "original_amount", nullable = false, precision = 12, scale = 2)
+  private BigDecimal originalAmount;
 
-    @Column(name = "retry_count", nullable = false)
-    @Builder.Default
-    private Integer retryCount = 0;
+  @Column(name = "refunded_share_amount", nullable = false, precision = 12, scale = 2)
+  @Builder.Default
+  private BigDecimal refundedShareAmount = BigDecimal.ZERO;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+  @Column(name = "payable_amount", nullable = false, precision = 12, scale = 2)
+  private BigDecimal payableAmount;
 
-    @Column(name = "processed_at")
-    private LocalDateTime processedAt;
+  @Column(nullable = false, length = 10)
+  @Builder.Default
+  private String currency = "KZT";
 
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
+  /**
+   * Lifecycle status. Stored as text (the enum name) via the converter — see {@link PayoutStatus}.
+   */
+  @Convert(converter = kz.hrms.splitupauth.entity.converter.PayoutStatusConverter.class)
+  @Column(nullable = false, length = 20)
+  @Builder.Default
+  private PayoutStatus status = PayoutStatus.PENDING;
 
-    @PrePersist
-    protected void onCreate() {
-        if (createdAt == null) createdAt = LocalDateTime.now();
-        if (status == null) status = "PENDING";
-        if (currency == null) currency = "KZT";
-        if (retryCount == null) retryCount = 0;
-    }
+  @Column(name = "provider_payout_id", length = 150)
+  private String providerPayoutId;
 
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
+  @Column(name = "idempotency_key", nullable = false, unique = true, length = 100)
+  private String idempotencyKey;
+
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "triggering_payment_intent_id")
+  private PaymentIntent triggeringPaymentIntent;
+
+  @Column(name = "failure_reason", columnDefinition = "TEXT")
+  private String failureReason;
+
+  @Column(name = "retry_count", nullable = false)
+  @Builder.Default
+  private Integer retryCount = 0;
+
+  /**
+   * When this payout becomes eligible for dispatch. The member's charge is captured immediately,
+   * but the owner payout is held until release_at (default created_at + 30d). The dispatcher
+   * ignores payouts whose release_at is still in the future.
+   */
+  @Column(name = "release_at")
+  private LocalDateTime releaseAt;
+
+  @Column(name = "captured_at")
+  private LocalDateTime capturedAt;
+
+  @Column(name = "next_retry_at")
+  private LocalDateTime nextRetryAt;
+
+  @Column(name = "lease_until")
+  private LocalDateTime leaseUntil;
+
+  @Column(name = "created_at", nullable = false)
+  private LocalDateTime createdAt;
+
+  @Column(name = "processed_at")
+  private LocalDateTime processedAt;
+
+  @Column(name = "updated_at")
+  private LocalDateTime updatedAt;
+
+  /** When the transfer was handed to the provider; bounds "provider has no record" waits. */
+  @Column(name = "submitted_at")
+  private LocalDateTime submittedAt;
+
+  @PrePersist
+  protected void onCreate() {
+    if (createdAt == null) createdAt = LocalDateTime.now();
+    if (status == null) status = PayoutStatus.PENDING;
+    if (currency == null) currency = "KZT";
+    if (retryCount == null) retryCount = 0;
+    if (originalAmount == null) originalAmount = amount;
+    if (refundedShareAmount == null) refundedShareAmount = BigDecimal.ZERO;
+    if (payableAmount == null) payableAmount = amount;
+    // Defensive: a payout with no explicit hold releases immediately.
+    if (releaseAt == null) releaseAt = createdAt;
+  }
+
+  @PreUpdate
+  protected void onUpdate() {
+    updatedAt = LocalDateTime.now();
+  }
 }

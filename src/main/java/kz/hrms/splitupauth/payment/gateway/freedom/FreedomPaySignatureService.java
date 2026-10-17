@@ -1,82 +1,133 @@
 package kz.hrms.splitupauth.payment.gateway.freedom;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Map;
-import java.util.TreeMap;
-
 /**
- * Freedom Pay (PayBox) signature service.
+ * FreedomPay (PayBox) {@code pg_sig} computation and verification.
  *
- * Signature algorithm:
- *   1. Take all params except `pg_sig`
- *   2. Sort by key (alphabetical)
- *   3. Concatenate values with `;` between, prefixed by script name and suffixed by secret key
- *   4. MD5 the result and lowercase hex
+ * <p>Rule (docs.freedompay.kz "Overview → Signature", identical in the legacy merchant-api intro):
  *
- * See: https://docs.freedompay.kz/
+ * <ol>
+ *   <li>the name of the script being called — the URL part after the last {@code /} up to the end
+ *       or {@code ?};
+ *   <li>the values of ALL message fields (including {@code pg_salt} and any extra/unknown field,
+ *       excluding {@code pg_sig}) ordered alphabetically by field name; fields with the same name
+ *       keep their message order; the rule is applied recursively to nested XML tags;
+ *   <li>the secret key;
+ * </ol>
+ *
+ * joined with {@code ;}, MD5-hashed over UTF-8 bytes, lowercase hex.
+ *
+ * <p>Requests are signed with the payment ("receiving") secret; payout operations with the payout
+ * secret when one is configured.
  */
 @Component
 @RequiredArgsConstructor
 public class FreedomPaySignatureService {
 
-    private final FreedomPayProperties properties;
+  public static final String SIGNATURE_FIELD = "pg_sig";
 
-    public String sign(String script, Map<String, String> params, String secretKey) {
-        TreeMap<String, String> sorted = new TreeMap<>(params);
-        sorted.remove("pg_sig");
+  private static final Comparator<FreedomPayMessage.Field> BY_NAME =
+      Comparator.comparing(FreedomPayMessage.Field::name);
 
-        StringBuilder sb = new StringBuilder();
-        sb.append(script);
-        for (String value : sorted.values()) {
-            sb.append(';').append(value == null ? "" : value);
-        }
-        sb.append(';').append(secretKey);
+  private final FreedomPayProperties properties;
 
-        return md5Hex(sb.toString());
+  public String sign(String script, Map<String, String> params, String secretKey) {
+    return sign(script, FreedomPayMessage.of(params), secretKey);
+  }
+
+  public String sign(String script, FreedomPayMessage message, String secretKey) {
+    List<String> parts = new ArrayList<>();
+    parts.add(script == null ? "" : script);
+    List<FreedomPayMessage.Field> topLevel = new ArrayList<>();
+    for (FreedomPayMessage.Field f : message.fields()) {
+      if (!SIGNATURE_FIELD.equals(f.name())) {
+        topLevel.add(f);
+      }
     }
+    appendSortedValues(topLevel, parts);
+    parts.add(secretKey == null ? "" : secretKey);
+    return md5Hex(String.join(";", parts));
+  }
 
-    public String signWithMerchantSecret(String script, Map<String, String> params) {
-        return sign(script, params, properties.getSecretKey());
+  /**
+   * Stable sort keeps same-name fields in message order; nested elements contribute their own
+   * sorted leaf values in place.
+   */
+  private static void appendSortedValues(List<FreedomPayMessage.Field> fields, List<String> out) {
+    List<FreedomPayMessage.Field> sorted = new ArrayList<>(fields);
+    sorted.sort(BY_NAME);
+    for (FreedomPayMessage.Field f : sorted) {
+      if (f.isNested()) {
+        appendSortedValues(f.children(), out);
+      } else {
+        out.add(f.value());
+      }
     }
+  }
 
-    public String signWithPayoutSecret(String script, Map<String, String> params) {
-        String key = properties.getPayoutSecretKey();
-        if (key == null || key.isBlank()) key = properties.getSecretKey();
-        return sign(script, params, key);
-    }
+  public String signWithMerchantSecret(String script, Map<String, String> params) {
+    return sign(script, params, properties.getSecretKey());
+  }
 
-    public boolean verify(String script, Map<String, String> params, String secretKey) {
-        String signature = params.get("pg_sig");
-        if (signature == null) return false;
-        String expected = sign(script, params, secretKey);
-        return expected.equalsIgnoreCase(signature);
-    }
+  public String signWithPayoutSecret(String script, Map<String, String> params) {
+    return sign(script, params, payoutSecret());
+  }
 
-    public boolean verifyWithMerchantSecret(String script, Map<String, String> params) {
-        return verify(script, params, properties.getSecretKey());
-    }
+  public boolean verify(String script, Map<String, String> params, String secretKey) {
+    return verify(script, FreedomPayMessage.of(params), secretKey);
+  }
 
-    public boolean verifyWithPayoutSecret(String script, Map<String, String> params) {
-        String key = properties.getPayoutSecretKey();
-        if (key == null || key.isBlank()) key = properties.getSecretKey();
-        return verify(script, params, key);
+  /** Constant-time comparison; a missing, blank or repeated {@code pg_sig} never verifies. */
+  public boolean verify(String script, FreedomPayMessage message, String secretKey) {
+    if (message.count(SIGNATURE_FIELD) != 1) return false;
+    String signature = message.get(SIGNATURE_FIELD);
+    if (signature == null || signature.isBlank() || secretKey == null || secretKey.isBlank()) {
+      return false;
     }
+    String expected = sign(script, message, secretKey);
+    return MessageDigest.isEqual(
+        expected.getBytes(StandardCharsets.US_ASCII),
+        signature.trim().toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII));
+  }
 
-    private static String md5Hex(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(input.getBytes());
-            StringBuilder hex = new StringBuilder();
-            for (byte b : digest) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("MD5 not available", e);
-        }
+  public boolean verifyWithMerchantSecret(String script, Map<String, String> params) {
+    return verify(script, params, properties.getSecretKey());
+  }
+
+  public boolean verifyWithPayoutSecret(String script, Map<String, String> params) {
+    return verify(script, params, payoutSecret());
+  }
+
+  public boolean verifyWithMerchantSecret(String script, FreedomPayMessage message) {
+    return verify(script, message, properties.getSecretKey());
+  }
+
+  public boolean verifyWithPayoutSecret(String script, FreedomPayMessage message) {
+    return verify(script, message, payoutSecret());
+  }
+
+  String payoutSecret() {
+    String key = properties.getPayoutSecretKey();
+    return key == null || key.isBlank() ? properties.getSecretKey() : key;
+  }
+
+  static String md5Hex(String input) {
+    try {
+      MessageDigest md = MessageDigest.getInstance("MD5");
+      return HexFormat.of().formatHex(md.digest(input.getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("MD5 not available", e);
     }
+  }
 }

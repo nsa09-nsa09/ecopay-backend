@@ -1,0 +1,53 @@
+package kz.hrms.splitupauth.dto;
+
+import java.time.LocalDateTime;
+import kz.hrms.splitupauth.entity.StoryStatus;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class StoryDto {
+  private Long id;
+
+  private String titleKz;
+  private String titleRu;
+  private String titleEn;
+
+  private String headingKz;
+  private String headingRu;
+  private String headingEn;
+
+  private String bodyKz;
+  private String bodyRu;
+  private String bodyEn;
+
+  private String ctaLabelKz;
+  private String ctaLabelRu;
+  private String ctaLabelEn;
+  private String ctaUrl;
+
+  private String emoji;
+  private String gradient;
+  private String imageUrl;
+  private String imageUrlKz;
+  private String imageUrlRu;
+  private String imageUrlEn;
+
+  /** Card-sized preview URLs (480px); {@code null} when the matching original is absent. */
+  private String imageThumbUrl;
+
+  private String imageThumbUrlKz;
+  private String imageThumbUrlRu;
+  private String imageThumbUrlEn;
+
+  private StoryStatus status;
+  private LocalDateTime publishedAt;
+  private Integer sortOrder;
+  private LocalDateTime createdAt;
+  private LocalDateTime updatedAt;
+}
