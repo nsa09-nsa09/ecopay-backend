@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -118,8 +117,7 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     PaymentIntentResponse intent1 = pay(m1, guest1, "fc-key-" + m1.getId());
     assertEquals(PaymentIntentStatus.SUCCESS, intent1.getStatus());
     assertEquals(
-        MemberStatus.PENDING,
-        roomMemberRepository.findById(m1.getId()).orElseThrow().getStatus());
+        MemberStatus.PENDING, roomMemberRepository.findById(m1.getId()).orElseThrow().getStatus());
     assertEquals(1L, countSuccessCharges(intent1.getId()));
 
     // ── Step 2: idempotent webhook ──
@@ -137,10 +135,12 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     paymentService.applyWebhookEvent(dupEvent);
     paymentService.applyWebhookEvent(dupEvent);
 
-    assertEquals(1L, countSuccessCharges(intent1.getId()),
+    assertEquals(
+        1L,
+        countSuccessCharges(intent1.getId()),
         "duplicate webhook must not create extra SUCCESS transactions");
-    assertEquals(1L, countPayouts(intent1.getId()),
-        "duplicate webhook must not create extra payouts");
+    assertEquals(
+        1L, countPayouts(intent1.getId()), "duplicate webhook must not create extra payouts");
 
     // ── Step 3: owner grants → member confirms → ACTIVE + payout ──
 
@@ -150,11 +150,9 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     roomMemberService.confirmMemberAccess(room.getId(), guest1);
 
     assertEquals(
-        MemberStatus.ACTIVE,
-        roomMemberRepository.findById(m1.getId()).orElseThrow().getStatus());
+        MemberStatus.ACTIVE, roomMemberRepository.findById(m1.getId()).orElseThrow().getStatus());
     assertEquals(
-        RoomStatus.ACTIVE,
-        roomRepository.findById(room.getId()).orElseThrow().getStatus());
+        RoomStatus.ACTIVE, roomRepository.findById(room.getId()).orElseThrow().getStatus());
 
     var payout1 = payoutRepository.findByTriggeringPaymentIntent(intentEntity).orElseThrow();
     assertNotNull(payout1.getId());
@@ -168,7 +166,8 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     DisputeResponse dispute = disputeService.openMemberComplaint(room.getId(), guest1, complaint);
 
     entityManager.clear();
-    assertEquals(PayoutStatus.FROZEN,
+    assertEquals(
+        PayoutStatus.FROZEN,
         payoutRepository.findById(payout1.getId()).orElseThrow().getStatus(),
         "payout must be frozen when dispute is opened");
 
@@ -186,8 +185,7 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     }
 
     entityManager.clear();
-    assertTrue(countRefunds(intent1.getId()) > 0,
-        "dispute FAVOR_MEMBER must trigger a refund");
+    assertTrue(countRefunds(intent1.getId()) > 0, "dispute FAVOR_MEMBER must trigger a refund");
 
     // ── Step 5: second member + room cancel → auto-refund + ROOM_CANCELLED ──
 
@@ -200,20 +198,20 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     roomMemberService.confirmOwnerAccess(room.getId(), m2.getId(), owner, grant2);
     roomMemberService.confirmMemberAccess(room.getId(), guest2);
     assertEquals(
-        MemberStatus.ACTIVE,
-        roomMemberRepository.findById(m2.getId()).orElseThrow().getStatus());
+        MemberStatus.ACTIVE, roomMemberRepository.findById(m2.getId()).orElseThrow().getStatus());
 
     CancelRoomRequest cancelReq = new CancelRoomRequest();
     cancelReq.setReason("Owner decided to stop the room completely");
     roomService.cancelRoom(room.getId(), owner, cancelReq);
 
     entityManager.clear();
-    assertEquals(RoomStatus.CANCELLED,
-        roomRepository.findById(room.getId()).orElseThrow().getStatus());
-    assertEquals(MemberStatus.ROOM_CANCELLED,
+    assertEquals(
+        RoomStatus.CANCELLED, roomRepository.findById(room.getId()).orElseThrow().getStatus());
+    assertEquals(
+        MemberStatus.ROOM_CANCELLED,
         roomMemberRepository.findById(m2.getId()).orElseThrow().getStatus());
-    assertTrue(countRefunds(intent2.getId()) > 0,
-        "room cancellation must auto-refund paid members");
+    assertTrue(
+        countRefunds(intent2.getId()) > 0, "room cancellation must auto-refund paid members");
 
     // ── Step 6: double confirm-success → exactly one SUCCESS tx ──
 
@@ -239,10 +237,12 @@ class FinanceChainIntegrationTest extends AbstractIntegrationTest {
     paymentService.applyWebhookEvent(confirmEvent);
     paymentService.applyWebhookEvent(confirmEvent);
 
-    assertEquals(1L, countSuccessCharges(intent3.getId()),
+    assertEquals(
+        1L,
+        countSuccessCharges(intent3.getId()),
         "triple confirm must produce exactly one SUCCESS charge");
-    assertEquals(1L, countPayouts(intent3.getId()),
-        "triple confirm must produce exactly one payout");
+    assertEquals(
+        1L, countPayouts(intent3.getId()), "triple confirm must produce exactly one payout");
   }
 
   // ── helpers ──
