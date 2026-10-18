@@ -109,20 +109,24 @@ public class StaffTwoFactorService {
             .build();
 
     // Persist and commit the challenge in its own isolated transaction BEFORE sending the email
-    // so slow SMTP network I/O is never held inside a database transaction (which causes CockroachDB
+    // so slow SMTP network I/O is never held inside a database transaction (which causes
+    // CockroachDB
     // RETRY_SERIALIZABLE / CannotAcquireLockException).
     StaffTwoFactorChallenge saved = inTransaction(() -> challengeRepository.save(challenge));
 
     try {
       emailService.sendStaffTwoFactorCode(user.getEmail(), code, MailLocale.from(user.getLocale()));
     } catch (Exception e) {
-      inTransactionWithoutResult(() -> {
-        try {
-          challengeRepository.deleteById(saved.getId());
-        } catch (Exception cleanupEx) {
-          log.warn("Failed to clean up challenge after failed email delivery: {}", cleanupEx.getMessage());
-        }
-      });
+      inTransactionWithoutResult(
+          () -> {
+            try {
+              challengeRepository.deleteById(saved.getId());
+            } catch (Exception cleanupEx) {
+              log.warn(
+                  "Failed to clean up challenge after failed email delivery: {}",
+                  cleanupEx.getMessage());
+            }
+          });
       throw e;
     }
 
@@ -187,7 +191,8 @@ public class StaffTwoFactorService {
    * Returns the (possibly mutated) challenge.
    */
   public StaffTwoFactorChallenge resendChallenge(String challengeId) {
-    record ResendPayload(StaffTwoFactorChallenge challenge, String email, String code, String locale) {}
+    record ResendPayload(
+        StaffTwoFactorChallenge challenge, String email, String code, String locale) {}
 
     ResendPayload payload =
         inTransaction(
