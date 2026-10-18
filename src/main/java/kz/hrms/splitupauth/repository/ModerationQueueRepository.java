@@ -11,6 +11,8 @@ public interface ModerationQueueRepository extends JpaRepository<ModerationQueue
 
   List<ModerationQueue> findByStatusOrderByCreatedAtAsc(ModerationQueueStatus status);
 
+  List<ModerationQueue> findByStatusInOrderByCreatedAtAsc(List<ModerationQueueStatus> statuses);
+
   Optional<ModerationQueue> findByIdAndStatus(Long id, ModerationQueueStatus status);
 
   Optional<ModerationQueue> findByIdAndRoomMemberAndStatusIn(

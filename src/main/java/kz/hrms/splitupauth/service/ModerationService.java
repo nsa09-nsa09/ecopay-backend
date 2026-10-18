@@ -44,7 +44,8 @@ public class ModerationService {
     ensureAdmin(currentUser);
 
     return moderationQueueRepository
-        .findByStatusOrderByCreatedAtAsc(ModerationQueueStatus.OPEN)
+        .findByStatusInOrderByCreatedAtAsc(
+            List.of(ModerationQueueStatus.OPEN, ModerationQueueStatus.IN_REVIEW))
         .stream()
         .map(this::mapQueueItem)
         .toList();
