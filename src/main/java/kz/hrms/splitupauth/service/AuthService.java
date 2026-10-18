@@ -200,7 +200,6 @@ public class AuthService {
     return login(request, null);
   }
 
-  @Transactional
   public AuthResponse login(LoginRequest request, HttpServletRequest httpRequest) {
     // Format check only (level 1). The address already exists in the database
     // here, so an MX lookup would add latency without adding safety — and would
@@ -286,7 +285,6 @@ public class AuthService {
    * Re-issue the OTP for an existing staff 2FA challenge. Cooldown-protected by the underlying
    * service.
    */
-  @Transactional
   public void resendStaffTwoFactor(TwoFactorResendRequest request) {
     staffTwoFactorService.resendChallenge(request.getChallengeId());
   }

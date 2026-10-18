@@ -9,11 +9,13 @@ import kz.hrms.splitupauth.entity.StaffTwoFactorChallengeStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.exception.TwoFactorChallengeException;
 import kz.hrms.splitupauth.repository.StaffTwoFactorChallengeRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Issues, verifies, resends and cleans up 2FA challenges for ADMIN / SUPPORT staff accounts. Only
@@ -21,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
  * service and is never logged.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class StaffTwoFactorService {
 
@@ -34,6 +35,41 @@ public class StaffTwoFactorService {
   private final StaffTwoFactorChallengeRepository challengeRepository;
   private final PasswordEncoder passwordEncoder;
   private final EmailService emailService;
+  private final PlatformTransactionManager transactionManager;
+
+  public StaffTwoFactorService(
+      StaffTwoFactorChallengeRepository challengeRepository,
+      PasswordEncoder passwordEncoder,
+      EmailService emailService) {
+    this(challengeRepository, passwordEncoder, emailService, null);
+  }
+
+  @Autowired
+  public StaffTwoFactorService(
+      StaffTwoFactorChallengeRepository challengeRepository,
+      PasswordEncoder passwordEncoder,
+      EmailService emailService,
+      @Autowired(required = false) PlatformTransactionManager transactionManager) {
+    this.challengeRepository = challengeRepository;
+    this.passwordEncoder = passwordEncoder;
+    this.emailService = emailService;
+    this.transactionManager = transactionManager;
+  }
+
+  private <T> T inTransaction(java.util.function.Supplier<T> action) {
+    if (transactionManager != null) {
+      return new TransactionTemplate(transactionManager).execute(status -> action.get());
+    }
+    return action.get();
+  }
+
+  private void inTransactionWithoutResult(Runnable action) {
+    if (transactionManager != null) {
+      new TransactionTemplate(transactionManager).executeWithoutResult(status -> action.run());
+    } else {
+      action.run();
+    }
+  }
 
   /** Returns true for accounts that must complete a 2FA step before tokens are issued. */
   public boolean requiresTwoFactor(User user) {
@@ -42,7 +78,6 @@ public class StaffTwoFactorService {
   }
 
   /** Create a new challenge for the given staff user and email the plaintext code. */
-  @Transactional
   public StaffTwoFactorChallenge createChallenge(User user) {
     if (!requiresTwoFactor(user)) {
       throw new TwoFactorChallengeException("2FA is not required for this account");
@@ -73,18 +108,25 @@ public class StaffTwoFactorService {
             .lastSentAt(now)
             .build();
 
-    challenge = challengeRepository.save(challenge);
+    // Persist and commit the challenge in its own isolated transaction BEFORE sending the email
+    // so slow SMTP network I/O is never held inside a database transaction (which causes CockroachDB
+    // RETRY_SERIALIZABLE / CannotAcquireLockException).
+    StaffTwoFactorChallenge saved = inTransaction(() -> challengeRepository.save(challenge));
 
-    // Deliberately NOT swallowed, unlike the silent password-reset/resend
-    // endpoints. The caller's password has already been verified here, so
-    // there is no account to disclose — and a swallowed failure is worse than
-    // an error: the console would sit on "enter the emailed code" forever
-    // while the code never arrives. Letting this out rolls the challenge back
-    // and returns 503 EMAIL_DELIVERY_FAILED, which tells the operator to go
-    // fix mail rather than to doubt their password.
-    emailService.sendStaffTwoFactorCode(user.getEmail(), code, MailLocale.from(user.getLocale()));
+    try {
+      emailService.sendStaffTwoFactorCode(user.getEmail(), code, MailLocale.from(user.getLocale()));
+    } catch (Exception e) {
+      inTransactionWithoutResult(() -> {
+        try {
+          challengeRepository.deleteById(saved.getId());
+        } catch (Exception cleanupEx) {
+          log.warn("Failed to clean up challenge after failed email delivery: {}", cleanupEx.getMessage());
+        }
+      });
+      throw e;
+    }
 
-    return challenge;
+    return saved;
   }
 
   /**
@@ -144,44 +186,60 @@ public class StaffTwoFactorService {
    * Rotate the code for an existing challenge. Cooldown protected to prevent email flooding.
    * Returns the (possibly mutated) challenge.
    */
-  @Transactional
   public StaffTwoFactorChallenge resendChallenge(String challengeId) {
-    StaffTwoFactorChallenge challenge =
-        challengeRepository
-            .findById(challengeId)
-            .orElseThrow(
-                () -> new TwoFactorChallengeException("Invalid or expired verification code"));
+    record ResendPayload(StaffTwoFactorChallenge challenge, String email, String code, String locale) {}
 
-    if (challenge.getStatus() != StaffTwoFactorChallengeStatus.PENDING || challenge.isUsed()) {
-      throw new TwoFactorChallengeException("Challenge cannot be resent. Please sign in again.");
-    }
+    ResendPayload payload =
+        inTransaction(
+            () -> {
+              StaffTwoFactorChallenge challenge =
+                  challengeRepository
+                      .findById(challengeId)
+                      .orElseThrow(
+                          () ->
+                              new TwoFactorChallengeException(
+                                  "Invalid or expired verification code"));
 
-    LocalDateTime now = LocalDateTime.now();
-    LocalDateTime nextAllowed = challenge.getLastSentAt().plusSeconds(RESEND_COOLDOWN_SECONDS);
-    if (now.isBefore(nextAllowed)) {
-      throw new TwoFactorChallengeException("Please wait before requesting another code.");
-    }
+              if (challenge.getStatus() != StaffTwoFactorChallengeStatus.PENDING
+                  || challenge.isUsed()) {
+                throw new TwoFactorChallengeException(
+                    "Challenge cannot be resent. Please sign in again.");
+              }
 
-    if (challenge.isExpired()) {
-      challenge.setStatus(StaffTwoFactorChallengeStatus.EXPIRED);
-      challengeRepository.save(challenge);
-      throw new TwoFactorChallengeException("Challenge cannot be resent. Please sign in again.");
-    }
+              LocalDateTime now = LocalDateTime.now();
+              LocalDateTime nextAllowed =
+                  challenge.getLastSentAt().plusSeconds(RESEND_COOLDOWN_SECONDS);
+              if (now.isBefore(nextAllowed)) {
+                throw new TwoFactorChallengeException(
+                    "Please wait before requesting another code.");
+              }
 
-    String code = generate6DigitCode();
-    challenge.setCodeHash(passwordEncoder.encode(code));
-    challenge.setLastSentAt(now);
-    // Keep the original expires_at so attackers cannot extend the window
-    // indefinitely by spamming resends.
-    challenge = challengeRepository.save(challenge);
+              if (challenge.isExpired()) {
+                challenge.setStatus(StaffTwoFactorChallengeStatus.EXPIRED);
+                challengeRepository.save(challenge);
+                throw new TwoFactorChallengeException(
+                    "Challenge cannot be resent. Please sign in again.");
+              }
 
-    // Same reasoning as createChallenge: the caller already holds a valid
-    // challenge id, so a delivery failure is theirs to see rather than to be
-    // hidden behind a silent success.
+              String code = generate6DigitCode();
+              challenge.setCodeHash(passwordEncoder.encode(code));
+              challenge.setLastSentAt(now);
+              // Keep the original expires_at so attackers cannot extend the window
+              // indefinitely by spamming resends.
+              challenge = challengeRepository.save(challenge);
+
+              User user = challenge.getUser();
+              return new ResendPayload(
+                  challenge,
+                  user != null ? user.getEmail() : null,
+                  code,
+                  user != null ? user.getLocale() : null);
+            });
+
     emailService.sendStaffTwoFactorCode(
-        challenge.getUser().getEmail(), code, MailLocale.from(challenge.getUser().getLocale()));
+        payload.email(), payload.code(), MailLocale.from(payload.locale()));
 
-    return challenge;
+    return payload.challenge();
   }
 
   /** Purge challenges whose lifetime has elapsed. */
