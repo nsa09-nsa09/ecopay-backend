@@ -596,7 +596,16 @@ public class RefundService {
                 refund.setLeaseUntil(null);
                 refund.setNextRetryAt(null);
               } else {
-                scheduleRetryOrReview(refund, "PROVIDER_FAILED", "Provider rejected refund");
+                // Keep the provider's own reason: without it a rejected refund cannot be diagnosed.
+                String message =
+                    "Provider rejected refund (status="
+                        + response.getProviderStatusCode()
+                        + ", code="
+                        + response.getFailureCode()
+                        + "): "
+                        + response.getFailureMessage();
+                log.warn("Refund {} rejected by provider: {}", refundId, message);
+                scheduleRetryOrReview(refund, "PROVIDER_FAILED", message);
               }
               refundTransactionRepository.save(refund);
             });
