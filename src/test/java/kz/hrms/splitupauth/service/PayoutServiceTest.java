@@ -471,6 +471,81 @@ class PayoutServiceTest {
     verify(paymentGateway, times(1)).payout(any());
   }
 
+  @Test
+  void dispatchPayout_retryWithPreviousOrderAtProvider_skipsResendViaPredispatchCheck() {
+    User owner = User.builder().id(42L).build();
+    Payout payout =
+        Payout.builder()
+            .id(400L)
+            .user(owner)
+            .amount(new BigDecimal("1000.00"))
+            .payableAmount(new BigDecimal("1000.00"))
+            .currency("KZT")
+            .status(PayoutStatus.PENDING)
+            .idempotencyKey("payout-400")
+            .releaseAt(LocalDateTime.now(clock).minusHours(1))
+            .submittedAmount(new BigDecimal("1000.00"))
+            .providerOrderId("ecopay-payout-400")
+            .retryCount(1)
+            .nextRetryAt(LocalDateTime.now(clock).minusSeconds(1))
+            .build();
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    when(payoutRepository.findWithLockById(400L)).thenReturn(Optional.of(payout));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.getPayoutStatus(null, "ecopay-payout-400"))
+        .thenReturn(
+            GatewayStatusResponse.builder().externalPaymentId("FP-400").status("PENDING").build());
+
+    payoutService.dispatchPayout(400L);
+
+    assertEquals(PayoutStatus.PENDING_PROVIDER, payout.getStatus());
+    assertEquals("ecopay-payout-400", payout.getProviderOrderId());
+    assertEquals("FP-400", payout.getProviderPayoutId());
+    verify(paymentGateway, never()).payout(any());
+  }
+
+  @Test
+  void dispatchPayout_providerCardError_goesToPendingMethod() {
+    User owner = User.builder().id(42L).build();
+    Payout payout = duePayout(401L, owner);
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    when(payoutRepository.findWithLockById(401L)).thenReturn(Optional.of(payout));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.providerName()).thenReturn("freedompay");
+    when(paymentGateway.payout(any()))
+        .thenReturn(
+            GatewayPayoutResponse.builder()
+                .success(false)
+                .pending(false)
+                .providerStatusCode("error")
+                .failureCode("300")
+                .failureMessage("Card expired or invalid")
+                .build());
+
+    payoutService.dispatchPayout(401L);
+
+    assertEquals(PayoutStatus.PENDING_METHOD, payout.getStatus());
+    assertNotNull(payout.getFailureReason());
+  }
+
   private Payout payout(Long id, User owner, String amount, LocalDateTime releaseAt) {
     return Payout.builder()
         .id(id)

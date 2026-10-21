@@ -87,6 +87,13 @@ public class FreedomPayProperties {
    */
   private boolean payoutCardStorageUsesPayoutSecret = false;
 
+  /**
+   * Hours added to the current Almaty time for {@code pg_order_time_limit} in reg2reg payouts.
+   * FreedomPay rejects the payout after this window. Default 24h; production guard should reject
+   * anything below 1.
+   */
+  private int orderTimeLimitHours = 24;
+
   /** Verify {@code pg_sig} on every provider response. Must stay true in production. */
   private boolean verifyResponseSignatures = true;
 

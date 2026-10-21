@@ -83,6 +83,8 @@ class PaymentServiceTest {
             notificationService,
             commissionCalculator,
             moneyLedgerService,
+            new kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder(
+                new kz.hrms.splitupauth.payment.fiscal.FiscalProperties()),
             liveMoneyGuard,
             Clock.systemUTC(),
             transactionManager);

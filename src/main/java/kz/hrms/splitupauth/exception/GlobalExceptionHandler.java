@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.exception;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import kz.hrms.splitupauth.payment.fiscal.FiscalMismatchException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -238,6 +239,15 @@ public class GlobalExceptionHandler {
             HttpStatus.FORBIDDEN.value(), "You do not have permission to perform this action");
     error.setCode("ACCESS_DENIED");
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+  }
+
+  @ExceptionHandler(FiscalMismatchException.class)
+  public ResponseEntity<ErrorResponse> handleFiscalMismatch(FiscalMismatchException ex) {
+    log.error("Fiscal receipt mismatch: {}", ex.getMessage());
+    ErrorResponse error =
+        new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(), ex.getMessage());
+    error.setCode("FISCAL_MISMATCH");
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
   }
 
   @ExceptionHandler(Exception.class)

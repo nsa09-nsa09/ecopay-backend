@@ -23,6 +23,7 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
@@ -76,6 +77,7 @@ public class RenewalPaymentService {
   private final RefundRequestRepository refundRequestRepository;
   private final PaymentGatewayRegistry gatewayRegistry;
   private final PaymentService paymentService;
+  private final FiscalReceiptBuilder fiscalReceiptBuilder;
   private final LiveMoneyGuard liveMoneyGuard;
   private final PaymentEventLogger eventLogger;
   private final Clock clock;
@@ -95,6 +97,7 @@ public class RenewalPaymentService {
       RefundRequestRepository refundRequestRepository,
       PaymentGatewayRegistry gatewayRegistry,
       PaymentService paymentService,
+      FiscalReceiptBuilder fiscalReceiptBuilder,
       LiveMoneyGuard liveMoneyGuard,
       PaymentEventLogger eventLogger,
       Clock clock,
@@ -106,6 +109,7 @@ public class RenewalPaymentService {
     this.refundRequestRepository = refundRequestRepository;
     this.gatewayRegistry = gatewayRegistry;
     this.paymentService = paymentService;
+    this.fiscalReceiptBuilder = fiscalReceiptBuilder;
     this.liveMoneyGuard = liveMoneyGuard;
     this.eventLogger = eventLogger;
     this.clock = clock;
@@ -247,6 +251,8 @@ public class RenewalPaymentService {
             .userPhone(member.getUser().getPhone())
             .userId(
                 member.getUser().getId() == null ? null : String.valueOf(member.getUser().getId()))
+            .receiptPositions(
+                fiscalReceiptBuilder.isEnabled() ? fiscalReceiptBuilder.forCharge(intent) : null)
             .build();
     return PreparedRenewal.fresh(intent, chargeRequest);
   }

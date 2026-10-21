@@ -5,7 +5,8 @@ import java.math.RoundingMode;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
-import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder;
 import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayCardBindingResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
@@ -169,6 +171,11 @@ public class FreedomPayGateway implements PaymentGateway {
     // documents pg_success_url_method / pg_failure_url_method (GET|POST, default GET) — VERIFIED.
     putIfNotBlank(params, "pg_success_url_method", returnMethod(properties.getSuccessUrlMethod()));
     putIfNotBlank(params, "pg_failure_url_method", returnMethod(properties.getFailureUrlMethod()));
+    putIfNotBlank(params, "pg_language", request.getLanguage());
+    if (request.getTimeoutAfterPayment() != null) {
+      params.put("pg_timeout_after_payment", String.valueOf(request.getTimeoutAfterPayment()));
+    }
+    addReceiptPositions(params, request.getReceiptPositions());
     if (request.isSaveCardRequested()) {
       params.put("pg_recurring_start", "1");
       // Mandatory with pg_recurring_start=1; unit is MONTHS, current docs allow 1..12.
@@ -219,6 +226,7 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_result_url", urlResolver.resultUrl());
     params.put("pg_request_method", "POST");
     params.put("pg_idempotency_key", request.getIdempotencyKey());
+    addReceiptPositions(params, request.getReceiptPositions());
 
     FreedomPayResponse response =
         client.call("recurring_payment", path, script(path), params, merchantSecret(), false);
@@ -320,8 +328,18 @@ public class FreedomPayGateway implements PaymentGateway {
 
   // ---------------------------------------------------------------- payout
 
+  private static final ZoneId ALMATY_ZONE = ZoneId.of("Asia/Almaty");
+  private static final java.util.regex.Pattern PG_USER_ID_PATTERN =
+      java.util.regex.Pattern.compile("^[a-zA-Z0-9_-]+$");
+
   @Override
   public GatewayPayoutResponse payout(GatewayPayoutRequest request) {
+    String userId = request.getDestinationUserId();
+    if (userId == null || userId.length() > 50 || !PG_USER_ID_PATTERN.matcher(userId).matches()) {
+      throw new IllegalArgumentException(
+          "pg_user_id must match ^[a-zA-Z0-9_-]+$ and be ≤50 chars, got: " + userId);
+    }
+
     Map<String, String> params = baseParams();
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_card_token_to", request.getDestinationCardToken());
@@ -330,14 +348,14 @@ public class FreedomPayGateway implements PaymentGateway {
         request.getProviderOrderId() == null
             ? String.valueOf(request.getPayoutId())
             : request.getProviderOrderId());
-    params.put("pg_user_id", request.getDestinationUserId());
-    params.put("pg_idempotency_key", request.getIdempotencyKey());
+    params.put("pg_user_id", userId);
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay payout"));
     params.put("pg_post_link", urlResolver.payoutResultUrl());
+    int timeLimitHours = Math.max(1, properties.getOrderTimeLimitHours());
     params.put(
         "pg_order_time_limit",
-        LocalDateTime.now()
-            .plusMinutes(30)
+        ZonedDateTime.now(ALMATY_ZONE)
+            .plusHours(timeLimitHours)
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
     FreedomPayResponse response =
@@ -346,10 +364,11 @@ public class FreedomPayGateway implements PaymentGateway {
     boolean ok = response.isOk();
     boolean pending = response.signed() && (status.equals("process") || status.equals("pending"));
     log.info(
-        "FreedomPay reg2reg response: status={} code={} hasPaymentId={}",
+        "FreedomPay reg2reg response: status={} code={} hasPaymentId={} balance={}",
         status,
         response.get("pg_error_code"),
-        notBlank(response.get("pg_payment_id")));
+        notBlank(response.get("pg_payment_id")),
+        response.get("pg_balance"));
     return GatewayPayoutResponse.builder()
         .success(ok)
         .externalPayoutId(response.get("pg_payment_id"))
@@ -357,6 +376,7 @@ public class FreedomPayGateway implements PaymentGateway {
         .failureCode(ok || pending ? null : response.get("pg_error_code"))
         .failureMessage(ok || pending ? null : response.get("pg_error_description"))
         .pending(pending)
+        .providerBalance(parseAmount(response.get("pg_balance")))
         .build();
   }
 
@@ -834,6 +854,21 @@ public class FreedomPayGateway implements PaymentGateway {
   private static void putIfNotBlank(Map<String, String> target, String key, String value) {
     if (value != null && !value.isBlank()) {
       target.put(key, value);
+    }
+  }
+
+  private static void addReceiptPositions(
+      Map<String, String> params, List<FiscalReceiptBuilder.ReceiptPosition> positions) {
+    if (positions == null || positions.isEmpty()) {
+      return;
+    }
+    for (int i = 0; i < positions.size(); i++) {
+      FiscalReceiptBuilder.ReceiptPosition p = positions.get(i);
+      String prefix = "pg_receipt_positions[" + i + "]";
+      params.put(prefix + "[name]", p.name());
+      params.put(prefix + "[count]", p.count().toPlainString());
+      params.put(prefix + "[price]", p.price().toPlainString());
+      params.put(prefix + "[tax_type]", String.valueOf(p.taxType()));
     }
   }
 

@@ -1,6 +1,8 @@
 package kz.hrms.splitupauth.payment.gateway;
 
 import java.math.BigDecimal;
+import java.util.List;
+import kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder;
 import lombok.Builder;
 import lombok.Data;
 
@@ -33,4 +35,13 @@ public class GatewayChargeRequest {
    * being mis-matched to a real payment intent.
    */
   private String orderIdOverride;
+
+  /** FreedomPay payment page language (ru/kk/en). Null = provider default. */
+  private String language;
+
+  /** Fiscal receipt positions for OFD integration. Null = no fiscal data. */
+  private List<FiscalReceiptBuilder.ReceiptPosition> receiptPositions;
+
+  /** Seconds to show the success page before auto-redirect. Null = provider default. */
+  private Integer timeoutAfterPayment;
 }

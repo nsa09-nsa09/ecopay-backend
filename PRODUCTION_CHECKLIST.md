@@ -25,3 +25,4 @@ All items stay unchecked until verified against the real production environment 
 - [ ] Backend release gate passes: duplicate Flyway check plus `./mvnw -B verify`.
 - [ ] Docker Compose config validates with the real Dokploy environment.
 - [ ] Rollback procedure is documented with the previous image tag, database backup, and operator owner.
+- [ ] Fiscal receipts (OFD): `FISCAL_ENABLED=true` only after the merchant's OFD integration is live with FreedomPay; `FISCAL_SHARE_TAX_TYPE` and `FISCAL_COMMISSION_TAX_TYPE` match the approved tax codes.

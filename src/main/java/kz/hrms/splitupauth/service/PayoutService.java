@@ -270,6 +270,12 @@ public class PayoutService {
     if (claim == null) {
       return;
     }
+    if (claim.previousOrderId() != null) {
+      boolean alreadyAtProvider = preDispatchStatusCheck(claim.payoutId(), claim.previousOrderId());
+      if (alreadyAtProvider) {
+        return;
+      }
+    }
     GatewayPayoutResponse resp;
     String providerName;
     try {
@@ -285,7 +291,7 @@ public class PayoutService {
                   .destinationCardToken(claim.destinationCardToken())
                   .amount(claim.amount())
                   .currency(claim.currency())
-                  .description("EcoPay payout #" + claim.payoutId())
+                  .description(claim.description())
                   .build());
     } catch (Exception ex) {
       tx().executeWithoutResult(status -> markPayoutDispatchException(claim.payoutId(), ex));
@@ -294,6 +300,51 @@ public class PayoutService {
     String finalProviderName = providerName;
     tx().executeWithoutResult(
             status -> completePayoutDispatch(claim.payoutId(), resp, finalProviderName));
+  }
+
+  /**
+   * Before retrying a payout that was previously submitted, check its status at the provider.
+   * Returns true if the payout already exists at the provider (PENDING_PROVIDER), false if not
+   * found (safe to re-send with a new order id).
+   */
+  private boolean preDispatchStatusCheck(Long payoutId, String previousOrderId) {
+    try {
+      PaymentGateway gateway = gatewayRegistry.defaultGateway();
+      GatewayStatusResponse status = gateway.getPayoutStatus(null, previousOrderId);
+      if (status.isNotFound()) {
+        return false;
+      }
+      String mapped = status.getStatus();
+      if ("SUCCESS".equals(mapped) || "PENDING".equals(mapped)) {
+        tx().executeWithoutResult(
+                s -> {
+                  Payout payout = payoutRepository.findWithLockById(payoutId).orElse(null);
+                  if (payout == null) return;
+                  payout.setStatus(PayoutStatus.PENDING_PROVIDER);
+                  payout.setProviderOrderId(previousOrderId);
+                  if (status.getExternalPaymentId() != null) {
+                    payout.setProviderPayoutId(status.getExternalPaymentId());
+                  }
+                  payout.setLeaseUntil(null);
+                  payout.setNextRetryAt(
+                      LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
+                  payoutRepository.save(payout);
+                });
+        log.info(
+            "Payout {} pre-dispatch check: previous order {} is {} at provider, skipping re-send",
+            payoutId,
+            previousOrderId,
+            mapped);
+        return true;
+      }
+      return false;
+    } catch (Exception ex) {
+      log.warn(
+          "Payout {} pre-dispatch status check failed: {}, proceeding with new order id",
+          payoutId,
+          ex.getMessage());
+      return false;
+    }
   }
 
   private BatchCandidate prepareBatchCandidate(Long payoutId) {
@@ -393,7 +444,7 @@ public class PayoutService {
                   .destinationCardToken(claim.destinationCardToken())
                   .amount(claim.amount())
                   .currency(claim.currency())
-                  .description("EcoPay payout batch #" + claim.batchId())
+                  .description("Выплата EcoPay (пакет #" + claim.batchId() + ")")
                   .build());
     } catch (Exception ex) {
       tx().executeWithoutResult(status -> markBatchDispatchException(claim.batchId(), ex));
@@ -473,7 +524,7 @@ public class PayoutService {
     return new BatchDispatchClaim(
         batch.getId(),
         batch.getIdempotencyKey(),
-        String.valueOf(first.getUser().getId()),
+        payoutUserId(first.getUser()),
         method.getProviderCardToken(),
         total,
         first.getCurrency(),
@@ -512,7 +563,7 @@ public class PayoutService {
     return new BatchDispatchClaim(
         batch.getId(),
         batch.getIdempotencyKey(),
-        String.valueOf(batch.getOwner().getId()),
+        payoutUserId(batch.getOwner()),
         batch.getDestinationCardToken(),
         batch.getAmount(),
         batch.getCurrency(),
@@ -531,22 +582,6 @@ public class PayoutService {
     if (!staleProcessing
         && payout.getStatus() != PayoutStatus.PENDING
         && payout.getStatus() != PayoutStatus.PENDING_METHOD) {
-      return null;
-    }
-    if (payout.getSubmittedAmount() != null) {
-      // Legacy individual dispatches have no complete persisted retry payload.
-      payout.setStatus(PayoutStatus.REQUIRES_REVIEW);
-      String prevReason = payout.getFailureReason();
-      if (prevReason != null && !prevReason.isBlank() && !prevReason.contains("Prior submission")) {
-        payout.setFailureReason(
-            "Prior submission requires reconciliation before any new transfer ("
-                + prevReason
-                + ")");
-      } else {
-        payout.setFailureReason("Prior submission requires reconciliation before any new transfer");
-      }
-      payoutRepository.save(payout);
-      notifyPayoutRequiresReview(payout);
       return null;
     }
     if (!staleProcessing
@@ -586,25 +621,70 @@ public class PayoutService {
       return null;
     }
 
+    // If previously submitted, the old order id needs a pre-dispatch status check (done outside
+    // this transaction). Generate a new order id for the retry so that the provider sees a unique
+    // pg_order_id for each attempt.
+    String previousOrderId = null;
+    if (payout.getSubmittedAmount() != null && payout.getProviderOrderId() != null) {
+      previousOrderId = payout.getProviderOrderId();
+    }
+
     payout.setStatus(PayoutStatus.PROCESSING);
     payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
     payout.setPayoutMethod(method);
     payout.setSubmittedAmount(payoutPayableAmount(payout));
     payout.setSubmittedAt(now);
     payout.setAmount(payout.getSubmittedAmount());
-    if (payout.getProviderOrderId() == null) {
-      payout.setProviderOrderId("ecopay-payout-" + payout.getId());
-    }
+    int attempt = payout.getRetryCount() == null ? 0 : payout.getRetryCount();
+    String newOrderId =
+        attempt == 0
+            ? "ecopay-payout-" + payout.getId()
+            : "ecopay-payout-" + payout.getId() + "-r" + attempt;
+    payout.setProviderOrderId(newOrderId);
     payout = payoutRepository.save(payout);
+
+    String userId = payoutUserId(payout.getUser());
+    String description = payoutDescription(payout);
     return new DispatchClaim(
         payout.getId(),
         payout.getIdempotencyKey(),
-        String.valueOf(payout.getUser().getId()),
+        userId,
         method.getProviderCardToken(),
         payout.getAmount(),
         payout.getCurrency(),
-        payout.getProviderOrderId());
+        payout.getProviderOrderId(),
+        description,
+        previousOrderId);
   }
+
+  private static String payoutUserId(User user) {
+    String publicId = user.getPublicId();
+    if (publicId != null && !publicId.isBlank()) {
+      return "u" + publicId;
+    }
+    return "u" + user.getId();
+  }
+
+  private static String payoutDescription(Payout payout) {
+    String roomTitle =
+        payout.getRoom() != null && payout.getRoom().getTitle() != null
+            ? payout.getRoom().getTitle()
+            : null;
+    if (roomTitle != null) {
+      return "Выплата EcoPay за комнату «" + truncateDescription(roomTitle, 80) + "»";
+    }
+    return "Выплата EcoPay #" + payout.getId();
+  }
+
+  private static String truncateDescription(String value, int max) {
+    if (value == null) return "";
+    return value.length() <= max ? value : value.substring(0, max) + "…";
+  }
+
+  private static final java.util.Set<String> CARD_ERROR_CODES =
+      java.util.Set.of(
+          "300", "301", "302", "303", "304", "305", "306", "307", "310", "315", "320", "325", "330",
+          "340", "350", "360", "365", "370", "380", "400", "405", "410", "415", "420");
 
   private void completePayoutDispatch(
       Long payoutId, GatewayPayoutResponse resp, String providerName) {
@@ -626,22 +706,54 @@ public class PayoutService {
       payout.setNextRetryAt(
           LocalDateTime.now(clock).plusMinutes(PROVIDER_RECONCILIATION_DELAY_MINUTES));
     } else {
+      String fullReason =
+          "Provider rejected payout (status="
+              + resp.getProviderStatusCode()
+              + ", code="
+              + resp.getFailureCode()
+              + "): "
+              + resp.getFailureMessage();
+      payout.setFailureReason(fullReason);
+
+      if (isCardError(resp.getFailureCode())) {
+        payout.setStatus(PayoutStatus.PENDING_METHOD);
+        payout.setLeaseUntil(null);
+        payout.setNextRetryAt(null);
+        payoutRepository.save(payout);
+        notifyPayoutCardInvalid(payout);
+        log.warn("Payout {} card error: {}", payoutId, fullReason);
+        return;
+      }
+
       payout.setRetryCount((payout.getRetryCount() == null ? 0 : payout.getRetryCount()) + 1);
-      payout.setFailureReason(resp.getFailureMessage());
-      payout.setStatus(
-          payout.getRetryCount() >= MAX_RETRY ? PayoutStatus.FAILED : PayoutStatus.PENDING);
-      payout.setLeaseUntil(null);
-      payout.setNextRetryAt(
-          payout.getRetryCount() >= MAX_RETRY
-              ? null
-              : LocalDateTime.now(clock).plusSeconds(retryBackoffSeconds(payout.getRetryCount())));
-      log.warn(
-          "Payout {} provider dispatch failed: code={} message={}",
-          payoutId,
-          resp.getFailureCode(),
-          resp.getFailureMessage());
+      if (payout.getRetryCount() >= MAX_RETRY) {
+        payout.setStatus(PayoutStatus.REQUIRES_REVIEW);
+        payout.setLeaseUntil(null);
+        payout.setNextRetryAt(null);
+        notifyPayoutRequiresReview(payout);
+      } else {
+        payout.setStatus(PayoutStatus.PENDING);
+        payout.setLeaseUntil(null);
+        payout.setNextRetryAt(
+            LocalDateTime.now(clock).plusSeconds(retryBackoffSeconds(payout.getRetryCount())));
+      }
+      log.warn("Payout {} provider dispatch failed: {}", payoutId, fullReason);
     }
     payoutRepository.save(payout);
+  }
+
+  private static boolean isCardError(String errorCode) {
+    return errorCode != null && CARD_ERROR_CODES.contains(errorCode.trim());
+  }
+
+  private void notifyPayoutCardInvalid(Payout payout) {
+    if (payout.getUser() == null) return;
+    notificationService.notify(
+        payout.getUser(),
+        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_REQUIRES_REVIEW,
+        java.util.Map.of("reason", "CARD_INVALID", "payoutId", String.valueOf(payout.getId())),
+        "/payment/payout",
+        java.util.Map.of("payoutId", payout.getId()));
   }
 
   private void completeBatchDispatch(
@@ -958,6 +1070,8 @@ public class PayoutService {
       }
       if (success && amount != null && amount.compareTo(batch.getAmount()) != 0) {
         success = false;
+        batch.setFailureReason(
+            "Callback amount " + amount + " differs from submitted " + batch.getAmount());
         log.error("Payout batch {} callback amount differs from submitted amount", batch.getId());
       }
       if (batch.getProviderPayoutId() == null && notBlank(providerPayoutId)) {
@@ -998,6 +1112,7 @@ public class PayoutService {
         payout.getSubmittedAmount() == null ? payout.getAmount() : payout.getSubmittedAmount();
     if (success && amount != null && submitted != null && amount.compareTo(submitted) != 0) {
       success = false;
+      payout.setFailureReason("Callback amount " + amount + " differs from submitted " + submitted);
       log.error("Payout {} callback amount differs from submitted amount", payout.getId());
     }
     if (payout.getProviderPayoutId() == null && notBlank(providerPayoutId)) {
@@ -1426,7 +1541,9 @@ public class PayoutService {
       String destinationCardToken,
       BigDecimal amount,
       String currency,
-      String providerOrderId) {}
+      String providerOrderId,
+      String description,
+      String previousOrderId) {}
 
   private record BatchDispatchClaim(
       Long batchId,

@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.payment.gateway;
 
+import java.math.BigDecimal;
 import lombok.Builder;
 import lombok.Data;
 
@@ -12,4 +13,7 @@ public class GatewayPayoutResponse {
   private String failureCode;
   private String failureMessage;
   private boolean pending;
+
+  /** Provider's remaining payout balance, returned in the reg2reg response ({@code pg_balance}). */
+  private BigDecimal providerBalance;
 }

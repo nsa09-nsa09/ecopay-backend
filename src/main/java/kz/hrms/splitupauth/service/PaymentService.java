@@ -16,6 +16,7 @@ import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceConflictException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
+import kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeRequest;
 import kz.hrms.splitupauth.payment.gateway.GatewayChargeResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
@@ -82,6 +83,7 @@ public class PaymentService {
   private final NotificationService notificationService;
   private final CommissionCalculator commissionCalculator;
   private final MoneyLedgerService moneyLedgerService;
+  private final FiscalReceiptBuilder fiscalReceiptBuilder;
   private final LiveMoneyGuard liveMoneyGuard;
   private final Clock clock;
   private final PlatformTransactionManager transactionManager;
@@ -333,6 +335,8 @@ public class PaymentService {
             .userPhone(currentUser.getPhone())
             .userId(currentUser.getId() == null ? null : String.valueOf(currentUser.getId()))
             .saveCardRequested(intent.getSaveCardRequested())
+            .receiptPositions(
+                fiscalReceiptBuilder.isEnabled() ? fiscalReceiptBuilder.forCharge(intent) : null)
             .build();
     return new PreparedPayment(intent, savedCardToken, chargeReq, null);
   }
