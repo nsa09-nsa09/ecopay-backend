@@ -47,6 +47,7 @@ public class PaymentService {
 
   private static final int MONEY_SCALE = 2;
   private static final int MAX_RECONCILE_ATTEMPTS = 50;
+  private static final int REVIEW_ESCALATION_ATTEMPTS = 10;
   private static final int RESERVATION_BUFFER_SECONDS = 120;
   private static final List<PaymentIntentStatus> OPEN_INTENT_STATUSES =
       List.of(
@@ -738,6 +739,11 @@ public class PaymentService {
     if (!OPEN_INTENT_STATUSES.contains(intent.getStatus())) {
       return intent;
     }
+    int attempts = intent.getReconcileAttempts() == null ? 0 : intent.getReconcileAttempts();
+    if (attempts >= REVIEW_ESCALATION_ATTEMPTS) {
+      return escalateToRequiresReview(
+          intent, actorUserId, eventPrefix, "GATEWAY_UNREACHABLE_ESCALATED");
+    }
     String fromStatus = intent.getStatus().name();
     intent.setStatus(PaymentIntentStatus.RECONCILING);
     intent.setFailureCode("GATEWAY_STATUS_UNKNOWN");
@@ -843,7 +849,12 @@ public class PaymentService {
       intent.setExternalPaymentId(status.getExternalPaymentId());
       intent = paymentIntentRepository.save(intent);
     }
-    // else: still PENDING at the gateway — leave as-is; webhook/poll will finalize.
+    int attempts = intent.getReconcileAttempts() == null ? 0 : intent.getReconcileAttempts();
+    if (attempts >= REVIEW_ESCALATION_ATTEMPTS
+        && OPEN_INTENT_STATUSES.contains(intent.getStatus())) {
+      return escalateToRequiresReview(
+          intent, actorUserId, eventPrefix, "PROVIDER_STATUS_UNRESOLVED");
+    }
     return intent;
   }
 
@@ -909,6 +920,38 @@ public class PaymentService {
         Map.of("entityId", String.valueOf(intent.getId())),
         "/admin/finance",
         Map.of("intentId", intent.getId()));
+  }
+
+  private PaymentIntent escalateToRequiresReview(
+      PaymentIntent intent, Long actorUserId, String eventPrefix, String reason) {
+    String fromStatus = intent.getStatus().name();
+    log.warn(
+        "Escalating intent {} to REQUIRES_REVIEW after {} reconciliation attempts: {}",
+        intent.getId(),
+        intent.getReconcileAttempts(),
+        reason);
+    intent.setStatus(PaymentIntentStatus.REQUIRES_REVIEW);
+    intent.setReviewRequired(true);
+    intent.setReviewReason(reason);
+    intent.setFailureCode(reason);
+    intent.setFailureMessage(
+        "Escalated to manual review after "
+            + intent.getReconcileAttempts()
+            + " reconciliation attempts");
+    intent = paymentIntentRepository.save(intent);
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        eventPrefix + "_ESCALATED_TO_REVIEW",
+        fromStatus,
+        intent.getStatus().name(),
+        actorUserId,
+        null,
+        intent.getIdempotencyKey(),
+        Map.of(
+            "reason", reason, "reconcileAttempts", String.valueOf(intent.getReconcileAttempts())));
+    notifyPaymentRequiresReview(intent);
+    return intent;
   }
 
   private record ReconcileTarget(
@@ -1115,13 +1158,18 @@ public class PaymentService {
           "Webhook with unrecognized status {} for intent {}; recording for review",
           event.getResultStatus(),
           intent.getId());
-      intent.setLastWebhookAt(LocalDateTime.now());
+      String fromStatus = intent.getStatus().name();
+      if (intent.getStatus() == PaymentIntentStatus.PENDING) {
+        intent.setStatus(PaymentIntentStatus.RECONCILING);
+        intent.setFailureCode("WEBHOOK_UNRECOGNIZED_STATUS");
+        intent.setFailureMessage("Unrecognized webhook status: " + event.getResultStatus());
+      }
       paymentIntentRepository.save(intent);
       eventLogger.log(
           "INTENT",
           intent.getId(),
           "WEBHOOK_UNRECOGNIZED_STATUS",
-          intent.getStatus().name(),
+          fromStatus,
           intent.getStatus().name(),
           null,
           event.getProviderRequestId(),

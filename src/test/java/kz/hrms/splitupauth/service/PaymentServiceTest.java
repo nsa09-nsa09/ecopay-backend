@@ -30,8 +30,11 @@ import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
+import kz.hrms.splitupauth.payment.gateway.GatewayStatusResponse;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
+import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
+import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
 import kz.hrms.splitupauth.repository.PaymentReservationRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
@@ -44,6 +47,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentServiceTest {
@@ -219,15 +223,16 @@ class PaymentServiceTest {
 
     paymentService.applyWebhookEvent(event);
 
-    // Still PENDING — an unknown status never advances or fails the intent.
-    assertEquals(PaymentIntentStatus.PENDING, intent.getStatus());
+    // A6: unrecognized status moves PENDING → RECONCILING so the reconciler picks it up.
+    assertEquals(PaymentIntentStatus.RECONCILING, intent.getStatus());
+    assertEquals("WEBHOOK_UNRECOGNIZED_STATUS", intent.getFailureCode());
     verify(eventLogger)
         .log(
             eq("INTENT"),
             eq(100L),
             eq("WEBHOOK_UNRECOGNIZED_STATUS"),
-            any(),
-            any(),
+            eq("PENDING"),
+            eq("RECONCILING"),
             any(),
             any(),
             any(),
@@ -596,6 +601,155 @@ class PaymentServiceTest {
 
     assertEquals(PaymentIntentStatus.FAILED, intent.getStatus());
     verify(paymentIntentRepository, never()).save(any());
+  }
+
+  // ── A6: Unknown status escalation ──
+
+  @Test
+  void webhookUnrecognizedStatus_movesPendingToReconciling() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("5000.00"));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("CHARGEBACK")
+            .externalPaymentId("EXT-1")
+            .providerRequestId("req-1")
+            .build();
+
+    paymentService.applyWebhookEvent(event);
+
+    assertEquals(PaymentIntentStatus.RECONCILING, intent.getStatus());
+    assertEquals("WEBHOOK_UNRECOGNIZED_STATUS", intent.getFailureCode());
+    verify(eventLogger)
+        .log(
+            eq("INTENT"),
+            eq(100L),
+            eq("WEBHOOK_UNRECOGNIZED_STATUS"),
+            eq("PENDING"),
+            eq("RECONCILING"),
+            any(),
+            any(),
+            any(),
+            anyMap());
+  }
+
+  @Test
+  void webhookUnrecognizedStatus_alreadyReconcilingStaysReconciling() {
+    PaymentIntent intent = pendingIntent(new BigDecimal("5000.00"));
+    intent.setStatus(PaymentIntentStatus.RECONCILING);
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    GatewayWebhookEvent event =
+        GatewayWebhookEvent.builder()
+            .intentId(100L)
+            .resultStatus("CHARGEBACK")
+            .externalPaymentId("EXT-1")
+            .providerRequestId("req-1")
+            .build();
+
+    paymentService.applyWebhookEvent(event);
+
+    assertEquals(PaymentIntentStatus.RECONCILING, intent.getStatus());
+  }
+
+  @Test
+  void reconcileEscalatesToReviewAfterThresholdAttempts_providerPending() {
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(org.mockito.Mockito.mock(TransactionStatus.class));
+
+    PaymentIntent intent = pendingIntent(new BigDecimal("5000.00"));
+    intent.setProviderName(FreedomPayGateway.PROVIDER_NAME);
+    intent.setReconcileAttempts(10);
+    intent.setStatus(PaymentIntentStatus.RECONCILING);
+
+    when(paymentIntentRepository.findIdsForProviderReconciliation(
+            any(), any(), any(), any(), eq(50), any()))
+        .thenReturn(List.of(100L));
+    when(paymentIntentRepository.findById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    PaymentGateway mockGateway = org.mockito.Mockito.mock(PaymentGateway.class);
+    when(gatewayRegistry.resolve(FreedomPayGateway.PROVIDER_NAME)).thenReturn(mockGateway);
+    when(mockGateway.getStatusByOrderId("100"))
+        .thenReturn(
+            GatewayStatusResponse.builder().status("PENDING").externalPaymentId("EXT-1").build());
+
+    paymentService.reconcileOpenIntents(10, 0);
+
+    assertEquals(PaymentIntentStatus.REQUIRES_REVIEW, intent.getStatus());
+    assertEquals("PROVIDER_STATUS_UNRESOLVED", intent.getFailureCode());
+    assertTrue(intent.getReviewRequired());
+    verify(notificationService)
+        .notifyAdminsOnce(
+            eq(NotificationType.PAYMENT_REQUIRES_REVIEW), eq(100L), anyMap(), any(), anyMap());
+  }
+
+  @Test
+  void reconcileEscalatesToReviewAfterThresholdAttempts_gatewayUnreachable() {
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(org.mockito.Mockito.mock(TransactionStatus.class));
+
+    PaymentIntent intent = pendingIntent(new BigDecimal("5000.00"));
+    intent.setProviderName(FreedomPayGateway.PROVIDER_NAME);
+    intent.setReconcileAttempts(10);
+    intent.setStatus(PaymentIntentStatus.RECONCILING);
+
+    when(paymentIntentRepository.findIdsForProviderReconciliation(
+            any(), any(), any(), any(), eq(50), any()))
+        .thenReturn(List.of(100L));
+    when(paymentIntentRepository.findById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    PaymentGateway mockGateway = org.mockito.Mockito.mock(PaymentGateway.class);
+    when(gatewayRegistry.resolve(FreedomPayGateway.PROVIDER_NAME)).thenReturn(mockGateway);
+    when(mockGateway.getStatusByOrderId("100"))
+        .thenThrow(new RuntimeException("Connection refused"));
+
+    paymentService.reconcileOpenIntents(10, 0);
+
+    assertEquals(PaymentIntentStatus.REQUIRES_REVIEW, intent.getStatus());
+    assertEquals("GATEWAY_UNREACHABLE_ESCALATED", intent.getFailureCode());
+    assertTrue(intent.getReviewRequired());
+    verify(notificationService)
+        .notifyAdminsOnce(
+            eq(NotificationType.PAYMENT_REQUIRES_REVIEW), eq(100L), anyMap(), any(), anyMap());
+  }
+
+  @Test
+  void reconcileBelowThreshold_staysReconciling_noEscalation() {
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(org.mockito.Mockito.mock(TransactionStatus.class));
+
+    PaymentIntent intent = pendingIntent(new BigDecimal("5000.00"));
+    intent.setProviderName(FreedomPayGateway.PROVIDER_NAME);
+    intent.setReconcileAttempts(5);
+    intent.setStatus(PaymentIntentStatus.PENDING);
+
+    when(paymentIntentRepository.findIdsForProviderReconciliation(
+            any(), any(), any(), any(), eq(50), any()))
+        .thenReturn(List.of(100L));
+    when(paymentIntentRepository.findById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.findWithLockById(100L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    PaymentGateway mockGateway = org.mockito.Mockito.mock(PaymentGateway.class);
+    when(gatewayRegistry.resolve(FreedomPayGateway.PROVIDER_NAME)).thenReturn(mockGateway);
+    when(mockGateway.getStatusByOrderId("100"))
+        .thenReturn(GatewayStatusResponse.builder().status("PENDING").build());
+
+    paymentService.reconcileOpenIntents(10, 0);
+
+    // Should stay in PENDING (not escalated) — reconcileAttempts (now 6) is below threshold of 10
+    assertEquals(PaymentIntentStatus.PENDING, intent.getStatus());
+    verify(notificationService, never())
+        .notifyAdminsOnce(
+            eq(NotificationType.PAYMENT_REQUIRES_REVIEW), any(), anyMap(), any(), anyMap());
   }
 
   private static BigDecimal bd(String v) {
