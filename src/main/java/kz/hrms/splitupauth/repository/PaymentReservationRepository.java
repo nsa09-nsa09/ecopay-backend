@@ -16,6 +16,10 @@ public interface PaymentReservationRepository extends JpaRepository<PaymentReser
 
   Optional<PaymentReservation> findByPaymentIntent(PaymentIntent paymentIntent);
 
+  @Query("select r from PaymentReservation r where r.paymentIntent.id = :paymentIntentId")
+  Optional<PaymentReservation> findByPaymentIntentId(
+      @Param("paymentIntentId") Long paymentIntentId);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select r from PaymentReservation r where r.paymentIntent.id = :paymentIntentId")
   Optional<PaymentReservation> findWithLockByPaymentIntentId(

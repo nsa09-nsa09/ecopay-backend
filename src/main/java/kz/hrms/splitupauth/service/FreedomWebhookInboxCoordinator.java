@@ -125,7 +125,7 @@ public class FreedomWebhookInboxCoordinator {
     if (!storedInvalidSignature && !"PROCESSED".equals(stored.getProcessingStatus())) {
       processInbox(stored.getId());
     }
-    return new Acceptance(stored.getId(), storedInvalidSignature);
+    return new Acceptance(stored.getId(), storedInvalidSignature, stored.getMerchantDecision());
   }
 
   private JsonNode toJson(Map<String, List<String>> params) {
@@ -151,6 +151,10 @@ public class FreedomWebhookInboxCoordinator {
           .counter("ecopay.freedompay.webhook", "outcome", outcome, "callback", script)
           .increment();
     }
+  }
+
+  public void markMerchantDecision(Long inboxId, String decision) {
+    transactions.updateMerchantDecision(inboxId, decision);
   }
 
   public void retryDueWebhooks() {
@@ -249,5 +253,5 @@ public class FreedomWebhookInboxCoordinator {
     }
   }
 
-  public record Acceptance(Long inboxId, boolean invalidSignature) {}
+  public record Acceptance(Long inboxId, boolean invalidSignature, String merchantDecision) {}
 }

@@ -13,6 +13,7 @@ import java.util.Map;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import kz.hrms.splitupauth.service.InMemoryRateLimiter;
+import kz.hrms.splitupauth.service.PaymentService;
 import kz.hrms.splitupauth.service.RateLimiter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,13 +34,14 @@ class FreedomPayWebhookControllerTest {
 
   @Mock private FreedomPayGateway gateway;
   @Mock private FreedomWebhookInboxCoordinator coordinator;
+  @Mock private PaymentService paymentService;
   @Mock private RateLimiter rateLimiter;
 
   private FreedomPayWebhookController controller;
 
   @BeforeEach
   void setUp() {
-    controller = new FreedomPayWebhookController(gateway, coordinator, rateLimiter);
+    controller = new FreedomPayWebhookController(gateway, coordinator, paymentService, rateLimiter);
   }
 
   @AfterEach
@@ -61,7 +63,7 @@ class FreedomPayWebhookControllerTest {
     Map<String, List<String>> expected =
         Map.of("pg_order_id", List.of("42"), "pg_sig", List.of("valid"));
     when(coordinator.acceptAndProcessMulti("result", expected))
-        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(7L, false));
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(7L, false, null));
     when(gateway.buildWebhookResponse("result", "ok", "Order processed")).thenReturn("<ok/>");
 
     var response = controller.result(params);
@@ -87,7 +89,7 @@ class FreedomPayWebhookControllerTest {
   @Test
   void invalidSignature_isAnsweredWithSignedError() {
     when(coordinator.acceptAndProcessMulti(anyString(), anyMap()))
-        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(9L, true));
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(9L, true, null));
     when(gateway.buildWebhookResponse("payout-result", "error", "invalid signature"))
         .thenReturn("<bad/>");
 
@@ -101,7 +103,7 @@ class FreedomPayWebhookControllerTest {
     Map<String, List<String>> expected =
         Map.of("pg_receipt", List.of("a", "b"), "pg_sig", List.of("s"));
     when(coordinator.acceptAndProcessMulti("result", expected))
-        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(1L, false));
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(1L, false, null));
     when(gateway.buildWebhookResponse("result", "ok", "Order processed")).thenReturn("<ok/>");
 
     assertEquals("<ok/>", controller.result(params).getBody());
@@ -110,7 +112,7 @@ class FreedomPayWebhookControllerTest {
   @Test
   void payoutCardCallbackUsesItsOwnScript() {
     when(coordinator.acceptAndProcessMulti(anyString(), anyMap()))
-        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(3L, false));
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(3L, false, null));
     when(gateway.buildWebhookResponse("payout-card-result", "ok", "Order processed"))
         .thenReturn("<ok/>");
 
@@ -126,7 +128,7 @@ class FreedomPayWebhookControllerTest {
   void perIpRateLimitRejectsFloodBeforeInboxWrite() {
     RateLimiter realLimiter = new InMemoryRateLimiter(1000, 3600);
     FreedomPayWebhookController limited =
-        new FreedomPayWebhookController(gateway, coordinator, realLimiter);
+        new FreedomPayWebhookController(gateway, coordinator, paymentService, realLimiter);
     ReflectionTestUtils.setField(limited, "rateLimitPerMinute", 3);
 
     MockHttpServletRequest request = new MockHttpServletRequest();
@@ -134,7 +136,7 @@ class FreedomPayWebhookControllerTest {
     RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
 
     when(coordinator.acceptAndProcessMulti(anyString(), anyMap()))
-        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(1L, false));
+        .thenReturn(new FreedomWebhookInboxCoordinator.Acceptance(1L, false, null));
     when(gateway.buildWebhookResponse("result", "ok", "Order processed")).thenReturn("<ok/>");
     when(gateway.buildWebhookResponse("result", "error", "rate limited")).thenReturn("<rl/>");
 

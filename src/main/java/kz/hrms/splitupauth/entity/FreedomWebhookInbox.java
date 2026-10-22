@@ -77,6 +77,9 @@ public class FreedomWebhookInbox {
   @Column(name = "error_message", columnDefinition = "TEXT")
   private String errorMessage;
 
+  @Column(name = "merchant_decision", length = 30)
+  private String merchantDecision;
+
   @PrePersist
   protected void onCreate() {
     if (receivedAt == null) receivedAt = LocalDateTime.now();

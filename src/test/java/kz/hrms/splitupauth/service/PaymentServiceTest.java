@@ -1,6 +1,7 @@
 package kz.hrms.splitupauth.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -13,17 +14,22 @@ import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.NotificationType;
 import kz.hrms.splitupauth.entity.PaymentIntent;
+import kz.hrms.splitupauth.entity.PaymentIntentPurpose;
 import kz.hrms.splitupauth.entity.PaymentIntentStatus;
+import kz.hrms.splitupauth.entity.PaymentReservation;
+import kz.hrms.splitupauth.entity.PaymentReservationStatus;
 import kz.hrms.splitupauth.entity.RefundStatus;
 import kz.hrms.splitupauth.entity.RefundTransaction;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
 import kz.hrms.splitupauth.entity.User;
+import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.PaymentIntentRepository;
@@ -367,5 +373,232 @@ class PaymentServiceTest {
     verify(payoutService, never()).createOwnerPayoutForSuccessfulPayment(any());
     verify(paymentTransactionRepository, times(1)).save(any());
     verify(refundService, times(1)).createAutomaticCompensationRefund(any(), any());
+  }
+
+  // ── A1: decideOnProviderSuccess — merchant reject/accept decision ──
+
+  private PaymentIntent merchantDecisionIntent(
+      BigDecimal amount, MemberStatus memberStatus, RoomStatus roomStatus) {
+    User user = User.builder().id(10L).email("m@test.kz").status(UserStatus.ACTIVE).build();
+    Room room = Room.builder().id(20L).maxMembers(3).status(roomStatus).build();
+    RoomMember member =
+        RoomMember.builder().id(30L).user(user).room(room).status(memberStatus).build();
+    return PaymentIntent.builder()
+        .id(200L)
+        .idempotencyKey("k-200")
+        .roomMember(member)
+        .user(user)
+        .amount(amount)
+        .status(PaymentIntentStatus.PENDING)
+        .providerName("freedompay")
+        .build();
+  }
+
+  @Test
+  void decideOnProviderSuccess_slotAvailable_accepts() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+    PaymentReservation reservation =
+        PaymentReservation.builder()
+            .id(1L)
+            .paymentIntent(intent)
+            .status(PaymentReservationStatus.RESERVED)
+            .build();
+    when(paymentReservationRepository.findByPaymentIntentId(200L))
+        .thenReturn(Optional.of(reservation));
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertTrue(decision.accepted());
+  }
+
+  @Test
+  void decideOnProviderSuccess_noReservationButCapacityAvailable_accepts() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(paymentReservationRepository.findByPaymentIntentId(200L)).thenReturn(Optional.empty());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            any(), eq(List.of(MemberStatus.PENDING, MemberStatus.ACTIVE))))
+        .thenReturn(1L);
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertTrue(decision.accepted());
+  }
+
+  @Test
+  void decideOnProviderSuccess_roomFull_noReservation_rejects() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(paymentReservationRepository.findByPaymentIntentId(200L)).thenReturn(Optional.empty());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            any(), eq(List.of(MemberStatus.PENDING, MemberStatus.ACTIVE))))
+        .thenReturn(3L);
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Место в комнате уже занято, оплата отменена", decision.reasonRu());
+  }
+
+  @Test
+  void decideOnProviderSuccess_amountMismatch_rejects() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("1.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Сумма платежа не совпадает", decision.reasonRu());
+  }
+
+  @Test
+  void decideOnProviderSuccess_userBanned_rejects() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    intent.getUser().setStatus(UserStatus.BANNED);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Аккаунт пользователя заблокирован", decision.reasonRu());
+  }
+
+  @Test
+  void decideOnProviderSuccess_roomCancelled_rejects() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.CANCELLED);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Комната отменена", decision.reasonRu());
+  }
+
+  @Test
+  void decideOnProviderSuccess_memberNotApplied_rejects() {
+    PaymentIntent intent =
+        merchantDecisionIntent(
+            bd("5000.00"), MemberStatus.CANCELLED_BEFORE_PAYMENT, RoomStatus.OPEN);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Заявка на вступление отменена", decision.reasonRu());
+  }
+
+  @Test
+  void decideOnProviderSuccess_renewalActiveUser_accepts() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.ACTIVE, RoomStatus.ACTIVE);
+    intent.setPurpose(PaymentIntentPurpose.RENEWAL);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(paymentReservationRepository.findByPaymentIntentId(200L)).thenReturn(Optional.empty());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            any(), eq(List.of(MemberStatus.PENDING, MemberStatus.ACTIVE))))
+        .thenReturn(1L);
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertTrue(decision.accepted());
+  }
+
+  @Test
+  void decideOnProviderSuccess_alreadySuccessful_accepts() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    intent.setStatus(PaymentIntentStatus.SUCCESS);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertTrue(decision.accepted());
+  }
+
+  @Test
+  void decideOnProviderSuccess_intentNotFound_rejects() {
+    when(paymentIntentRepository.findById(999L)).thenReturn(Optional.empty());
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(999L, bd("5000.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Платёж не найден", decision.reasonRu());
+  }
+
+  // ── A1: applyMerchantRejection — state transition ──
+
+  @Test
+  void applyMerchantRejection_marksFailed_releasesReservation() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    when(paymentIntentRepository.findWithLockById(200L)).thenReturn(Optional.of(intent));
+    when(paymentIntentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    PaymentReservation reservation =
+        PaymentReservation.builder()
+            .id(1L)
+            .paymentIntent(intent)
+            .status(PaymentReservationStatus.RESERVED)
+            .build();
+    when(paymentReservationRepository.findWithLockByPaymentIntentId(200L))
+        .thenReturn(Optional.of(reservation));
+    when(paymentReservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    paymentService.applyMerchantRejection(200L, "Место в комнате уже занято, оплата отменена");
+
+    assertEquals(PaymentIntentStatus.FAILED, intent.getStatus());
+    assertEquals("MERCHANT_REJECTED", intent.getFailureCode());
+    assertEquals(PaymentReservationStatus.RELEASED, reservation.getStatus());
+    verify(eventLogger)
+        .log(
+            eq("INTENT"),
+            eq(200L),
+            eq("MERCHANT_REJECTED"),
+            eq("PENDING"),
+            eq("FAILED"),
+            any(),
+            any(),
+            any(),
+            anyMap());
+  }
+
+  @Test
+  void applyMerchantRejection_alreadyFailed_isNoop() {
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    intent.setStatus(PaymentIntentStatus.FAILED);
+    when(paymentIntentRepository.findWithLockById(200L)).thenReturn(Optional.of(intent));
+
+    paymentService.applyMerchantRejection(200L, "some reason");
+
+    assertEquals(PaymentIntentStatus.FAILED, intent.getStatus());
+    verify(paymentIntentRepository, never()).save(any());
+  }
+
+  private static BigDecimal bd(String v) {
+    return new BigDecimal(v);
   }
 }

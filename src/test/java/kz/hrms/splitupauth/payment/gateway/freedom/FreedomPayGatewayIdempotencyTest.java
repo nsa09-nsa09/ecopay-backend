@@ -2,6 +2,7 @@ package kz.hrms.splitupauth.payment.gateway.freedom;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -138,7 +139,7 @@ class FreedomPayGatewayIdempotencyTest {
   }
 
   @Test
-  void payoutSendsProviderIdempotencyKeyWithPayoutSecret() {
+  void payoutDoesNotSendIdempotencyKeyAndUsesPayoutSecret() {
     when(client.call(
             eq("payout"),
             eq("/api/reg2reg"),
@@ -167,7 +168,9 @@ class FreedomPayGatewayIdempotencyTest {
             params.capture(),
             eq("payout-secret"),
             eq(false));
-    assertEquals("payout-key", params.getValue().get("pg_idempotency_key"));
+    assertNull(
+        params.getValue().get("pg_idempotency_key"),
+        "pg_idempotency_key is not a documented reg2reg parameter");
     assertEquals("card-token", params.getValue().get("pg_card_token_to"));
     assertEquals("user-7", params.getValue().get("pg_user_id"));
   }

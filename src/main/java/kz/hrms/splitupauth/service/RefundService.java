@@ -424,10 +424,7 @@ public class RefundService {
                 // key. Safe because an attempt is only retried after a definite rejection or a
                 // request that was provably never sent; ambiguous ones are reconciled, not resent.
                 String attemptKey =
-                    "refund-"
-                        + refund.getId()
-                        + "-"
-                        + UUID.randomUUID().toString().substring(0, 8);
+                    "refund-" + refund.getId() + "-" + UUID.randomUUID().toString().substring(0, 8);
                 return new RefundDispatch(
                     refund.getId(),
                     attemptKey,

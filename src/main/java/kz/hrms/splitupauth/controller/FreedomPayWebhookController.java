@@ -1,5 +1,6 @@
 package kz.hrms.splitupauth.controller;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -8,6 +9,7 @@ import java.util.Map;
 import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
 import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
+import kz.hrms.splitupauth.service.PaymentService;
 import kz.hrms.splitupauth.service.RateLimiter;
 import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ public class FreedomPayWebhookController {
 
   private final FreedomPayGateway gateway;
   private final FreedomWebhookInboxCoordinator inboxCoordinator;
+  private final PaymentService paymentService;
   private final RateLimiter rateLimiter;
 
   /**
@@ -50,7 +53,7 @@ public class FreedomPayWebhookController {
 
   @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
   public ResponseEntity<String> result(@RequestParam MultiValueMap<String, String> params) {
-    return processWebhook(FreedomPayGateway.RESULT_SCRIPT, params);
+    return processResultWebhook(params);
   }
 
   @PostMapping(value = "/payout-result", produces = MediaType.APPLICATION_XML_VALUE)
@@ -74,6 +77,69 @@ public class FreedomPayWebhookController {
   public ResponseEntity<String> cardStorageResult(
       @RequestParam MultiValueMap<String, String> params) {
     return processWebhook(FreedomPayGateway.CARD_STORAGE_RESULT_SCRIPT, params);
+  }
+
+  private ResponseEntity<String> processResultWebhook(MultiValueMap<String, String> params) {
+    String script = FreedomPayGateway.RESULT_SCRIPT;
+    if (rateLimitPerMinute > 0) {
+      String ip = ClientIp.current();
+      try {
+        rateLimiter.check("freedompay-webhook:" + ip, rateLimitPerMinute, 60, "rate limited");
+      } catch (TooManyRequestsException ex) {
+        log.warn("Freedom Pay {} callback rate limited for ip={}", script, ip);
+        return errorResponse(script, "rate limited");
+      }
+    }
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay {} callback rejected before inbox store: payload too large", script);
+      return errorResponse(script, "payload too large");
+    }
+
+    Map<String, List<String>> copy = new LinkedHashMap<>();
+    params.forEach((k, v) -> copy.put(k, v == null ? List.of() : new ArrayList<>(v)));
+    try {
+      FreedomWebhookInboxCoordinator.Acceptance accepted =
+          inboxCoordinator.acceptAndProcessMulti(script, copy);
+      if (accepted.invalidSignature()) {
+        log.warn("Freedom Pay webhook signature invalid; inbox={}", accepted.inboxId());
+        return errorResponse(script, "invalid signature");
+      }
+
+      // Idempotent replay: if this inbox already has a stored decision, return it.
+      if ("REJECTED_BY_MERCHANT".equals(accepted.merchantDecision())) {
+        return rejectedResponse(script, "Повторный запрос: оплата была отклонена");
+      }
+      if ("ACCEPTED".equals(accepted.merchantDecision())) {
+        return okResponse(script);
+      }
+
+      // pg_can_reject=1 + pg_result=1: merchant may reject the payment before capture.
+      boolean canReject = "1".equals(firstValue(params, "pg_can_reject"));
+      boolean providerSuccess = "1".equals(firstValue(params, "pg_result"));
+      if (canReject && providerSuccess) {
+        Long orderId = parseLongOrNull(firstValue(params, "pg_order_id"));
+        BigDecimal amount = parseBigDecimalOrNull(firstValue(params, "pg_amount"));
+        String currency = firstValue(params, "pg_currency");
+        if (orderId != null) {
+          PaymentService.MerchantDecision decision =
+              paymentService.decideOnProviderSuccess(orderId, amount, currency);
+          if (!decision.accepted()) {
+            inboxCoordinator.markMerchantDecision(accepted.inboxId(), "REJECTED_BY_MERCHANT");
+            paymentService.applyMerchantRejection(orderId, decision.reasonRu());
+            log.info(
+                "Merchant rejected payment intent {} on result callback: {}",
+                orderId,
+                decision.reasonRu());
+            return rejectedResponse(script, decision.reasonRu());
+          }
+          inboxCoordinator.markMerchantDecision(accepted.inboxId(), "ACCEPTED");
+        }
+      }
+      return okResponse(script);
+    } catch (RuntimeException ex) {
+      log.error("Freedom Pay webhook could not be stored: {}", ex.getClass().getSimpleName());
+      return errorResponse(script, "temporarily unavailable");
+    }
   }
 
   private ResponseEntity<String> processWebhook(
@@ -131,5 +197,32 @@ public class FreedomPayWebhookController {
 
   private ResponseEntity<String> errorResponse(String script, String description) {
     return ResponseEntity.ok(gateway.buildWebhookResponse(script, "error", description));
+  }
+
+  private ResponseEntity<String> rejectedResponse(String script, String description) {
+    return ResponseEntity.ok(gateway.buildWebhookResponse(script, "rejected", description));
+  }
+
+  private static String firstValue(MultiValueMap<String, String> params, String key) {
+    List<String> values = params.get(key);
+    return values != null && !values.isEmpty() ? values.get(0) : null;
+  }
+
+  private static Long parseLongOrNull(String value) {
+    if (value == null || value.isBlank()) return null;
+    try {
+      return Long.parseLong(value.trim());
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
+
+  private static BigDecimal parseBigDecimalOrNull(String value) {
+    if (value == null || value.isBlank()) return null;
+    try {
+      return new BigDecimal(value.trim());
+    } catch (NumberFormatException e) {
+      return null;
+    }
   }
 }

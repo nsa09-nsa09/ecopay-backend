@@ -112,6 +112,19 @@ public class FreedomWebhookInboxTransactions {
     return previous;
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void updateMerchantDecision(Long inboxId, String decision) {
+    FreedomWebhookInbox inbox = inboxRepository.findWithLockById(inboxId).orElse(null);
+    if (inbox != null) {
+      inbox.setMerchantDecision(decision);
+      if ("REJECTED_BY_MERCHANT".equals(decision)) {
+        inbox.setProcessingStatus("PROCESSED");
+        inbox.setProcessedAt(LocalDateTime.now());
+      }
+      inboxRepository.save(inbox);
+    }
+  }
+
   private static String truncate(String value, int maxLength) {
     if (value == null || value.length() <= maxLength) return value;
     return value.substring(0, maxLength);

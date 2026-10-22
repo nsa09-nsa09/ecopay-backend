@@ -467,6 +467,122 @@ public class PaymentService {
   }
 
   /**
+   * Read-only decision: should the merchant accept or reject a provider SUCCESS callback? Called
+   * synchronously from the result webhook handler when {@code pg_can_reject=1}. No state changes —
+   * only reads with normal (non-locking) queries.
+   */
+  @Transactional(readOnly = true)
+  public MerchantDecision decideOnProviderSuccess(
+      Long orderId, BigDecimal amount, String currency) {
+    PaymentIntent intent = paymentIntentRepository.findById(orderId).orElse(null);
+    if (intent == null) {
+      return MerchantDecision.reject("Платёж не найден");
+    }
+    if (intent.getStatus() != PaymentIntentStatus.PENDING
+        && intent.getStatus() != PaymentIntentStatus.UNKNOWN
+        && intent.getStatus() != PaymentIntentStatus.RECONCILING) {
+      if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
+        return MerchantDecision.accept();
+      }
+      return MerchantDecision.reject("Время на оплату истекло");
+    }
+    if (amount != null && intent.getAmount().compareTo(amount) != 0) {
+      return MerchantDecision.reject("Сумма платежа не совпадает");
+    }
+    if (currency != null && !currency.isBlank() && !"KZT".equalsIgnoreCase(currency.trim())) {
+      return MerchantDecision.reject("Валюта платежа не совпадает");
+    }
+
+    RoomMember member = intent.getRoomMember();
+    if (member == null) {
+      return MerchantDecision.reject("Участник не найден");
+    }
+    member = roomMemberRepository.findById(member.getId()).orElse(null);
+    if (member == null || member.getDeletedAt() != null) {
+      return MerchantDecision.reject("Участник не найден");
+    }
+    boolean isRenewal =
+        intent.getPurpose() != null && intent.getPurpose() == PaymentIntentPurpose.RENEWAL;
+    if (!isRenewal && member.getStatus() != MemberStatus.APPLIED) {
+      return MerchantDecision.reject("Заявка на вступление отменена");
+    }
+    if (isRenewal && member.getStatus() != MemberStatus.ACTIVE) {
+      return MerchantDecision.reject("Участник не активен для продления");
+    }
+
+    User user = member.getUser();
+    if (!isActiveUser(user)) {
+      return MerchantDecision.reject("Аккаунт пользователя заблокирован");
+    }
+
+    Room room = member.getRoom();
+    if (room == null) {
+      room = roomRepository.findById(member.getRoom().getId()).orElse(null);
+    }
+    if (!isRoomPayable(room)) {
+      return MerchantDecision.reject("Комната отменена");
+    }
+
+    PaymentReservation reservation =
+        paymentReservationRepository.findByPaymentIntentId(intent.getId()).orElse(null);
+    if (reservation != null && reservation.getStatus() == PaymentReservationStatus.RESERVED) {
+      return MerchantDecision.accept();
+    }
+    long occupiedSlots =
+        roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            room, List.of(MemberStatus.PENDING, MemberStatus.ACTIVE));
+    if (member.getStatus() == MemberStatus.PENDING
+        || member.getStatus() == MemberStatus.ACTIVE
+        || !RoomSeatMath.marketplaceFull(room, occupiedSlots)) {
+      return MerchantDecision.accept();
+    }
+    return MerchantDecision.reject("Место в комнате уже занято, оплата отменена");
+  }
+
+  public record MerchantDecision(boolean accepted, String reasonRu) {
+    public static MerchantDecision accept() {
+      return new MerchantDecision(true, null);
+    }
+
+    public static MerchantDecision reject(String reasonRu) {
+      return new MerchantDecision(false, reasonRu);
+    }
+  }
+
+  /**
+   * Rejects a payment intent after the merchant decided to reject on a pg_can_reject=1 callback.
+   * Marks intent FAILED, releases reservation, logs the event.
+   */
+  @Transactional
+  public void applyMerchantRejection(Long intentId, String reason) {
+    PaymentIntent intent = paymentIntentRepository.findWithLockById(intentId).orElse(null);
+    if (intent == null) {
+      return;
+    }
+    if (intent.getStatus() != PaymentIntentStatus.PENDING
+        && intent.getStatus() != PaymentIntentStatus.UNKNOWN
+        && intent.getStatus() != PaymentIntentStatus.RECONCILING) {
+      return;
+    }
+    String fromStatus = intent.getStatus().name();
+    intent.setStatus(PaymentIntentStatus.FAILED);
+    intent.setFailureCode("MERCHANT_REJECTED");
+    intent.setFailureMessage(reason);
+    paymentIntentRepository.save(intent);
+    releaseReservation(intent, "MERCHANT_REJECTED");
+    eventLogger.log(
+        "INTENT",
+        intent.getId(),
+        "MERCHANT_REJECTED",
+        fromStatus,
+        "FAILED",
+        null,
+        null,
+        intent.getIdempotencyKey(),
+        Map.of("reason", reason));
+  }
+
+  /**
    * Browser-return reconciliation. The redirect itself proves nothing (the success URL can be
    * opened by anyone); this asks the provider for the payment state and applies only a signed,
    * amount- and currency-consistent CAPTURED answer. The intent row lock is NOT held during the
