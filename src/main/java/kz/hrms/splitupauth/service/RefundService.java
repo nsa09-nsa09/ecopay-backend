@@ -419,9 +419,18 @@ public class RefundService {
                 refund.setClaimedAt(now);
                 refund.setLeaseUntil(now.plusMinutes(REFUND_LEASE_MINUTES));
                 refundTransactionRepository.save(refund);
+                // FreedomPay binds pg_idempotency_key to the first operation that used it and
+                // refuses any later revoke with it (error 90271), so each attempt needs its own
+                // key. Safe because an attempt is only retried after a definite rejection or a
+                // request that was provably never sent; ambiguous ones are reconciled, not resent.
+                String attemptKey =
+                    "refund-"
+                        + refund.getId()
+                        + "-"
+                        + UUID.randomUUID().toString().substring(0, 8);
                 return new RefundDispatch(
                     refund.getId(),
-                    refund.getIdempotencyKey(),
+                    attemptKey,
                     transaction.getExternalTransactionId(),
                     refund.getAmount(),
                     refund.getCurrency(),
