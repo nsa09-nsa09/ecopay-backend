@@ -263,6 +263,7 @@ class ProductionStartupGuardTest {
     properties.setPayoutResultUrl("https://api.ecopay.kz/api/v1/webhooks/freedompay/payout-result");
     properties.setPayoutCardResultUrl(
         "https://api.ecopay.kz/api/v1/webhooks/freedompay/payout-card-result");
+    properties.setCheckUrl("https://api.ecopay.kz/api/v1/webhooks/freedompay/check");
     properties.setSuccessUrl("https://app.ecopay.kz/payment/confirmation");
     properties.setFailureUrl("https://app.ecopay.kz/payment/failure");
     return properties;
