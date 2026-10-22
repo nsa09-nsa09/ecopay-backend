@@ -93,6 +93,12 @@ public class PaymentService {
   @Value("${ecopay.payments.freedompay.payment-lifetime-seconds:1800}")
   private int paymentLifetimeSeconds = 1800;
 
+  @Value("${ecopay.payments.freedompay.default-language:ru}")
+  private String defaultPaymentLanguage = "ru";
+
+  @Value("${ecopay.payments.freedompay.timeout-after-payment-seconds:5}")
+  private int timeoutAfterPaymentSeconds = 5;
+
   public PaymentIntentResponse createPaymentIntent(
       Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
     liveMoneyGuard.requireEnabledForNewCharge();
@@ -340,6 +346,8 @@ public class PaymentService {
             .userPhone(currentUser.getPhone())
             .userId(currentUser.getId() == null ? null : String.valueOf(currentUser.getId()))
             .saveCardRequested(intent.getSaveCardRequested())
+            .language(defaultPaymentLanguage)
+            .timeoutAfterPayment(timeoutAfterPaymentSeconds)
             .receiptPositions(
                 fiscalReceiptBuilder.isEnabled() ? fiscalReceiptBuilder.forCharge(intent) : null)
             .build();
@@ -1658,6 +1666,7 @@ public class PaymentService {
         .reviewReason(intent.getReviewReason())
         .failureCode(intent.getFailureCode())
         .failureMessage(intent.getFailureMessage())
+        .nextAction(OPEN_INTENT_STATUSES.contains(intent.getStatus()) ? "POLL" : "NONE")
         .build();
   }
 

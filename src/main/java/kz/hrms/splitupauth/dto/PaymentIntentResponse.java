@@ -43,4 +43,10 @@ public class PaymentIntentResponse {
   private String reviewReason;
   private String failureCode;
   private String failureMessage;
+
+  /**
+   * Hint for the frontend after browser return: "POLL" = outcome unknown, keep polling; "NONE" =
+   * terminal state, stop polling.
+   */
+  private String nextAction;
 }

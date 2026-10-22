@@ -17,6 +17,8 @@ import kz.hrms.splitupauth.entity.RefundRequest;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.entity.RoomStatus;
+import kz.hrms.splitupauth.entity.SavedCard;
+import kz.hrms.splitupauth.entity.SavedCardStatus;
 import kz.hrms.splitupauth.entity.User;
 import kz.hrms.splitupauth.entity.UserStatus;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
@@ -32,6 +34,7 @@ import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RefundRequestRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
+import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -75,6 +78,7 @@ public class RenewalPaymentService {
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final RefundTransactionRepository refundTransactionRepository;
   private final RefundRequestRepository refundRequestRepository;
+  private final SavedCardRepository savedCardRepository;
   private final PaymentGatewayRegistry gatewayRegistry;
   private final PaymentService paymentService;
   private final FiscalReceiptBuilder fiscalReceiptBuilder;
@@ -92,12 +96,19 @@ public class RenewalPaymentService {
   @Value("${ecopay.payments.freedompay.payment-lifetime-seconds:1800}")
   private int paymentLifetimeSeconds = 1800;
 
+  @Value("${ecopay.payments.freedompay.default-language:ru}")
+  private String defaultPaymentLanguage = "ru";
+
+  @Value("${ecopay.payments.freedompay.timeout-after-payment-seconds:5}")
+  private int timeoutAfterPaymentSeconds = 5;
+
   public RenewalPaymentService(
       RoomMemberRepository roomMemberRepository,
       PaymentIntentRepository paymentIntentRepository,
       PaymentTransactionRepository paymentTransactionRepository,
       RefundTransactionRepository refundTransactionRepository,
       RefundRequestRepository refundRequestRepository,
+      SavedCardRepository savedCardRepository,
       PaymentGatewayRegistry gatewayRegistry,
       PaymentService paymentService,
       FiscalReceiptBuilder fiscalReceiptBuilder,
@@ -110,6 +121,7 @@ public class RenewalPaymentService {
     this.paymentTransactionRepository = paymentTransactionRepository;
     this.refundTransactionRepository = refundTransactionRepository;
     this.refundRequestRepository = refundRequestRepository;
+    this.savedCardRepository = savedCardRepository;
     this.gatewayRegistry = gatewayRegistry;
     this.paymentService = paymentService;
     this.fiscalReceiptBuilder = fiscalReceiptBuilder;
@@ -140,8 +152,18 @@ public class RenewalPaymentService {
     if (prepared.existingResponse() != null) {
       return prepared.existingResponse();
     }
+    String savedCardToken = null;
+    if (request.getSavedCardId() != null) {
+      SavedCard card =
+          savedCardRepository
+              .findById(request.getSavedCardId())
+              .filter(c -> c.getUser().getId().equals(user.getId()))
+              .filter(c -> c.getStatus() == SavedCardStatus.ACTIVE)
+              .orElseThrow(() -> new InvalidRequestException("Saved card not found or inactive"));
+      savedCardToken = card.getProviderToken();
+    }
     return paymentService.initGatewayForPreparedIntent(
-        prepared.intent(), null, prepared.chargeRequest(), null, user.getId());
+        prepared.intent(), savedCardToken, prepared.chargeRequest(), null, user.getId());
   }
 
   private PreparedRenewal prepare(Long roomMemberId, User user, RenewalIntentRequest request) {
@@ -252,6 +274,8 @@ public class RenewalPaymentService {
             .description("EcoPay renewal #" + member.getId())
             .userEmail(member.getUser().getEmail())
             .userPhone(member.getUser().getPhone())
+            .language(defaultPaymentLanguage)
+            .timeoutAfterPayment(timeoutAfterPaymentSeconds)
             .userId(
                 member.getUser().getId() == null ? null : String.valueOf(member.getUser().getId()))
             .receiptPositions(

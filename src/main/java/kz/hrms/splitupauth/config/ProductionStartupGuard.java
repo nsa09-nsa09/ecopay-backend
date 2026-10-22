@@ -206,6 +206,7 @@ public class ProductionStartupGuard implements ApplicationRunner, SmartInitializ
         freedomPayProperties.getPayoutCardResultUrl(),
         violations,
         "FreedomPay payout card result URL");
+    rejectUnsafeCallback(freedomPayProperties.getCheckUrl(), violations, "FreedomPay check URL");
     // Callback signatures use the last path segment of the callback URL as script name, so the
     // configured URLs must end exactly like the controller mappings.
     rejectWrongCallbackScript(freedomPayProperties.getResultUrl(), "result", violations);
@@ -213,6 +214,7 @@ public class ProductionStartupGuard implements ApplicationRunner, SmartInitializ
         freedomPayProperties.getPayoutResultUrl(), "payout-result", violations);
     rejectWrongCallbackScript(
         freedomPayProperties.getPayoutCardResultUrl(), "payout-card-result", violations);
+    rejectWrongCallbackScript(freedomPayProperties.getCheckUrl(), "check", violations);
     rejectUnsafeCallback(
         freedomPayProperties.getSuccessUrl(), violations, "FreedomPay success URL");
     rejectUnsafeCallback(

@@ -9,4 +9,7 @@ public class RenewalIntentRequest {
 
   @NotBlank(message = "Idempotency key is required")
   private String idempotencyKey;
+
+  /** If set, charge this previously saved card directly (no redirect). */
+  private Long savedCardId;
 }
