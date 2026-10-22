@@ -13,7 +13,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 RUN groupadd --system spring && useradd --system --gid spring --home /app spring && \
-    apt-get update && apt-get install -y --no-install-recommends curl && \
+    (apt-get update || apt-get update) && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
 # The Ubuntu base that eclipse-temurin:21-jre now ships on (24.04/26.04) bundles Canonical's Pebble
