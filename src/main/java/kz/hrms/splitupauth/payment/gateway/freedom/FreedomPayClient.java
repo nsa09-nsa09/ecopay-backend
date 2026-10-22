@@ -183,6 +183,12 @@ public class FreedomPayClient {
     }
     if (hasSignature) {
       if (!signatureService.verify(script, message, secret)) {
+        // Field names, nesting and value lengths only — never values — to find what breaks it.
+        log.warn(
+            "FreedomPay {} mismatched response shape (script={}): {}",
+            operation,
+            script,
+            describeShape(message.fields()));
         invalidSignature(operation, "mismatch");
         throw new FreedomPaySignatureException(
             "FreedomPay response signature is invalid for " + operation);
@@ -197,6 +203,20 @@ public class FreedomPayClient {
     invalidSignature(operation, "missing");
     throw new FreedomPaySignatureException(
         "FreedomPay response for " + operation + " is not signed");
+  }
+
+  private static String describeShape(java.util.List<FreedomPayMessage.Field> fields) {
+    StringBuilder sb = new StringBuilder("[");
+    for (FreedomPayMessage.Field f : fields) {
+      if (sb.length() > 1) sb.append(", ");
+      sb.append(f.name());
+      if (f.isNested()) {
+        sb.append(describeShape(f.children()));
+      } else {
+        sb.append('(').append(f.value() == null ? "null" : f.value().length()).append(')');
+      }
+    }
+    return sb.append(']').toString();
   }
 
   private void invalidSignature(String operation, String reason) {
