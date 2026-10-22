@@ -1,13 +1,16 @@
 package kz.hrms.splitupauth.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
@@ -164,5 +167,80 @@ class FreedomPayWebhookControllerTest {
 
     assertEquals("<big/>", response.getBody());
     verify(coordinator, never()).acceptAndProcessMulti(anyString(), anyMap());
+  }
+
+  // ── A2: Check URL tests ──
+
+  @Test
+  void checkEndpoint_validSignature_slotAvailable_returnsOk() {
+    when(gateway.verifyCheckCallback(anyMap())).thenReturn(true);
+    when(paymentService.decideOnProviderSuccess(eq(42L), any(), eq("KZT")))
+        .thenReturn(new PaymentService.MerchantDecision(true, null));
+    when(gateway.buildWebhookResponse("check", "ok", "Order processed")).thenReturn("<ok/>");
+
+    var response =
+        controller.check(
+            form(
+                "pg_order_id",
+                "42",
+                "pg_amount",
+                "5000.00",
+                "pg_currency",
+                "KZT",
+                "pg_sig",
+                "valid"));
+
+    assertEquals("<ok/>", response.getBody());
+    verify(paymentService)
+        .decideOnProviderSuccess(eq(42L), eq(new BigDecimal("5000.00")), eq("KZT"));
+  }
+
+  @Test
+  void checkEndpoint_validSignature_slotTaken_returnsRejected() {
+    when(gateway.verifyCheckCallback(anyMap())).thenReturn(true);
+    when(paymentService.decideOnProviderSuccess(eq(42L), any(), eq("KZT")))
+        .thenReturn(
+            new PaymentService.MerchantDecision(
+                false, "Место в комнате уже занято, оплата отменена"));
+    when(gateway.buildWebhookResponse(
+            "check", "rejected", "Место в комнате уже занято, оплата отменена"))
+        .thenReturn("<rejected/>");
+
+    var response =
+        controller.check(
+            form(
+                "pg_order_id",
+                "42",
+                "pg_amount",
+                "5000.00",
+                "pg_currency",
+                "KZT",
+                "pg_sig",
+                "valid"));
+
+    assertEquals("<rejected/>", response.getBody());
+  }
+
+  @Test
+  void checkEndpoint_invalidSignature_returnsError() {
+    when(gateway.verifyCheckCallback(anyMap())).thenReturn(false);
+    when(gateway.buildWebhookResponse("check", "error", "invalid signature")).thenReturn("<bad/>");
+
+    var response = controller.check(form("pg_order_id", "42", "pg_sig", "invalid"));
+
+    assertEquals("<bad/>", response.getBody());
+    verify(paymentService, never()).decideOnProviderSuccess(any(), any(), any());
+  }
+
+  @Test
+  void checkEndpoint_missingOrderId_returnsError() {
+    when(gateway.verifyCheckCallback(anyMap())).thenReturn(true);
+    when(gateway.buildWebhookResponse("check", "error", "missing pg_order_id"))
+        .thenReturn("<missing/>");
+
+    var response = controller.check(form("pg_amount", "5000.00", "pg_sig", "valid"));
+
+    assertEquals("<missing/>", response.getBody());
+    verify(paymentService, never()).decideOnProviderSuccess(any(), any(), any());
   }
 }

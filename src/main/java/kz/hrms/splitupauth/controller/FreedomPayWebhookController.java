@@ -56,6 +56,11 @@ public class FreedomPayWebhookController {
     return processResultWebhook(params);
   }
 
+  @PostMapping(value = "/check", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> check(@RequestParam MultiValueMap<String, String> params) {
+    return processCheckWebhook(params);
+  }
+
   @PostMapping(value = "/payout-result", produces = MediaType.APPLICATION_XML_VALUE)
   public ResponseEntity<String> payoutResult(@RequestParam MultiValueMap<String, String> params) {
     return processWebhook(FreedomPayGateway.PAYOUT_RESULT_SCRIPT, params);
@@ -77,6 +82,56 @@ public class FreedomPayWebhookController {
   public ResponseEntity<String> cardStorageResult(
       @RequestParam MultiValueMap<String, String> params) {
     return processWebhook(FreedomPayGateway.CARD_STORAGE_RESULT_SCRIPT, params);
+  }
+
+  private ResponseEntity<String> processCheckWebhook(MultiValueMap<String, String> params) {
+    String script = FreedomPayGateway.CHECK_SCRIPT;
+    if (rateLimitPerMinute > 0) {
+      String ip = ClientIp.current();
+      try {
+        rateLimiter.check("freedompay-webhook:" + ip, rateLimitPerMinute, 60, "rate limited");
+      } catch (TooManyRequestsException ex) {
+        log.warn("Freedom Pay {} callback rate limited for ip={}", script, ip);
+        return errorResponse(script, "rate limited");
+      }
+    }
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay {} callback rejected: payload too large", script);
+      return errorResponse(script, "payload too large");
+    }
+
+    Map<String, List<String>> copy = new LinkedHashMap<>();
+    params.forEach((k, v) -> copy.put(k, v == null ? List.of() : new ArrayList<>(v)));
+    boolean signatureValid;
+    try {
+      signatureValid = gateway.verifyCheckCallback(copy);
+    } catch (RuntimeException ex) {
+      log.error(
+          "Freedom Pay check callback verification failed: {}", ex.getClass().getSimpleName());
+      return errorResponse(script, "temporarily unavailable");
+    }
+    if (!signatureValid) {
+      log.warn("Freedom Pay check callback signature invalid");
+      return errorResponse(script, "invalid signature");
+    }
+
+    Long orderId = parseLongOrNull(firstValue(params, "pg_order_id"));
+    BigDecimal amount = parseBigDecimalOrNull(firstValue(params, "pg_amount"));
+    String currency = firstValue(params, "pg_currency");
+    if (orderId == null) {
+      return errorResponse(script, "missing pg_order_id");
+    }
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(orderId, amount, currency);
+    if (!decision.accepted()) {
+      log.info(
+          "Merchant rejected payment intent {} on check callback: {}",
+          orderId,
+          decision.reasonRu());
+      return rejectedResponse(script, decision.reasonRu());
+    }
+    return okResponse(script);
   }
 
   private ResponseEntity<String> processResultWebhook(MultiValueMap<String, String> params) {

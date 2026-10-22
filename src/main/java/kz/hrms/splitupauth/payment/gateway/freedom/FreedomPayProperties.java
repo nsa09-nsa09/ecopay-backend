@@ -14,6 +14,7 @@ public class FreedomPayProperties {
   private String secretKey = "";
   private String payoutSecretKey = "";
   private String resultUrl = "";
+  private String checkUrl = "";
   private String cardStorageResultUrl = "";
   private String payoutCardResultUrl = "";
   private String payoutResultUrl = "";

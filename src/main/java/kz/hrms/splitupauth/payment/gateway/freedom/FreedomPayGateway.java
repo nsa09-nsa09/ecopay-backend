@@ -51,6 +51,8 @@ public class FreedomPayGateway implements PaymentGateway {
   /** Callback scripts — the last path segment of each webhook URL (FreedomPayWebhookController). */
   public static final String RESULT_SCRIPT = "result";
 
+  public static final String CHECK_SCRIPT = "check";
+
   public static final String CARD_STORAGE_RESULT_SCRIPT = "card-storage-result";
   public static final String PAYOUT_CARD_RESULT_SCRIPT = "payout-card-result";
   public static final String PAYOUT_RESULT_SCRIPT = "payout-result";
@@ -159,6 +161,7 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put(
         "pg_lifetime", String.valueOf(Math.max(300, properties.getPaymentLifetimeSeconds())));
     params.put("pg_result_url", urlResolver.resultUrl());
+    params.put("pg_check_url", urlResolver.checkUrl());
     params.put(
         "pg_success_url",
         appendPaymentContext(urlResolver.successUrl(request.getSuccessUrl()), request));
@@ -224,6 +227,7 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_amount", formatAmount(request.getAmount()));
     params.put("pg_description", nonNull(request.getDescription(), "EcoPay subscription"));
     params.put("pg_result_url", urlResolver.resultUrl());
+    params.put("pg_check_url", urlResolver.checkUrl());
     params.put("pg_request_method", "POST");
     params.put("pg_idempotency_key", request.getIdempotencyKey());
     addReceiptPositions(params, request.getReceiptPositions());
@@ -571,6 +575,11 @@ public class FreedomPayGateway implements PaymentGateway {
   /** Callback signatures use the last segment of our callback URL as script name. */
   public boolean verifyCallback(String script, FreedomPayMessage message) {
     return signatureService.verify(script, message, callbackSecret(script));
+  }
+
+  public boolean verifyCheckCallback(Map<String, List<String>> params) {
+    FreedomPayMessage message = callbackMessage(params);
+    return signatureService.verify(CHECK_SCRIPT, message, merchantSecret());
   }
 
   /** Parses an already verified callback into a provider-neutral event. */
