@@ -89,6 +89,9 @@ public class RenewalPaymentService {
   @Value("${app.renewal.grace-days:3}")
   private long graceDays;
 
+  @Value("${ecopay.payments.freedompay.payment-lifetime-seconds:1800}")
+  private int paymentLifetimeSeconds = 1800;
+
   public RenewalPaymentService(
       RoomMemberRepository roomMemberRepository,
       PaymentIntentRepository paymentIntentRepository,
@@ -218,7 +221,7 @@ public class RenewalPaymentService {
                 .saveCardRequested(false)
                 .purpose(PaymentIntentPurpose.RENEWAL)
                 .billingPeriodStart(period)
-                .expiresAt(now.plusMinutes(30))
+                .expiresAt(now.plusSeconds(paymentLifetimeSeconds + 120))
                 .build());
 
     eventLogger.log(

@@ -33,6 +33,7 @@ import kz.hrms.splitupauth.repository.RoomRepository;
 import kz.hrms.splitupauth.repository.SavedCardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -46,7 +47,7 @@ public class PaymentService {
 
   private static final int MONEY_SCALE = 2;
   private static final int MAX_RECONCILE_ATTEMPTS = 50;
-  private static final long PAYMENT_INTENT_TTL_MINUTES = 30;
+  private static final int RESERVATION_BUFFER_SECONDS = 120;
   private static final List<PaymentIntentStatus> OPEN_INTENT_STATUSES =
       List.of(
           PaymentIntentStatus.PENDING,
@@ -87,6 +88,9 @@ public class PaymentService {
   private final LiveMoneyGuard liveMoneyGuard;
   private final Clock clock;
   private final PlatformTransactionManager transactionManager;
+
+  @Value("${ecopay.payments.freedompay.payment-lifetime-seconds:1800}")
+  private int paymentLifetimeSeconds = 1800;
 
   public PaymentIntentResponse createPaymentIntent(
       Long roomMemberId, User currentUser, CreatePaymentIntentRequest request) {
@@ -291,7 +295,7 @@ public class PaymentService {
             .providerName(gateway.providerName())
             .saveCardRequested(Boolean.TRUE.equals(request.getSaveCard()))
             .savedCard(savedCard)
-            .expiresAt(now.plusMinutes(PAYMENT_INTENT_TTL_MINUTES))
+            .expiresAt(now.plusSeconds(paymentLifetimeSeconds + RESERVATION_BUFFER_SECONDS))
             .build();
     intent = paymentIntentRepository.save(intent);
     paymentReservationRepository.save(
