@@ -133,9 +133,11 @@ public class RefundService {
 
   @Transactional(readOnly = true)
   public RefundTransactionResponse getMine(User currentUser, Long refundId) {
+    // A read must not take a write lock: findWithLockById issues SELECT ... FOR UPDATE, which
+    // Postgres refuses inside a read-only transaction (→ 500). Plain findById is correct here.
     RefundTransaction refund =
         refundTransactionRepository
-            .findWithLockById(refundId)
+            .findById(refundId)
             .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
     boolean isOwner =
         refund.getPaymentTransaction().getPaymentIntent() != null

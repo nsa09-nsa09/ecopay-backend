@@ -493,7 +493,11 @@ public class PaymentService {
     }
     if (intent.getStatus() != PaymentIntentStatus.PENDING
         && intent.getStatus() != PaymentIntentStatus.UNKNOWN
-        && intent.getStatus() != PaymentIntentStatus.RECONCILING) {
+        && intent.getStatus() != PaymentIntentStatus.RECONCILING
+        // L1: an EXPIRED intent (only the TTL lapsed — not FAILED/cancelled) still gets a second
+        // chance on a late provider SUCCESS. Fall through to the amount/member/room/seat checks;
+        // finalize already revives an EXPIRED intent as a normal success when the seat is free.
+        && intent.getStatus() != PaymentIntentStatus.EXPIRED) {
       if (PROVIDER_CAPTURED_STATUSES.contains(intent.getStatus())) {
         return MerchantDecision.accept();
       }

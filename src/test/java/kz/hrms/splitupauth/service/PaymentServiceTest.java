@@ -456,6 +456,45 @@ class PaymentServiceTest {
   }
 
   @Test
+  void decideOnProviderSuccess_expiredIntentSeatFree_accepts() {
+    // L1: TTL lapsed but a late provider SUCCESS arrives; member still APPLIED and a seat is free.
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    intent.setStatus(PaymentIntentStatus.EXPIRED);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(paymentReservationRepository.findByPaymentIntentId(200L)).thenReturn(Optional.empty());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            any(), eq(List.of(MemberStatus.PENDING, MemberStatus.ACTIVE))))
+        .thenReturn(1L);
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertTrue(decision.accepted());
+  }
+
+  @Test
+  void decideOnProviderSuccess_expiredIntentSeatTaken_rejects() {
+    // L1: same late SUCCESS but the seat was filled meanwhile — reject, as before.
+    PaymentIntent intent =
+        merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
+    intent.setStatus(PaymentIntentStatus.EXPIRED);
+    when(paymentIntentRepository.findById(200L)).thenReturn(Optional.of(intent));
+    when(roomMemberRepository.findById(30L)).thenReturn(Optional.of(intent.getRoomMember()));
+    when(paymentReservationRepository.findByPaymentIntentId(200L)).thenReturn(Optional.empty());
+    when(roomMemberRepository.countByRoomAndStatusInAndDeletedAtIsNull(
+            any(), eq(List.of(MemberStatus.PENDING, MemberStatus.ACTIVE))))
+        .thenReturn(3L);
+
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(200L, bd("5000.00"), "KZT");
+
+    assertFalse(decision.accepted());
+    assertEquals("Место в комнате уже занято, оплата отменена", decision.reasonRu());
+  }
+
+  @Test
   void decideOnProviderSuccess_amountMismatch_rejects() {
     PaymentIntent intent =
         merchantDecisionIntent(bd("5000.00"), MemberStatus.APPLIED, RoomStatus.OPEN);
