@@ -31,7 +31,25 @@ public class AdminFinanceConfigDto {
   private int renewalWindowDays;
   private int renewalGraceDays;
 
+  /** B1: last known merchant payout balance at the provider (null if never read). */
+  private BigDecimal payoutBalanceKzt;
+
+  /** When that balance was last observed (null if never read). */
+  private java.time.LocalDateTime payoutBalanceCheckedAt;
+
+  /** Owner payouts currently parked in ON_HOLD waiting for the merchant balance to recover. */
+  private PayoutsWaiting payoutsWaitingForBalance;
+
   private Commission commission;
+
+  @Data
+  @Builder
+  @NoArgsConstructor
+  @AllArgsConstructor
+  public static class PayoutsWaiting {
+    private long count;
+    private BigDecimal sumKzt;
+  }
 
   @Data
   @Builder

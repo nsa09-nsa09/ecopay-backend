@@ -336,6 +336,18 @@ final class NotificationMessages {
               "Refund requires review",
               "Refund (refund #{entityId}) is in an ambiguous provider state and needs an operator"
                   + " decision in /admin/finance.");
+      case PAYOUT_BALANCE_LOW ->
+          copy(
+              locale,
+              "Недостаточно баланса для выплат",
+              "Баланса выплат у провайдера не хватает: выплаты владельцам поставлены в очередь."
+                  + " Пополните баланс — см. /admin/finance.",
+              "Төлемдерге баланс жеткіліксіз",
+              "Провайдердегі төлем балансы жеткіліксіз: иелерге төлемдер кезекке қойылды."
+                  + " Балансты толтырыңыз — /admin/finance қараңыз.",
+              "Payout balance is low",
+              "The provider payout balance is short; owner payouts are queued. Top up the balance —"
+                  + " see /admin/finance.");
     };
   }
 

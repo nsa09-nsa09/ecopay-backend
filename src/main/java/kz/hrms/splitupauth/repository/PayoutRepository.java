@@ -25,6 +25,17 @@ public interface PayoutRepository
 
   List<Payout> findByStatusInOrderByCreatedAtAsc(List<PayoutStatus> statuses);
 
+  long countByStatus(PayoutStatus status);
+
+  List<Payout> findByUserAndStatusIn(User user, List<PayoutStatus> statuses);
+
+  /**
+   * B1: total KZT of payouts parked in a status (e.g. ON_HOLD waiting for the merchant balance).
+   */
+  @Query(
+      "select coalesce(sum(coalesce(p.payableAmount, p.amount)), 0) from Payout p where p.status = :status")
+  java.math.BigDecimal sumPayableByStatus(@Param("status") PayoutStatus status);
+
   @Query(
       "select p from Payout p where p.status = kz.hrms.splitupauth.entity.PayoutStatus.PENDING_PROVIDER "
           + "and (p.providerPayoutId is not null or p.providerOrderId is not null) "

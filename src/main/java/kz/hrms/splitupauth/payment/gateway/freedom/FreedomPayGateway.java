@@ -61,6 +61,7 @@ public class FreedomPayGateway implements PaymentGateway {
   static final String STATUS_PATH = "/get_status3.php";
   static final String PAYOUT_PATH = "/api/reg2reg";
   static final String PAYOUT_STATUS_PATH = "/api/payment_status2";
+  static final String BALANCE_PATH = "/api/balance_status";
 
   /** Provider error codes meaning "no such payment/order". */
   private static final Set<String> NOT_FOUND_CODES = Set.of("11068", "340");
@@ -281,7 +282,7 @@ public class FreedomPayGateway implements PaymentGateway {
             .failureMessage("Uncaptured two-step payment can only be cancelled in full")
             .build();
       }
-      return cancel(request);
+      return cancel(request, refundedBefore(current));
     }
     if (state != ProviderPaymentState.CAPTURED
         && state != ProviderPaymentState.PARTIALLY_REFUNDED) {
@@ -302,20 +303,27 @@ public class FreedomPayGateway implements PaymentGateway {
     params.put("pg_idempotency_key", request.getIdempotencyKey());
     FreedomPayResponse response =
         client.call("refund", path, script(path), params, merchantSecret(), false);
-    return refundResponse(response);
+    return refundResponse(response, refundedBefore(current));
   }
 
-  private GatewayRefundResponse cancel(GatewayRefundRequest request) {
+  private GatewayRefundResponse cancel(GatewayRefundRequest request, BigDecimal refundedBefore) {
     String path = properties.isLegacyPhpEndpoints() ? "/cancel.php" : "/cancel";
     Map<String, String> params = baseParams();
     params.put("pg_payment_id", request.getExternalPaymentId());
     params.put("pg_idempotency_key", request.getIdempotencyKey());
     FreedomPayResponse response =
         client.call("cancel", path, script(path), params, merchantSecret(), false);
-    return refundResponse(response);
+    return refundResponse(response, refundedBefore);
   }
 
-  private static GatewayRefundResponse refundResponse(FreedomPayResponse response) {
+  private static BigDecimal refundedBefore(GatewayStatusResponse current) {
+    return current == null || current.getRefundedAmount() == null
+        ? BigDecimal.ZERO
+        : current.getRefundedAmount();
+  }
+
+  private static GatewayRefundResponse refundResponse(
+      FreedomPayResponse response, BigDecimal refundedBefore) {
     String status = response.status().toLowerCase(Locale.ROOT);
     boolean accepted =
         response.signed()
@@ -327,6 +335,7 @@ public class FreedomPayGateway implements PaymentGateway {
         .providerStatusCode(response.status())
         .failureCode(accepted ? null : response.get("pg_error_code"))
         .failureMessage(accepted ? null : response.get("pg_error_description"))
+        .providerRefundedBefore(refundedBefore)
         .build();
   }
 
@@ -381,6 +390,66 @@ public class FreedomPayGateway implements PaymentGateway {
         .failureMessage(ok || pending ? null : response.get("pg_error_description"))
         .pending(pending)
         .providerBalance(parseAmount(response.get("pg_balance")))
+        .build();
+  }
+
+  @Override
+  public boolean deletePayoutCardToken(String cardToken) {
+    if (!notBlank(cardToken)) {
+      return false;
+    }
+    String merchantId = properties.getMerchantId();
+    Map<String, String> params = new LinkedHashMap<>();
+    params.put("pg_merchant_id", merchantId);
+    params.put("pg_card_token", cardToken);
+    params.put("pg_salt", randomSalt());
+    try {
+      FreedomPayResponse response =
+          client.call(
+              "payout_card_remove",
+              "/v1/merchant/" + merchantId + "/cardstoragepayout/remove",
+              "remove",
+              params,
+              payoutCardSecret(),
+              false);
+      if (!response.isOk()) {
+        log.warn(
+            "FreedomPay payout-card token delete not accepted: status={} code={}",
+            response.status(),
+            response.get("pg_error_code"));
+      }
+      return response.isOk();
+    } catch (Exception ex) {
+      // Never let a provider-side delete failure block the local disconnect.
+      log.warn("FreedomPay payout-card token delete failed: {}", ex.getMessage());
+      return false;
+    }
+  }
+
+  @Override
+  public kz.hrms.splitupauth.payment.gateway.GatewayPayoutBalance getPayoutBalance() {
+    Map<String, String> params = baseParams();
+    // The docs do not state which secret signs balance_status. reg2reg and payout status both use
+    // the payout secret, so balance (a payout-side read) defaults to it; flip the property if the
+    // sandbox proves otherwise. An unsigned/failed answer is treated as "unknown", never as zero,
+    // so a transient provider hiccup can never wrongly hold every owner's payout.
+    String secret =
+        properties.isBalanceStatusUsesPayoutSecret() ? payoutSecret() : merchantSecret();
+    FreedomPayResponse response =
+        client.call("balance", BALANCE_PATH, script(BALANCE_PATH), params, secret, true);
+    if (!response.signed() || !response.isOk()) {
+      log.warn(
+          "FreedomPay balance_status unavailable: status={} code={}",
+          response.status(),
+          response.get("pg_error_code"));
+      return kz.hrms.splitupauth.payment.gateway.GatewayPayoutBalance.builder()
+          .available(false)
+          .build();
+    }
+    return kz.hrms.splitupauth.payment.gateway.GatewayPayoutBalance.builder()
+        .available(true)
+        .balance(parseAmount(response.get("pg_balance")))
+        .currency(response.get("pg_currency"))
         .build();
   }
 

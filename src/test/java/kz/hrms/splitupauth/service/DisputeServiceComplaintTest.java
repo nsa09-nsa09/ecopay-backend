@@ -327,7 +327,7 @@ class DisputeServiceComplaintTest {
     refundService.createRefund(admin, request, httpRequest);
     verify(paymentGateway, never()).refund(any());
 
-    when(refundTransactionRepository.findDispatchableIds(any(), eq(3), any()))
+    when(refundTransactionRepository.findDispatchableIds(any(), eq(8), any()))
         .thenReturn(List.of(80L));
     when(refundTransactionRepository.findWithLockById(80L))
         .thenAnswer(invocation -> Optional.of(savedRefund.get()));

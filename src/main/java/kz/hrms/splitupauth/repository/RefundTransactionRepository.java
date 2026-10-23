@@ -41,6 +41,9 @@ public interface RefundTransactionRepository
   List<RefundTransaction> findByPaymentTransactionAndStatusIn(
       PaymentTransaction tx, List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
 
+  List<RefundTransaction> findByStatusInOrderByCreatedAtAsc(
+      List<kz.hrms.splitupauth.entity.RefundStatus> statuses);
+
   @Query(
       """
       select r.id

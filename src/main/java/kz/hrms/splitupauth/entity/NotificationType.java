@@ -70,7 +70,9 @@ public enum NotificationType {
   // A payout the provider left in an ambiguous/failed state that needs an operator decision.
   PAYOUT_REQUIRES_REVIEW(NotificationCategory.PAYMENTS, true),
   // A refund the provider left in an ambiguous/failed state that needs an operator decision.
-  REFUND_REQUIRES_REVIEW(NotificationCategory.PAYMENTS, true);
+  REFUND_REQUIRES_REVIEW(NotificationCategory.PAYMENTS, true),
+  // The merchant payout balance ran short and queued owner payouts are waiting (admin-facing).
+  PAYOUT_BALANCE_LOW(NotificationCategory.PAYMENTS, true);
 
   private final NotificationCategory category;
   private final boolean emailEligible;

@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
 import kz.hrms.splitupauth.dto.RefundTransactionResponse;
@@ -39,7 +40,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 public class RefundService {
 
-  private static final int MAX_REFUND_ATTEMPTS = 3;
   private static final int REFUND_LEASE_MINUTES = 5;
   private static final int REFUND_REVIEW_AFTER_HOURS = 24;
 
@@ -58,6 +58,12 @@ public class RefundService {
 
   @Value("${app.money.refund-dispatch-enabled:false}")
   private boolean refundDispatchEnabled;
+
+  /**
+   * Max provider submission attempts for a temporary (not-sent / timeout) failure before FAILED.
+   */
+  @Value("${app.refund.max-attempts:8}")
+  private int maxRefundAttempts = 8;
 
   /**
    * Apply an async refund result callback from the provider. Finalizes a PENDING refund (that the
@@ -406,7 +412,7 @@ public class RefundService {
               LocalDateTime now = LocalDateTime.now(clock);
               List<Long> dueIds =
                   refundTransactionRepository.findDispatchableIds(
-                      now, MAX_REFUND_ATTEMPTS, PageRequest.of(0, 10));
+                      now, maxRefundAttempts, PageRequest.of(0, 10));
               for (Long id : dueIds) {
                 RefundTransaction refund =
                     refundTransactionRepository.findWithLockById(id).orElse(null);
@@ -533,8 +539,15 @@ public class RefundService {
       return;
     }
     PaymentTransaction charge = refund.getPaymentTransaction();
-    BigDecimal alreadyConfirmed = refundTransactionRepository.sumSuccessfulRefundAmounts(charge);
-    BigDecimal expected = alreadyConfirmed.add(refund.getAmount());
+    // Baseline is the provider's own refunded total snapshotted when this refund was submitted; it
+    // stays correct across several partial refunds even if our running sum diverges. Older rows
+    // with
+    // no snapshot fall back to our confirmed sum.
+    BigDecimal baseline =
+        refund.getProviderRefundedBefore() != null
+            ? refund.getProviderRefundedBefore()
+            : refundTransactionRepository.sumSuccessfulRefundAmounts(charge);
+    BigDecimal expected = baseline.add(refund.getAmount());
     BigDecimal providerRefunded =
         providerStatus.getRefundedAmount() == null
             ? BigDecimal.ZERO
@@ -599,6 +612,9 @@ public class RefundService {
                 refund.setStatus(RefundStatus.PENDING_PROVIDER);
                 refund.setProviderSubmittedAt(LocalDateTime.now(clock));
                 refund.setProviderRefundId(response.getExternalRefundId());
+                if (response.getProviderRefundedBefore() != null) {
+                  refund.setProviderRefundedBefore(response.getProviderRefundedBefore());
+                }
                 refund.setLeaseUntil(null);
                 refund.setNextRetryAt(null);
               } else {
@@ -611,7 +627,20 @@ public class RefundService {
                         + "): "
                         + response.getFailureMessage();
                 log.warn("Refund {} rejected by provider: {}", refundId, message);
-                scheduleRetryOrReview(refund, "PROVIDER_FAILED", message);
+                if (isExceedError(response.getFailureCode(), response.getFailureMessage())) {
+                  // Our ledger and the provider disagree on the refundable balance: never retry
+                  // blindly, an operator must reconcile the amounts.
+                  refund.setStatus(RefundStatus.REQUIRES_REVIEW);
+                  refund.setLeaseUntil(null);
+                  refund.setNextRetryAt(null);
+                  refund.setLastErrorCode("REFUND_EXCEEDS_CAPTURED");
+                  refund.setLastErrorMessage(message);
+                  notifyRefundRequiresReview(refund);
+                } else {
+                  // A signed, definite rejection is permanent (timeouts/5xx throw and never reach
+                  // here): fail it and page the admins rather than spin on pointless retries.
+                  failRefund(refund, "PROVIDER_REJECTED", message);
+                }
               }
               refundTransactionRepository.save(refund);
             });
@@ -625,26 +654,53 @@ public class RefundService {
               if (refund == null || refund.getStatus() != RefundStatus.PENDING) {
                 return;
               }
-              scheduleRetryOrReview(refund, ex.getClass().getSimpleName(), ex.getMessage());
+              scheduleRetryOrFail(refund, ex.getClass().getSimpleName(), ex.getMessage());
               refundTransactionRepository.save(refund);
             });
   }
 
-  private void scheduleRetryOrReview(RefundTransaction refund, String code, String message) {
+  /**
+   * A provably-not-sent (temporary) failure: retry with quadratic backoff up to {@code
+   * app.refund.max-attempts}, then give up as FAILED and page the admins. Settled refunds never get
+   * here; ambiguous submissions go to PENDING_PROVIDER reconciliation instead of retrying.
+   */
+  private void scheduleRetryOrFail(RefundTransaction refund, String code, String message) {
     int attempts = refund.getRetryCount() == null ? 0 : refund.getRetryCount();
     attempts++;
     refund.setRetryCount(attempts);
     refund.setLeaseUntil(null);
     refund.setLastErrorCode(code);
     refund.setLastErrorMessage(message);
-    if (attempts >= MAX_REFUND_ATTEMPTS) {
-      refund.setStatus(RefundStatus.REQUIRES_REVIEW);
+    if (attempts >= maxRefundAttempts) {
+      refund.setStatus(RefundStatus.FAILED);
       refund.setNextRetryAt(null);
-      notifyRefundRequiresReview(refund);
+      notifyRefundFailedAdmins(refund);
       return;
     }
     refund.setStatus(RefundStatus.PENDING);
     refund.setNextRetryAt(LocalDateTime.now(clock).plusMinutes((long) attempts * attempts));
+  }
+
+  /** Terminal failure of a refund we could not get the provider to accept; alerts the admins. */
+  private void failRefund(RefundTransaction refund, String code, String message) {
+    refund.setStatus(RefundStatus.FAILED);
+    refund.setLeaseUntil(null);
+    refund.setNextRetryAt(null);
+    refund.setLastErrorCode(code);
+    refund.setLastErrorMessage(message);
+    notifyRefundFailedAdmins(refund);
+  }
+
+  /** FreedomPay rejected the revoke because the amount tops the captured/refundable balance. */
+  private static boolean isExceedError(String code, String message) {
+    String c = code == null ? "" : code.toLowerCase(Locale.ROOT);
+    String m = message == null ? "" : message.toLowerCase(Locale.ROOT);
+    return c.contains("exceed")
+        || c.contains("amount")
+        || m.contains("exceed")
+        || m.contains("превыш")
+        || m.contains("больше суммы")
+        || m.contains("exceeds");
   }
 
   private void scheduleRefundDispatchAfterCommit() {
@@ -669,6 +725,23 @@ public class RefundService {
         NotificationType.REFUND_REQUIRES_REVIEW,
         refund.getId(),
         java.util.Map.of("entityId", String.valueOf(refund.getId())),
+        "/admin/finance",
+        java.util.Map.of("refundId", refund.getId()));
+  }
+
+  /** One-shot admin alert that a refund exhausted retries or was permanently rejected (FAILED). */
+  private void notifyRefundFailedAdmins(RefundTransaction refund) {
+    if (refund.getId() == null) {
+      return;
+    }
+    notificationService.notifyAdminsOnce(
+        NotificationType.REFUND_REQUIRES_REVIEW,
+        refund.getId(),
+        java.util.Map.of(
+            "entityId",
+            String.valueOf(refund.getId()),
+            "reason",
+            refund.getLastErrorCode() == null ? "FAILED" : refund.getLastErrorCode()),
         "/admin/finance",
         java.util.Map.of("refundId", refund.getId()));
   }
@@ -739,6 +812,59 @@ public class RefundService {
             .build());
 
     return map(refund);
+  }
+
+  /**
+   * B8: admin re-queue of a stuck refund. A rejected/failed refund (REQUIRES_REVIEW / FAILED) is
+   * re-dispatched — the gateway reads the provider state first and refuses an already-refunded
+   * charge, so this cannot double-refund. A PENDING_PROVIDER refund is only nudged to reconcile
+   * sooner (never re-sent). Terminal SUCCESS is a no-op.
+   */
+  @Transactional
+  public void retryStuckRefund(Long id) {
+    RefundTransaction refund =
+        refundTransactionRepository
+            .findWithLockById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
+    LocalDateTime now = LocalDateTime.now(clock);
+    switch (refund.getStatus()) {
+      case REQUIRES_REVIEW, FAILED -> {
+        refund.setStatus(RefundStatus.PENDING);
+        refund.setRetryCount(0);
+        refund.setNextRetryAt(now);
+        refund.setLeaseUntil(null);
+        refundTransactionRepository.save(refund);
+        scheduleRefundDispatchAfterCommit();
+      }
+      case PENDING_PROVIDER -> {
+        refund.setNextRetryAt(now);
+        refundTransactionRepository.save(refund);
+      }
+      case PENDING -> {
+        refund.setNextRetryAt(now);
+        refund.setLeaseUntil(null);
+        refundTransactionRepository.save(refund);
+      }
+      default ->
+          throw new InvalidRequestException(
+              "REFUND_NOT_RETRYABLE", "Refund is not in a retryable state");
+    }
+    eventLogger.log(
+        "REFUND",
+        refund.getId(),
+        "ADMIN_RETRY",
+        null,
+        refund.getStatus().name(),
+        null,
+        null,
+        refund.getIdempotencyKey(),
+        java.util.Map.of());
+  }
+
+  @Transactional(readOnly = true)
+  public List<RefundTransaction> findStuck() {
+    return refundTransactionRepository.findByStatusInOrderByCreatedAtAsc(
+        List.of(RefundStatus.PENDING_PROVIDER, RefundStatus.REQUIRES_REVIEW, RefundStatus.FAILED));
   }
 
   private void ensureAdmin(User currentUser) {

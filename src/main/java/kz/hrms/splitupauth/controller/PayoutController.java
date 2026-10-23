@@ -56,10 +56,10 @@ public class PayoutController {
   }
 
   @DeleteMapping("/methods/{id}")
-  public ResponseEntity<Void> revokeMethod(
+  public ResponseEntity<Map<String, Object>> revokeMethod(
       @AuthenticationPrincipal User user, @PathVariable Long id) {
-    payoutService.revokeMethod(user, id);
-    return ResponseEntity.noContent().build();
+    int affected = payoutService.revokeMethod(user, id);
+    return ResponseEntity.ok(Map.of("pendingPayoutsAffected", affected));
   }
 
   /**

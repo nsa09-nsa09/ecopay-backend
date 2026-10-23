@@ -55,6 +55,7 @@ class PayoutServiceTest {
   @Mock private NotificationService notificationService;
   @Mock private MoneyLedgerService moneyLedgerService;
   @Mock private PayoutEligibilityService payoutEligibilityService;
+  @Mock private PayoutBalanceService payoutBalanceService;
   @Mock private PlatformTransactionManager transactionManager;
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneId.of("UTC"));
@@ -77,6 +78,7 @@ class PayoutServiceTest {
             notificationService,
             moneyLedgerService,
             payoutEligibilityService,
+            payoutBalanceService,
             clock,
             transactionManager);
     org.springframework.test.util.ReflectionTestUtils.setField(
@@ -544,6 +546,243 @@ class PayoutServiceTest {
 
     assertEquals(PayoutStatus.PENDING_METHOD, payout.getStatus());
     assertNotNull(payout.getFailureReason());
+  }
+
+  @Test
+  void processPendingPayouts_insufficientBalance_sendsWhatFitsAndHoldsTheRest() {
+    // Balance 1000, three due payouts of 600 for three different owners: only the first fits.
+    User o1 = User.builder().id(501L).build();
+    User o2 = User.builder().id(502L).build();
+    User o3 = User.builder().id(503L).build();
+    Payout p1 = payout(601L, o1, "600.00", LocalDateTime.now(clock).minusHours(1));
+    Payout p2 = payout(602L, o2, "600.00", LocalDateTime.now(clock).minusHours(1));
+    Payout p3 = payout(603L, o3, "600.00", LocalDateTime.now(clock).minusHours(1));
+    for (User owner : List.of(o1, o2, o3)) {
+      PayoutMethod method =
+          PayoutMethod.builder()
+              .id(owner.getId())
+              .user(owner)
+              .providerCardToken("tok-" + owner.getId())
+              .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+              .status("ACTIVE")
+              .build();
+      when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+          .thenReturn(Optional.of(method));
+    }
+    when(payoutRepository.findDispatchable(any(), any())).thenReturn(List.of(p1, p2, p3));
+    when(payoutRepository.findWithLockById(601L)).thenReturn(Optional.of(p1));
+    when(payoutRepository.findWithLockById(602L)).thenReturn(Optional.of(p2));
+    when(payoutRepository.findWithLockById(603L)).thenReturn(Optional.of(p3));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(payoutBalanceService.availableForDispatch()).thenReturn(new BigDecimal("1000.00"));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.providerName()).thenReturn("mock");
+    when(paymentGateway.payout(any()))
+        .thenReturn(
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("MOCK-OUT").build());
+
+    payoutService.processPendingPayouts();
+
+    assertEquals(PayoutStatus.SUCCESS, p1.getStatus());
+    assertEquals(PayoutStatus.ON_HOLD, p2.getStatus());
+    assertEquals(PayoutStatus.ON_HOLD, p3.getStatus());
+    assertEquals("MERCHANT_BALANCE_LOW", p2.getFailureReason());
+    verify(paymentGateway, times(1)).payout(any());
+    verify(payoutBalanceService).alertBalanceLow();
+  }
+
+  @Test
+  void processPendingPayouts_unknownBalance_doesNotGate() {
+    User owner = User.builder().id(42L).build();
+    Payout payout = payout(701L, owner, "600.00", LocalDateTime.now(clock).minusHours(1));
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    when(payoutRepository.findDispatchable(any(), any())).thenReturn(List.of(payout));
+    when(payoutRepository.findWithLockById(701L)).thenReturn(Optional.of(payout));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(payoutBalanceService.availableForDispatch()).thenReturn(null);
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.providerName()).thenReturn("mock");
+    when(paymentGateway.payout(any()))
+        .thenReturn(
+            GatewayPayoutResponse.builder().success(true).externalPayoutId("MOCK-OUT").build());
+
+    payoutService.processPendingPayouts();
+
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
+    verify(paymentGateway, times(1)).payout(any());
+  }
+
+  @Test
+  void revokeLastActiveCard_parksPendingPayoutsAsPendingMethod() {
+    User owner = User.builder().id(42L).build();
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .id(10L)
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .panMask("440043******0000")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .isDefault(true)
+            .build();
+    Payout pending = payout(801L, owner, "500.00", LocalDateTime.now(clock).minusDays(1));
+    Payout onHold = payout(802L, owner, "600.00", LocalDateTime.now(clock).minusDays(1));
+    onHold.setStatus(PayoutStatus.ON_HOLD);
+    when(payoutMethodRepository.findById(10L)).thenReturn(Optional.of(method));
+    when(payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+            owner, "ACTIVE"))
+        .thenReturn(List.of(method));
+    when(payoutMethodRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(payoutRepository.findByUserAndStatusIn(
+            owner, List.of(PayoutStatus.PENDING, PayoutStatus.ON_HOLD)))
+        .thenReturn(List.of(pending, onHold));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+
+    int affected = payoutService.revokeMethod(owner, 10L);
+
+    assertEquals(2, affected);
+    assertEquals(PayoutStatus.PENDING_METHOD, pending.getStatus());
+    assertEquals(PayoutStatus.PENDING_METHOD, onHold.getStatus());
+    assertEquals("REVOKED", method.getStatus());
+    verify(paymentGateway).deletePayoutCardToken("tok-owner");
+  }
+
+  @Test
+  void revokeNonLastCard_leavesPendingPayoutsAlone() {
+    User owner = User.builder().id(42L).build();
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .id(10L)
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    PayoutMethod other =
+        PayoutMethod.builder()
+            .id(11L)
+            .user(owner)
+            .providerCardToken("tok-2")
+            .status("ACTIVE")
+            .build();
+    when(payoutMethodRepository.findById(10L)).thenReturn(Optional.of(method));
+    when(payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+            owner, "ACTIVE"))
+        .thenReturn(List.of(method, other));
+    when(payoutMethodRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+
+    int affected = payoutService.revokeMethod(owner, 10L);
+
+    assertEquals(0, affected);
+    verify(payoutRepository, never()).findByUserAndStatusIn(any(), any());
+  }
+
+  @Test
+  void registerVerifiedPayoutMethod_duplicateMaskReusesExistingMethod() {
+    User owner = User.builder().id(42L).build();
+    PayoutMethod existing =
+        PayoutMethod.builder()
+            .id(10L)
+            .user(owner)
+            .providerCardToken("tok-old")
+            .panMask("440043******0000")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .isDefault(true)
+            .build();
+    when(payoutMethodRepository.findByUserAndProviderCardTokenAndStatus(owner, "tok-new", "ACTIVE"))
+        .thenReturn(Optional.empty());
+    when(payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+            owner, "ACTIVE"))
+        .thenReturn(List.of(existing));
+    when(payoutRepository.findByUserAndStatusIn(owner, List.of(PayoutStatus.PENDING_METHOD)))
+        .thenReturn(List.of());
+
+    PayoutMethod result =
+        payoutService.registerVerifiedPayoutMethod(owner, "tok-new", "440043******0000");
+
+    assertEquals(10L, result.getId());
+    verify(payoutMethodRepository, never()).save(any());
+  }
+
+  @Test
+  void registerVerifiedPayoutMethod_firstCardReactivatesPendingMethodPayouts() {
+    User owner = User.builder().id(42L).build();
+    Payout waiting = payout(810L, owner, "500.00", LocalDateTime.now(clock).minusDays(1));
+    waiting.setStatus(PayoutStatus.PENDING_METHOD);
+    when(payoutMethodRepository.findByUserAndProviderCardTokenAndStatus(owner, "tok-new", "ACTIVE"))
+        .thenReturn(Optional.empty());
+    when(payoutMethodRepository.findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+            owner, "ACTIVE"))
+        .thenReturn(List.of());
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.empty());
+    when(payoutMethodRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(payoutRepository.findByUserAndStatusIn(owner, List.of(PayoutStatus.PENDING_METHOD)))
+        .thenReturn(List.of(waiting));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    payoutService.registerVerifiedPayoutMethod(owner, "tok-new", "440043******1111");
+
+    assertEquals(PayoutStatus.PENDING, waiting.getStatus());
+    assertEquals(LocalDateTime.now(clock), waiting.getNextRetryAt());
+  }
+
+  @Test
+  void reconcilePendingProviderPayout_stuckOver24h_goesToReview() {
+    Payout payout =
+        Payout.builder()
+            .id(900L)
+            .amount(new BigDecimal("1000.00"))
+            .submittedAmount(new BigDecimal("1000.00"))
+            .currency("KZT")
+            .status(PayoutStatus.PENDING_PROVIDER)
+            .providerPayoutId("FP-900")
+            .providerOrderId("ecopay-payout-900")
+            .submittedAt(LocalDateTime.now(clock).minusHours(25))
+            .build();
+    when(payoutRepository.findProviderPendingForReconciliation(any())).thenReturn(List.of(payout));
+    when(payoutRepository.findWithLockById(900L)).thenReturn(Optional.of(payout));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.getPayoutStatus("FP-900", "ecopay-payout-900"))
+        .thenReturn(GatewayStatusResponse.builder().status("PENDING").build());
+
+    payoutService.reconcilePendingProviderPayouts();
+
+    assertEquals(PayoutStatus.REQUIRES_REVIEW, payout.getStatus());
+    verify(paymentGateway, never()).payout(any());
+  }
+
+  @Test
+  void retryStuckPayout_requeuesToPendingForNextTick() {
+    Payout payout =
+        Payout.builder()
+            .id(901L)
+            .amount(new BigDecimal("1000.00"))
+            .currency("KZT")
+            .status(PayoutStatus.REQUIRES_REVIEW)
+            .idempotencyKey("payout-901")
+            .retryCount(3)
+            .build();
+    when(payoutRepository.findWithLockById(901L)).thenReturn(Optional.of(payout));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    payoutService.retryStuckPayout(901L);
+
+    assertEquals(PayoutStatus.PENDING, payout.getStatus());
+    assertEquals(0, payout.getRetryCount());
+    assertEquals(LocalDateTime.now(clock), payout.getNextRetryAt());
   }
 
   private Payout payout(Long id, User owner, String amount, LocalDateTime releaseAt) {

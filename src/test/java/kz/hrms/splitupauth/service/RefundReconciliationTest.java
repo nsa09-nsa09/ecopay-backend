@@ -109,7 +109,7 @@ class RefundReconciliationTest {
   }
 
   private void dispatchableOnce() {
-    when(refundTransactionRepository.findDispatchableIds(any(), eq(3), any()))
+    when(refundTransactionRepository.findDispatchableIds(any(), eq(8), any()))
         .thenReturn(List.of(5L))
         .thenReturn(List.of());
   }
@@ -205,6 +205,55 @@ class RefundReconciliationTest {
     service.reconcilePendingProviderRefunds(10);
     assertEquals(RefundStatus.REQUIRES_REVIEW, refund.getStatus());
     verify(gateway, never()).refund(any());
+  }
+
+  @Test
+  void twoPartialRefundsConfirmFromProviderRefundedBeforeSnapshot() {
+    // Charge 1000: refund A=400 already SUCCESS at the provider; refund B=300 submitted afterwards
+    // snapshots providerRefundedBefore=400, so it must confirm only when the provider total hits
+    // 700
+    // — never from a stale running sum.
+    RefundTransaction refundB =
+        RefundTransaction.builder()
+            .id(6L)
+            .paymentTransaction(charge)
+            .status(RefundStatus.PENDING_PROVIDER)
+            .amount(new BigDecimal("300.00"))
+            .currency("KZT")
+            .idempotencyKey("refund-6")
+            .providerRefundedBefore(new BigDecimal("400.00"))
+            .providerSubmittedAt(LocalDateTime.ofInstant(NOW, ZONE).minusMinutes(10))
+            .build();
+    when(refundTransactionRepository.findWithLockById(6L)).thenReturn(Optional.of(refundB));
+    when(refundTransactionRepository.findIdsPendingProviderForReconciliation(any(), any()))
+        .thenReturn(List.of(6L));
+    // Settlement total (A 400 + B 300) once B confirms; baseline for confirmation uses the
+    // snapshot.
+    lenient()
+        .when(refundTransactionRepository.sumSuccessfulRefundAmounts(charge))
+        .thenReturn(new BigDecimal("700.00"));
+    // A provider total of 400 (only A settled) must NOT confirm B yet.
+    when(gateway.getStatus("fp-3"))
+        .thenReturn(
+            GatewayStatusResponse.builder()
+                .status("REVIEW")
+                .providerState(ProviderPaymentState.PARTIALLY_REFUNDED)
+                .refundedAmount(new BigDecimal("400.00"))
+                .build())
+        .thenReturn(
+            GatewayStatusResponse.builder()
+                .status("REVIEW")
+                .providerState(ProviderPaymentState.PARTIALLY_REFUNDED)
+                .refundedAmount(new BigDecimal("700.00"))
+                .build());
+
+    service.reconcilePendingProviderRefunds(10);
+    assertEquals(RefundStatus.PENDING_PROVIDER, refundB.getStatus());
+
+    service.reconcilePendingProviderRefunds(10);
+    assertEquals(RefundStatus.SUCCESS, refundB.getStatus());
+    verify(payoutService, times(1))
+        .adjustOwnerPayoutForSuccessfulRefund(any(), eq(new BigDecimal("700.00")));
   }
 
   @Test

@@ -62,8 +62,12 @@ public class PayoutService {
   private final NotificationService notificationService;
   private final MoneyLedgerService moneyLedgerService;
   private final PayoutEligibilityService payoutEligibilityService;
+  private final PayoutBalanceService payoutBalanceService;
   private final Clock clock;
   private final PlatformTransactionManager transactionManager;
+
+  private static final int BALANCE_HOLD_RETRY_MINUTES = 30;
+  private static final int PENDING_PROVIDER_REVIEW_AFTER_HOURS = 24;
 
   /**
    * EcoPay owner payout reserve: days the owner's share of a CAPTURED member payment stays held
@@ -186,7 +190,7 @@ public class PayoutService {
 
     List<Payout> pending =
         payoutRepository.findDispatchable(
-            List.of(PayoutStatus.PENDING, PayoutStatus.PENDING_METHOD), now);
+            List.of(PayoutStatus.PENDING, PayoutStatus.PENDING_METHOD, PayoutStatus.ON_HOLD), now);
     Map<BatchGroupKey, List<Payout>> grouped = new LinkedHashMap<>();
     for (Payout payout : pending) {
       if (payout.getStatus() == PayoutStatus.PROCESSING) {
@@ -204,7 +208,22 @@ public class PayoutService {
       grouped.computeIfAbsent(candidate.groupKey(), key -> new ArrayList<>()).add(payout);
     }
 
+    // B1: send only as much as the merchant payout balance (minus reserve) covers; the rest wait in
+    // ON_HOLD. An unknown balance (null) never gates — a provider hiccup can't freeze every payout.
+    BigDecimal available = payoutBalanceService.availableForDispatch();
+    BigDecimal spent = BigDecimal.ZERO;
+    boolean heldForBalance = false;
     for (List<Payout> group : grouped.values()) {
+      BigDecimal groupAmount =
+          group.stream()
+              .map(this::payoutPayableAmount)
+              .reduce(BigDecimal.ZERO, BigDecimal::add)
+              .setScale(2, RoundingMode.HALF_UP);
+      if (available != null && spent.add(groupAmount).compareTo(available) > 0) {
+        holdGroupForBalance(group.stream().map(Payout::getId).toList(), now);
+        heldForBalance = true;
+        continue;
+      }
       try {
         if (group.size() > 1) {
           dispatchNewPayoutBatch(group.stream().map(Payout::getId).toList());
@@ -214,10 +233,51 @@ public class PayoutService {
             dispatchPayout(payout.getId());
           }
         }
+        spent = spent.add(groupAmount);
       } catch (Exception ex) {
         log.error("Payout group dispatch failed: {}", ex.getMessage());
       }
     }
+    if (heldForBalance) {
+      payoutBalanceService.alertBalanceLow();
+    }
+  }
+
+  /**
+   * B1: park a group of due payouts in ON_HOLD because the merchant balance will not cover them
+   * this tick. They are retried after {@value #BALANCE_HOLD_RETRY_MINUTES} minutes (or the next
+   * top-up). The owner is never told — the delay is not their fault; their payout stays "queued"
+   * internally.
+   */
+  private void holdGroupForBalance(List<Long> payoutIds, LocalDateTime now) {
+    tx().executeWithoutResult(
+            status -> {
+              for (Long id : payoutIds) {
+                Payout payout = payoutRepository.findWithLockById(id).orElse(null);
+                if (payout == null
+                    || payout.getPayoutBatch() != null
+                    || (payout.getStatus() != PayoutStatus.PENDING
+                        && payout.getStatus() != PayoutStatus.PENDING_METHOD
+                        && payout.getStatus() != PayoutStatus.ON_HOLD)) {
+                  continue;
+                }
+                payout.setStatus(PayoutStatus.ON_HOLD);
+                payout.setFailureReason("MERCHANT_BALANCE_LOW");
+                payout.setLeaseUntil(null);
+                payout.setNextRetryAt(now.plusMinutes(BALANCE_HOLD_RETRY_MINUTES));
+                payoutRepository.save(payout);
+                eventLogger.log(
+                    "PAYOUT",
+                    payout.getId(),
+                    "BALANCE_HOLD",
+                    null,
+                    PayoutStatus.ON_HOLD.name(),
+                    null,
+                    null,
+                    payout.getIdempotencyKey(),
+                    java.util.Map.of("reason", "MERCHANT_BALANCE_LOW"));
+              }
+            });
   }
 
   /**
@@ -355,7 +415,8 @@ public class PayoutService {
                 return null;
               }
               if (payout.getStatus() != PayoutStatus.PENDING
-                  && payout.getStatus() != PayoutStatus.PENDING_METHOD) {
+                  && payout.getStatus() != PayoutStatus.PENDING_METHOD
+                  && payout.getStatus() != PayoutStatus.ON_HOLD) {
                 return null;
               }
               LocalDateTime now = LocalDateTime.now(clock);
@@ -581,7 +642,8 @@ public class PayoutService {
             && !payout.getLeaseUntil().isAfter(now);
     if (!staleProcessing
         && payout.getStatus() != PayoutStatus.PENDING
-        && payout.getStatus() != PayoutStatus.PENDING_METHOD) {
+        && payout.getStatus() != PayoutStatus.PENDING_METHOD
+        && payout.getStatus() != PayoutStatus.ON_HOLD) {
       return null;
     }
     if (!staleProcessing
@@ -692,6 +754,7 @@ public class PayoutService {
     if (payout == null || payout.getStatus() != PayoutStatus.PROCESSING) {
       return;
     }
+    payoutBalanceService.recordReg2regBalance(resp.getProviderBalance());
     if (resp.isSuccess() && !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(providerName)) {
       payout.setStatus(PayoutStatus.SUCCESS);
       payout.setProviderPayoutId(resp.getExternalPayoutId());
@@ -762,6 +825,7 @@ public class PayoutService {
     if (batch == null || !"PROCESSING".equals(batch.getStatus())) {
       return;
     }
+    payoutBalanceService.recordReg2regBalance(resp.getProviderBalance());
     LocalDateTime now = LocalDateTime.now(clock);
     if (resp.isSuccess() && !FreedomPayGateway.PROVIDER_NAME.equalsIgnoreCase(providerName)) {
       batch.setStatus("SUCCESS");
@@ -916,7 +980,9 @@ public class PayoutService {
       payout.setLeaseUntil(null);
       payout.setNextRetryAt(null);
       payoutRepository.save(payout);
-      if (status == PayoutStatus.REQUIRES_REVIEW) {
+      // B8: a child left in REQUIRES_REVIEW or FAILED (batch exhausted its retries) needs an
+      // operator — alert the admins either way.
+      if (status == PayoutStatus.REQUIRES_REVIEW || status == PayoutStatus.FAILED) {
         notifyPayoutRequiresReview(payout);
       }
     }
@@ -983,6 +1049,18 @@ public class PayoutService {
               ? "Provider status reported payout failure"
               : providerStatus.getFailureMessage());
       payout.setProcessedAt(LocalDateTime.now(clock));
+      payout.setNextRetryAt(null);
+      payoutRepository.save(payout);
+      notifyPayoutRequiresReview(payout);
+      return;
+    }
+    // B8: a payout the provider keeps reporting as pending for over 24h is not self-healing — stop
+    // polling forever and hand it to an operator.
+    LocalDateTime submittedAt = payout.getSubmittedAt();
+    if (submittedAt != null
+        && submittedAt.plusHours(PENDING_PROVIDER_REVIEW_AFTER_HOURS).isBefore(now)) {
+      payout.setStatus(PayoutStatus.REQUIRES_REVIEW);
+      payout.setFailureReason("Payout stuck at provider (PENDING_PROVIDER) for over 24h");
       payout.setNextRetryAt(null);
       payoutRepository.save(payout);
       notifyPayoutRequiresReview(payout);
@@ -1413,11 +1491,26 @@ public class PayoutService {
     if (providerCardToken == null || providerCardToken.isBlank()) {
       throw new InvalidRequestException("providerCardToken is required");
     }
+    // B3: a reconnect of the same card (same provider token, or the same card returned under a new
+    // token but the same masked PAN) must not create a second method — reuse the existing one.
     PayoutMethod already =
         payoutMethodRepository
             .findByUserAndProviderCardTokenAndStatus(user, providerCardToken, "ACTIVE")
             .orElse(null);
+    if (already == null && notBlank(panMask)) {
+      already =
+          payoutMethodRepository
+              .findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(
+                  user, PayoutMethod.STATUS_ACTIVE)
+              .stream()
+              .filter(m -> panMask.equals(m.getPanMask()))
+              .findFirst()
+              .orElse(null);
+    }
     if (already != null) {
+      if (Boolean.TRUE.equals(already.getIsDefault())) {
+        reactivatePendingMethodPayouts(user);
+      }
       return already;
     }
     boolean firstMethod =
@@ -1433,7 +1526,12 @@ public class PayoutService {
             .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
             .verifiedAt(LocalDateTime.now(clock))
             .build();
-    return payoutMethodRepository.save(method);
+    method = payoutMethodRepository.save(method);
+    // A newly connected default card unblocks any payouts that were waiting for a method.
+    if (firstMethod) {
+      reactivatePendingMethodPayouts(user);
+    }
+    return method;
   }
 
   /** Active methods plus legacy ones the owner must reconnect (flagged requiresRebind). */
@@ -1477,8 +1575,14 @@ public class PayoutService {
     }
   }
 
+  /**
+   * B3: disconnect an owner payout card. The provider token is deleted best-effort, then the method
+   * is revoked locally. If it was the owner's last active card, any still-pending payouts (PENDING
+   * / ON_HOLD) move to PENDING_METHOD so they wait for a new card instead of failing. Returns how
+   * many payouts were affected so the UI can warn the owner.
+   */
   @Transactional
-  public void revokeMethod(User user, Long id) {
+  public int revokeMethod(User user, Long id) {
     PayoutMethod method =
         payoutMethodRepository
             .findById(id)
@@ -1486,10 +1590,111 @@ public class PayoutService {
     if (!method.getUser().getId().equals(user.getId())) {
       throw new ForbiddenOperationException("Not your method");
     }
+    if ("REVOKED".equals(method.getStatus())) {
+      return 0; // idempotent
+    }
+
+    boolean lastActiveCard =
+        payoutMethodRepository
+            .findByUserAndStatusOrderByIsDefaultDescCreatedAtDesc(user, PayoutMethod.STATUS_ACTIVE)
+            .stream()
+            .noneMatch(m -> !m.getId().equals(method.getId()));
+
+    if (notBlank(method.getProviderCardToken())) {
+      try {
+        gatewayRegistry.defaultGateway().deletePayoutCardToken(method.getProviderCardToken());
+      } catch (Exception ex) {
+        log.warn("Provider payout-card token delete failed for method {}: {}", id, ex.getMessage());
+      }
+    }
+
     method.setStatus("REVOKED");
     method.setIsDefault(false);
     method.setRevokedAt(LocalDateTime.now(clock));
     payoutMethodRepository.save(method);
+
+    if (!lastActiveCard) {
+      return 0;
+    }
+    // No card remains: pending payouts cannot be routed, so park them until a new card is
+    // connected.
+    List<Payout> affected =
+        payoutRepository.findByUserAndStatusIn(
+            user, List.of(PayoutStatus.PENDING, PayoutStatus.ON_HOLD));
+    int count = 0;
+    for (Payout payout : affected) {
+      if (payout.getPayoutBatch() != null) {
+        continue; // a batched payout is mid-dispatch; leave it to the batch flow
+      }
+      payout.setStatus(PayoutStatus.PENDING_METHOD);
+      payout.setNextRetryAt(null);
+      payout.setLeaseUntil(null);
+      payoutRepository.save(payout);
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * B3: a usable payout card just became the owner's default — release every payout that was parked
+   * in PENDING_METHOD so the next dispatch tick sends it.
+   */
+  private void reactivatePendingMethodPayouts(User user) {
+    LocalDateTime now = LocalDateTime.now(clock);
+    for (Payout payout :
+        payoutRepository.findByUserAndStatusIn(user, List.of(PayoutStatus.PENDING_METHOD))) {
+      payout.setStatus(PayoutStatus.PENDING);
+      payout.setNextRetryAt(now);
+      payout.setFailureReason(null);
+      payoutRepository.save(payout);
+    }
+  }
+
+  /**
+   * B8: admin re-queue of a stuck payout. Re-dispatch is idempotent: a previously-submitted payout
+   * (providerOrderId + submittedAmount set) runs the B2 pre-dispatch status check first, so a
+   * payout already at the provider is never sent twice. Terminal SUCCESS/REVERSED/CANCELED are not
+   * retryable.
+   */
+  @Transactional
+  public void retryStuckPayout(Long id) {
+    Payout payout =
+        payoutRepository
+            .findWithLockById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Payout not found"));
+    switch (payout.getStatus()) {
+      case REQUIRES_REVIEW, PENDING_PROVIDER, ON_HOLD, PENDING_METHOD, FAILED, PROCESSING -> {
+        payout.setStatus(PayoutStatus.PENDING);
+        payout.setRetryCount(0);
+        payout.setNextRetryAt(LocalDateTime.now(clock));
+        payout.setLeaseUntil(null);
+        payoutRepository.save(payout);
+        eventLogger.log(
+            "PAYOUT",
+            payout.getId(),
+            "ADMIN_RETRY",
+            null,
+            PayoutStatus.PENDING.name(),
+            null,
+            null,
+            payout.getIdempotencyKey(),
+            java.util.Map.of());
+      }
+      default ->
+          throw new InvalidRequestException(
+              "PAYOUT_NOT_RETRYABLE", "Payout is not in a retryable state");
+    }
+  }
+
+  @Transactional(readOnly = true)
+  public List<Payout> findStuck() {
+    return payoutRepository.findByStatusInOrderByCreatedAtAsc(
+        List.of(
+            PayoutStatus.PENDING_PROVIDER,
+            PayoutStatus.PROCESSING,
+            PayoutStatus.REQUIRES_REVIEW,
+            PayoutStatus.ON_HOLD,
+            PayoutStatus.FAILED));
   }
 
   private TransactionTemplate tx() {

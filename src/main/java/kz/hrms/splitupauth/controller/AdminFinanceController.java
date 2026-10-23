@@ -62,6 +62,8 @@ public class AdminFinanceController {
   private final FreedomWebhookInboxCoordinator inboxCoordinator;
   private final AdminActionLogRepository adminActionLogRepository;
   private final RefundService refundService;
+  private final kz.hrms.splitupauth.service.PayoutService payoutService;
+  private final kz.hrms.splitupauth.service.AdminFinanceStuckService stuckService;
 
   /**
    * C3: snapshot of the live-money gates + commission tiers so QA / admin UI can tell at a glance
@@ -151,6 +153,58 @@ public class AdminFinanceController {
       @AuthenticationPrincipal User admin,
       HttpServletRequest httpRequest) {
     return ResponseEntity.ok(refundService.createRefund(admin, request, httpRequest));
+  }
+
+  /**
+   * B8: money that is wedged at the provider or in review — stuck payouts and refunds with the
+   * reason and how long they have been stuck. {@code type} optionally narrows to PAYOUT or REFUND.
+   */
+  @GetMapping("/stuck")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<java.util.List<kz.hrms.splitupauth.dto.StuckMoneyItemDto>> stuck(
+      @RequestParam(required = false) String type) {
+    return ResponseEntity.ok(stuckService.listStuck(type));
+  }
+
+  /**
+   * B8: re-queue a stuck payout. Idempotent — a payout already at the provider runs the B2
+   * pre-dispatch status check and is never sent twice. Audited in AdminActionLog.
+   */
+  @PostMapping("/payouts/{id}/retry")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<java.util.Map<String, Object>> retryPayout(
+      @PathVariable Long id, @AuthenticationPrincipal User admin, HttpServletRequest httpRequest) {
+    payoutService.retryStuckPayout(id);
+    auditRetry(admin, "PAYOUT", id, httpRequest);
+    return ResponseEntity.ok(java.util.Map.of("id", id, "requeued", true));
+  }
+
+  /**
+   * B8: re-queue a stuck refund. A failed/rejected refund is re-dispatched (the gateway reads the
+   * provider state first, so an already-refunded charge is refused — never a double refund); a
+   * PENDING_PROVIDER refund is only nudged to reconcile sooner. Audited in AdminActionLog.
+   */
+  @PostMapping("/refunds/{id}/retry")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<java.util.Map<String, Object>> retryRefund(
+      @PathVariable Long id, @AuthenticationPrincipal User admin, HttpServletRequest httpRequest) {
+    refundService.retryStuckRefund(id);
+    auditRetry(admin, "REFUND", id, httpRequest);
+    return ResponseEntity.ok(java.util.Map.of("id", id, "requeued", true));
+  }
+
+  private void auditRetry(User admin, String entityType, Long id, HttpServletRequest httpRequest) {
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(admin)
+            .actionType(AdminActionType.WEBHOOK_REQUEUED)
+            .entityType(entityType)
+            .entityId(id)
+            .reason("Manual retry of stuck " + entityType.toLowerCase(java.util.Locale.ROOT))
+            .ipAddress(ClientIp.of(httpRequest))
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
   }
 
   @GetMapping("/transactions")

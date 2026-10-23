@@ -56,6 +56,14 @@ public class RefundTransaction {
   @Column(name = "provider_refund_id", length = 150)
   private String providerRefundId;
 
+  /**
+   * Provider's total refunded amount for the parent charge, captured just before this refund's
+   * revoke/cancel was sent. Reconciliation confirms this refund once the provider's refunded total
+   * reaches {@code providerRefundedBefore + amount}; correct even for several partial refunds.
+   */
+  @Column(name = "provider_refunded_before", precision = 12, scale = 2)
+  private BigDecimal providerRefundedBefore;
+
   @Column(name = "retry_count", nullable = false)
   @Builder.Default
   private Integer retryCount = 0;

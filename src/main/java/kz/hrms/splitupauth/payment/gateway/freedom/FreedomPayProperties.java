@@ -95,6 +95,13 @@ public class FreedomPayProperties {
    */
   private int orderTimeLimitHours = 24;
 
+  /**
+   * Sign {@code /api/balance_status} with the payout secret (default) instead of the merchant
+   * secret. The docs do not say which secret balance_status expects; reg2reg and payout status both
+   * use the payout secret, so balance defaults to it. Flip to false if the sandbox rejects it.
+   */
+  private boolean balanceStatusUsesPayoutSecret = true;
+
   /** Verify {@code pg_sig} on every provider response. Must stay true in production. */
   private boolean verifyResponseSignatures = true;
 

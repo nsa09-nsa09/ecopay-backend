@@ -12,6 +12,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class AdminFinanceConfigService {
 
+  private final PayoutBalanceService payoutBalanceService;
+
+  public AdminFinanceConfigService(PayoutBalanceService payoutBalanceService) {
+    this.payoutBalanceService = payoutBalanceService;
+  }
+
   @Value("${ecopay.payments.provider:freedompay}")
   private String paymentProvider;
 
@@ -73,6 +79,7 @@ public class AdminFinanceConfigService {
   private BigDecimal mixedRoomFee;
 
   public AdminFinanceConfigDto describe() {
+    PayoutBalanceService.BalanceView balance = payoutBalanceService.latestKnown();
     return AdminFinanceConfigDto.builder()
         .provider(paymentProvider)
         .testMode(isTestMode())
@@ -85,6 +92,13 @@ public class AdminFinanceConfigService {
         .payoutHold(formatHold())
         .renewalWindowDays(renewalWindowDays)
         .renewalGraceDays(renewalGraceDays)
+        .payoutBalanceKzt(balance.available() ? balance.balance() : null)
+        .payoutBalanceCheckedAt(balance.checkedAt())
+        .payoutsWaitingForBalance(
+            AdminFinanceConfigDto.PayoutsWaiting.builder()
+                .count(payoutBalanceService.waitingForBalanceCount())
+                .sumKzt(payoutBalanceService.waitingForBalanceSum())
+                .build())
         .commission(
             AdminFinanceConfigDto.Commission.builder()
                 .tier1Max(tier1Max)

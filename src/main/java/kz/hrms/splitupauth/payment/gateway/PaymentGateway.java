@@ -20,9 +20,26 @@ public interface PaymentGateway {
 
   GatewayPayoutResponse payout(GatewayPayoutRequest request);
 
+  /**
+   * Best-effort removal of a stored payout-card token at the provider (so a disconnected card
+   * cannot be charged again). Returns true when the provider accepted the delete; a false/exception
+   * never blocks the local revoke. Default no-op for providers without token storage.
+   */
+  default boolean deletePayoutCardToken(String cardToken) {
+    return false;
+  }
+
   /** True only when the provider guarantees deduplication of a replayed payout request. */
   default boolean supportsIdempotentPayoutReplay() {
     return false;
+  }
+
+  /**
+   * Current merchant payout balance. Returns {@code available=false} when the provider has no such
+   * query or the state could not be read; callers must not gate dispatch on an unavailable balance.
+   */
+  default GatewayPayoutBalance getPayoutBalance() {
+    return GatewayPayoutBalance.builder().available(false).build();
   }
 
   GatewayStatusResponse getStatus(String externalPaymentId);
