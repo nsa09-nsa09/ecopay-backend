@@ -3,6 +3,7 @@ package kz.hrms.splitupauth.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -783,6 +784,110 @@ class PayoutServiceTest {
     assertEquals(PayoutStatus.PENDING, payout.getStatus());
     assertEquals(0, payout.getRetryCount());
     assertEquals(LocalDateTime.now(clock), payout.getNextRetryAt());
+  }
+
+  @Test
+  void dispatchPayout_absorbFee_sendsFullAmountAndBooksFeeExpense() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        payoutService, "providerFeeMode", "ABSORB");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        payoutService, "providerFeeFixed", new BigDecimal("50.00"));
+    User owner = User.builder().id(42L).build();
+    Payout payout = payout(950L, owner, "500.00", LocalDateTime.now(clock).minusHours(1));
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    when(payoutRepository.findWithLockById(950L)).thenReturn(Optional.of(payout));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.providerName()).thenReturn("mock");
+    when(paymentGateway.payout(any()))
+        .thenReturn(GatewayPayoutResponse.builder().success(true).externalPayoutId("M").build());
+
+    payoutService.dispatchPayout(950L);
+
+    assertEquals(PayoutStatus.SUCCESS, payout.getStatus());
+    assertEquals(0, new BigDecimal("500.00").compareTo(payout.getSubmittedAmount()));
+    assertEquals(0, new BigDecimal("50.00").compareTo(payout.getProviderFeeKzt()));
+    verify(paymentGateway)
+        .payout(argThat(r -> new BigDecimal("500.00").compareTo(r.getAmount()) == 0));
+    verify(moneyLedgerService)
+        .append(
+            eq("PAYOUT_FEE_EXPENSE"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
+  void dispatchPayout_deductFee_reducesAmountSentToOwner() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        payoutService, "providerFeeMode", "DEDUCT");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        payoutService, "providerFeeFixed", new BigDecimal("50.00"));
+    User owner = User.builder().id(42L).build();
+    Payout payout = payout(951L, owner, "500.00", LocalDateTime.now(clock).minusHours(1));
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    when(payoutRepository.findWithLockById(951L)).thenReturn(Optional.of(payout));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(gatewayRegistry.defaultGateway()).thenReturn(paymentGateway);
+    when(paymentGateway.providerName()).thenReturn("mock");
+    when(paymentGateway.payout(any()))
+        .thenReturn(GatewayPayoutResponse.builder().success(true).externalPayoutId("M").build());
+
+    payoutService.dispatchPayout(951L);
+
+    assertEquals(0, new BigDecimal("450.00").compareTo(payout.getSubmittedAmount()));
+    assertEquals(0, new BigDecimal("50.00").compareTo(payout.getProviderFeeKzt()));
+    verify(paymentGateway)
+        .payout(argThat(r -> new BigDecimal("450.00").compareTo(r.getAmount()) == 0));
+  }
+
+  @Test
+  void processPendingPayouts_belowMinimum_defersInsteadOfSending() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        payoutService, "minPayoutAmount", new BigDecimal("1000.00"));
+    User owner = User.builder().id(42L).build();
+    Payout small = payout(952L, owner, "300.00", LocalDateTime.now(clock).minusHours(1));
+    PayoutMethod method =
+        PayoutMethod.builder()
+            .id(5L)
+            .user(owner)
+            .providerCardToken("tok-owner")
+            .tokenSource(PayoutMethod.TOKEN_SOURCE_PAYOUT_CARD)
+            .status("ACTIVE")
+            .build();
+    when(payoutRepository.findDispatchable(any(), any())).thenReturn(List.of(small));
+    when(payoutRepository.findWithLockById(952L)).thenReturn(Optional.of(small));
+    when(payoutMethodRepository.findByUserAndIsDefaultTrueAndStatus(owner, "ACTIVE"))
+        .thenReturn(Optional.of(method));
+    when(payoutRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+    payoutService.processPendingPayouts();
+
+    assertEquals("BELOW_MIN_AMOUNT", small.getDeferredReason());
+    assertEquals(PayoutStatus.PENDING, small.getStatus());
+    verify(paymentGateway, never()).payout(any());
   }
 
   private Payout payout(Long id, User owner, String amount, LocalDateTime releaseAt) {

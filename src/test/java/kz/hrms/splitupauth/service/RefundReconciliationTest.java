@@ -78,6 +78,7 @@ class RefundReconciliationTest {
             payoutBlockService,
             notificationService,
             moneyLedgerService,
+            org.mockito.Mockito.mock(kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.class),
             Clock.fixed(NOW, ZONE),
             transactionManager);
     User payer = User.builder().id(1L).build();

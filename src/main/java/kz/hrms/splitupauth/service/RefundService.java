@@ -53,6 +53,7 @@ public class RefundService {
   private final PayoutBlockService payoutBlockService;
   private final NotificationService notificationService;
   private final MoneyLedgerService moneyLedgerService;
+  private final kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder fiscalReceiptBuilder;
   private final Clock clock;
   private final PlatformTransactionManager transactionManager;
 
@@ -64,6 +65,10 @@ public class RefundService {
    */
   @Value("${app.refund.max-attempts:8}")
   private int maxRefundAttempts = 8;
+
+  /** Days quoted to the participant for a refund to arrive; surfaced to the UI. */
+  @Value("${app.refund.expected-days:7}")
+  private int refundExpectedDays = 7;
 
   /**
    * Apply an async refund result callback from the provider. Finalizes a PENDING refund (that the
@@ -167,7 +172,7 @@ public class RefundService {
     RefundTransaction refund =
         RefundTransaction.builder()
             .paymentTransaction(transaction)
-            .status(RefundStatus.PENDING)
+            .status(initialRefundStatus())
             .amount(transaction.getAmount())
             .currency(transaction.getCurrency())
             .reason("Automatic compensation: " + reason)
@@ -287,7 +292,7 @@ public class RefundService {
                 .paymentTransaction(paymentTransaction)
                 .refundRequest(refundRequest)
                 .adminUser(currentUser)
-                .status(RefundStatus.PENDING)
+                .status(initialRefundStatus())
                 .amount(amount)
                 .currency(paymentTransaction.getCurrency())
                 .reason(decisionNote)
@@ -361,7 +366,7 @@ public class RefundService {
             .paymentTransaction(paymentTransaction)
             .dispute(dispute)
             .adminUser(currentUser)
-            .status(RefundStatus.PENDING)
+            .status(initialRefundStatus())
             .amount(amount)
             .currency(paymentTransaction.getCurrency())
             .reason(request.getReason())
@@ -422,6 +427,24 @@ public class RefundService {
                   continue;
                 }
                 PaymentTransaction transaction = refund.getPaymentTransaction();
+                // B6: fiscal receipt for the refund. The positions must sum to the refund amount or
+                // the refund is not sent — it goes to review so finance can fix the fiscal config.
+                List<kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.ReceiptPosition>
+                    positions = null;
+                if (fiscalReceiptBuilder != null && fiscalReceiptBuilder.isEnabled()) {
+                  positions = buildRefundReceiptPositions(refund, transaction);
+                  if (!receiptPositionsMatch(positions, refund.getAmount())) {
+                    refund.setStatus(RefundStatus.REQUIRES_REVIEW);
+                    refund.setLeaseUntil(null);
+                    refund.setNextRetryAt(null);
+                    refund.setLastErrorCode("FISCAL_MISMATCH");
+                    refund.setLastErrorMessage(
+                        "Fiscal receipt positions do not sum to the refund amount");
+                    refundTransactionRepository.save(refund);
+                    notifyRefundRequiresReview(refund);
+                    continue;
+                  }
+                }
                 refund.setClaimedAt(now);
                 refund.setLeaseUntil(now.plusMinutes(REFUND_LEASE_MINUTES));
                 refundTransactionRepository.save(refund);
@@ -437,7 +460,8 @@ public class RefundService {
                     transaction.getExternalTransactionId(),
                     refund.getAmount(),
                     refund.getCurrency(),
-                    refund.getReason());
+                    refund.getReason(),
+                    positions);
               }
               return null;
             });
@@ -455,6 +479,7 @@ public class RefundService {
                   .amount(refund.amount())
                   .currency(refund.currency())
                   .reason(refund.reason())
+                  .receiptPositions(refund.receiptPositions())
                   .build());
 
       finalizeRefundDispatch(refund.id(), response, gateway.providerName());
@@ -867,6 +892,80 @@ public class RefundService {
         List.of(RefundStatus.PENDING_PROVIDER, RefundStatus.REQUIRES_REVIEW, RefundStatus.FAILED));
   }
 
+  /**
+   * B5: with automatic dispatch off a refund is recorded as PENDING_MANUAL (not silently stuck in
+   * PENDING), so the operator knows they must send it through the FreedomPay cabinet by hand.
+   */
+  private RefundStatus initialRefundStatus() {
+    return refundDispatchEnabled ? RefundStatus.PENDING : RefundStatus.PENDING_MANUAL;
+  }
+
+  /**
+   * B5: an operator confirms they refunded a PENDING_MANUAL refund by hand in the FreedomPay
+   * cabinet. Records it as SUCCESS_MANUAL, applies it to the charge/ledger exactly like an
+   * automatic success, and audits the admin action. Idempotent for an already-settled refund.
+   */
+  @Transactional
+  public RefundTransactionResponse markRefundSentManually(
+      Long refundId, User admin, String providerRef, String note, HttpServletRequest httpRequest) {
+    ensureAdmin(admin);
+    RefundTransaction refund =
+        refundTransactionRepository
+            .findWithLockById(refundId)
+            .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
+    if (refund.getStatus() == RefundStatus.SUCCESS
+        || refund.getStatus() == RefundStatus.SUCCESS_MANUAL) {
+      return map(refund); // idempotent
+    }
+    if (refund.getStatus() != RefundStatus.PENDING_MANUAL
+        && refund.getStatus() != RefundStatus.PENDING
+        && refund.getStatus() != RefundStatus.REQUIRES_REVIEW
+        && refund.getStatus() != RefundStatus.FAILED) {
+      throw new InvalidRequestException(
+          "REFUND_NOT_MANUAL_SETTLEABLE", "Refund cannot be marked sent in its current state");
+    }
+    refund.setStatus(RefundStatus.SUCCESS_MANUAL);
+    refund.setLeaseUntil(null);
+    refund.setNextRetryAt(null);
+    refund.setLastErrorCode(null);
+    refund.setLastErrorMessage(null);
+    if (notBlank(providerRef)) {
+      refund.setProviderRefundId(providerRef);
+    }
+    refund.setAdminUser(admin);
+    applyRefundToParentTransaction(refund);
+    refundTransactionRepository.save(refund);
+
+    adminActionLogRepository.save(
+        AdminActionLog.builder()
+            .eventId(UUID.randomUUID())
+            .adminUser(admin)
+            .actionType(AdminActionType.REFUND_APPROVED)
+            .entityType("REFUND")
+            .entityId(refund.getId())
+            .reason(note)
+            .ipAddress(httpRequest.getRemoteAddr())
+            .userAgent(httpRequest.getHeader("User-Agent"))
+            .build());
+
+    notifyRefundIssued(refund);
+    eventLogger.log(
+        "REFUND",
+        refund.getId(),
+        "MARKED_SENT_MANUALLY",
+        RefundStatus.PENDING_MANUAL.name(),
+        refund.getStatus().name(),
+        null,
+        null,
+        refund.getIdempotencyKey(),
+        java.util.Map.of("providerRef", String.valueOf(providerRef)));
+    return map(refund);
+  }
+
+  private static boolean notBlank(String value) {
+    return value != null && !value.isBlank();
+  }
+
   private void ensureAdmin(User currentUser) {
     if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
       throw new ForbiddenOperationException("Admin access required");
@@ -901,11 +1000,48 @@ public class RefundService {
         .providerRefundId(refund.getProviderRefundId())
         .createdAt(refund.getCreatedAt())
         .updatedAt(refund.getUpdatedAt())
+        .expectedDays(refundExpectedDays)
         .build();
   }
 
   private TransactionTemplate tx() {
     return new TransactionTemplate(transactionManager);
+  }
+
+  /**
+   * B6: split the refund amount into its share and commission parts (proportional to the original
+   * charge) and build the fiscal receipt positions. The split is exact — commission is rounded and
+   * the share takes the remainder — so the positions always sum to the refund amount.
+   */
+  private List<kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.ReceiptPosition>
+      buildRefundReceiptPositions(RefundTransaction refund, PaymentTransaction charge) {
+    BigDecimal amount = refund.getAmount();
+    PaymentIntent intent = charge.getPaymentIntent();
+    BigDecimal total = charge.getAmount();
+    BigDecimal commission =
+        intent == null || intent.getCommissionAmount() == null
+            ? BigDecimal.ZERO
+            : intent.getCommissionAmount();
+    BigDecimal commissionRefund = BigDecimal.ZERO.setScale(2);
+    if (commission.signum() > 0 && total != null && total.signum() > 0) {
+      commissionRefund =
+          amount.multiply(commission).divide(total, 2, java.math.RoundingMode.HALF_UP).min(amount);
+    }
+    BigDecimal shareRefund = amount.subtract(commissionRefund);
+    return fiscalReceiptBuilder.forRefund(charge, shareRefund, commissionRefund);
+  }
+
+  private static boolean receiptPositionsMatch(
+      List<kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.ReceiptPosition> positions,
+      BigDecimal amount) {
+    if (positions == null || positions.isEmpty()) {
+      return false;
+    }
+    BigDecimal sum =
+        positions.stream()
+            .map(kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.ReceiptPosition::price)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    return sum.compareTo(amount) == 0;
   }
 
   private record RefundDispatch(
@@ -914,5 +1050,7 @@ public class RefundService {
       String externalPaymentId,
       BigDecimal amount,
       String currency,
-      String reason) {}
+      String reason,
+      List<kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.ReceiptPosition>
+          receiptPositions) {}
 }

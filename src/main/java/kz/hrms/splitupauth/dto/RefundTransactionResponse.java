@@ -25,4 +25,10 @@ public class RefundTransactionResponse {
   private String providerRefundId;
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
+
+  /**
+   * B5: days to quote the participant for the money to arrive ("поступят в течение N дней"). Only
+   * meaningful while the refund is still in flight (PENDING* / PENDING_MANUAL).
+   */
+  private Integer expectedDays;
 }

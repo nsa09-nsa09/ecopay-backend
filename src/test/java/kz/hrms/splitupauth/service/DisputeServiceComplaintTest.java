@@ -277,8 +277,11 @@ class DisputeServiceComplaintTest {
             org.mockito.Mockito.mock(PayoutBlockService.class),
             notificationService,
             org.mockito.Mockito.mock(MoneyLedgerService.class),
+            org.mockito.Mockito.mock(kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.class),
             Clock.systemUTC(),
             transactionManager);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        refundService, "refundDispatchEnabled", true);
     User admin = user(1L, Role.ADMIN);
     PaymentTransaction charge =
         PaymentTransaction.builder()

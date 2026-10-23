@@ -13,4 +13,10 @@ public class GatewayRefundRequest {
   private BigDecimal amount;
   private String currency;
   private String reason;
+
+  /**
+   * B6: fiscal receipt positions for /revoke (pg_receipt_positions[]); null/empty when disabled.
+   */
+  private java.util.List<kz.hrms.splitupauth.payment.fiscal.FiscalReceiptBuilder.ReceiptPosition>
+      receiptPositions;
 }

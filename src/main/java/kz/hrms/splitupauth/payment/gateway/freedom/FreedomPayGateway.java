@@ -301,6 +301,7 @@ public class FreedomPayGateway implements PaymentGateway {
       params.put("pg_refund_amount", formatAmount(request.getAmount()));
     }
     params.put("pg_idempotency_key", request.getIdempotencyKey());
+    addReceiptPositions(params, request.getReceiptPositions()); // B6: fiscal receipt for the refund
     FreedomPayResponse response =
         client.call("refund", path, script(path), params, merchantSecret(), false);
     return refundResponse(response, refundedBefore(current));

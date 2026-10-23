@@ -20,6 +20,12 @@ public class PayoutDto {
   private LocalDateTime createdAt;
   private LocalDateTime processedAt;
 
+  /** B7: provider fee shown to the owner (meaningful in DEDUCT mode; informational in ABSORB). */
+  private BigDecimal providerFeeKzt;
+
+  /** B7: why the payout is held back (e.g. BELOW_MIN_AMOUNT), null when actively dispatching. */
+  private String deferredReason;
+
   public static PayoutDto from(Payout p) {
     return PayoutDto.builder()
         .id(p.getId())
@@ -32,6 +38,8 @@ public class PayoutDto {
         .releaseAt(p.getReleaseAt())
         .createdAt(p.getCreatedAt())
         .processedAt(p.getProcessedAt())
+        .providerFeeKzt(p.getProviderFeeKzt())
+        .deferredReason(p.getDeferredReason())
         .build();
   }
 }

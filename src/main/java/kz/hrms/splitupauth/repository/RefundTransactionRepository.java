@@ -73,8 +73,10 @@ public interface RefundTransactionRepository
             tx,
             List.of(
                 kz.hrms.splitupauth.entity.RefundStatus.PENDING,
+                kz.hrms.splitupauth.entity.RefundStatus.PENDING_MANUAL,
                 kz.hrms.splitupauth.entity.RefundStatus.PENDING_PROVIDER,
-                kz.hrms.splitupauth.entity.RefundStatus.SUCCESS))
+                kz.hrms.splitupauth.entity.RefundStatus.SUCCESS,
+                kz.hrms.splitupauth.entity.RefundStatus.SUCCESS_MANUAL))
         .stream()
         .map(RefundTransaction::getAmount)
         .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -82,7 +84,10 @@ public interface RefundTransactionRepository
 
   default BigDecimal sumSuccessfulRefundAmounts(PaymentTransaction tx) {
     return findByPaymentTransactionAndStatusIn(
-            tx, List.of(kz.hrms.splitupauth.entity.RefundStatus.SUCCESS))
+            tx,
+            List.of(
+                kz.hrms.splitupauth.entity.RefundStatus.SUCCESS,
+                kz.hrms.splitupauth.entity.RefundStatus.SUCCESS_MANUAL))
         .stream()
         .map(RefundTransaction::getAmount)
         .reduce(BigDecimal.ZERO, BigDecimal::add);

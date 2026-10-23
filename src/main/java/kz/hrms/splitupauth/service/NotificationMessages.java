@@ -336,6 +336,33 @@ final class NotificationMessages {
               "Refund requires review",
               "Refund (refund #{entityId}) is in an ambiguous provider state and needs an operator"
                   + " decision in /admin/finance.");
+      case PAYOUT_SCHEDULED ->
+          copy(
+              locale,
+              "Выплата запланирована",
+              "Выплата {amount} ₸ запланирована и поступит после {releaseAt}.",
+              "Төлем жоспарланды",
+              "{amount} ₸ төлемі жоспарланды, {releaseAt} кейін түседі.",
+              "Payout scheduled",
+              "A payout of {amount} ₸ is scheduled and will arrive after {releaseAt}.");
+      case PAYOUT_DELAYED ->
+          copy(
+              locale,
+              "Выплата задерживается",
+              "Выплата {amount} ₸ задерживается: {reason}. Мы разбираемся.",
+              "Төлем кешігуде",
+              "{amount} ₸ төлемі кешігуде: {reason}. Біз анықтап жатырмыз.",
+              "Payout delayed",
+              "Your payout of {amount} ₸ is delayed: {reason}. We are on it.");
+      case PAYOUT_REDUCED ->
+          copy(
+              locale,
+              "Сумма выплаты изменилась",
+              "После возврата участнику выплата уменьшилась: было {was} ₸, стало {now} ₸.",
+              "Төлем сомасы өзгерді",
+              "Қатысушыға қайтарудан кейін төлем азайды: {was} ₸ болды, {now} ₸ болды.",
+              "Payout amount changed",
+              "A participant refund reduced your payout: was {was} ₸, now {now} ₸.");
       case PAYOUT_BALANCE_LOW ->
           copy(
               locale,

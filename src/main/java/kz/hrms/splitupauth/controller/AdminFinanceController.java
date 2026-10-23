@@ -207,6 +207,26 @@ public class AdminFinanceController {
             .build());
   }
 
+  /** B5: operator confirms a manual (cabinet) refund. */
+  public record MarkSentManuallyRequest(
+      @Size(max = 150) String providerRef, @NotBlank @Size(max = 500) String note) {}
+
+  /**
+   * B5: mark a PENDING_MANUAL refund (automatic dispatch off) as settled by hand in the FreedomPay
+   * cabinet. Records SUCCESS_MANUAL, applies it to the charge/ledger, and audits the action.
+   */
+  @PostMapping("/refunds/{id}/mark-sent-manually")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<RefundTransactionResponse> markRefundSentManually(
+      @PathVariable Long id,
+      @Valid @RequestBody MarkSentManuallyRequest request,
+      @AuthenticationPrincipal User admin,
+      HttpServletRequest httpRequest) {
+    return ResponseEntity.ok(
+        refundService.markRefundSentManually(
+            id, admin, request.providerRef(), request.note(), httpRequest));
+  }
+
   @GetMapping("/transactions")
   @PreAuthorize("hasAuthority('ADMIN')")
   public ResponseEntity<PagedResponse<FinanceTransactionDto>> transactions(

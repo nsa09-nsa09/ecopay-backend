@@ -69,6 +69,18 @@ public class Payout {
   @Column(name = "payable_amount", nullable = false, precision = 12, scale = 2)
   private BigDecimal payableAmount;
 
+  /**
+   * B7: FreedomPay reg2reg fee attributed to this payout. In ABSORB mode EcoPay pays it (owner gets
+   * the full share) and it is logged as a PAYOUT_FEE_EXPENSE; in DEDUCT mode it was subtracted from
+   * the amount sent to the owner. Null until the payout is dispatched.
+   */
+  @Column(name = "provider_fee_kzt", precision = 12, scale = 2)
+  private BigDecimal providerFeeKzt;
+
+  /** B7: why a due payout is being held back (e.g. {@code BELOW_MIN_AMOUNT}). Null when none. */
+  @Column(name = "deferred_reason", length = 40)
+  private String deferredReason;
+
   @Column(nullable = false, length = 10)
   @Builder.Default
   private String currency = "KZT";

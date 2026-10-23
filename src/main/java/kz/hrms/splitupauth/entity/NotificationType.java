@@ -52,6 +52,12 @@ public enum NotificationType {
   // instead of "sum" and the member knows no money is coming back.
   REFUND_REJECTED(NotificationCategory.PAYMENTS, true),
   PAYOUT_SENT(NotificationCategory.PAYMENTS, true),
+  // B9: owner's payout was created and is waiting out its hold window (amount + release date).
+  PAYOUT_SCHEDULED(NotificationCategory.PAYMENTS, false),
+  // B9: owner's payout is delayed (card needs reconnecting, or it is stuck); reason in plain words.
+  PAYOUT_DELAYED(NotificationCategory.PAYMENTS, true),
+  // B9: a participant refund reduced the owner's payout — shows the before/after amount.
+  PAYOUT_REDUCED(NotificationCategory.PAYMENTS, true),
 
   // ---- disputes & support ----
   DISPUTE_OPENED(NotificationCategory.DISPUTES, true),

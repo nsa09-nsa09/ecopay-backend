@@ -88,6 +88,41 @@ public class PayoutService {
   @Value("${app.payout.batch-coalesce-hours:24}")
   private int payoutBatchCoalesceHours;
 
+  /** B7: ABSORB (EcoPay pays the provider fee) or DEDUCT (fee taken out of the owner's amount). */
+  @Value("${app.payout.provider-fee-mode:ABSORB}")
+  private String providerFeeMode;
+
+  @Value("${app.payout.provider-fee-fixed-kzt:0}")
+  private BigDecimal providerFeeFixed;
+
+  @Value("${app.payout.provider-fee-percent:0}")
+  private BigDecimal providerFeePercent;
+
+  /** B7: payouts under this are accumulated (coalesced) until the owner's due total reaches it. */
+  @Value("${app.payout.min-amount-kzt:0}")
+  private BigDecimal minPayoutAmount;
+
+  /** B7: never defer a payout waiting for the minimum longer than this. */
+  @Value("${app.payout.max-defer-days:7}")
+  private int maxDeferDays = 7;
+
+  private boolean deductFee() {
+    return "DEDUCT".equalsIgnoreCase(providerFeeMode);
+  }
+
+  /** B7: fee = fixed + percent% of the amount, scale 2 HALF_UP, never more than the amount. */
+  private BigDecimal computeProviderFee(BigDecimal amount) {
+    if (amount == null || amount.signum() <= 0) {
+      return BigDecimal.ZERO.setScale(2);
+    }
+    BigDecimal fixed = providerFeeFixed == null ? BigDecimal.ZERO : providerFeeFixed;
+    BigDecimal percent = providerFeePercent == null ? BigDecimal.ZERO : providerFeePercent;
+    BigDecimal fee =
+        fixed.add(amount.multiply(percent).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP));
+    fee = fee.setScale(2, RoundingMode.HALF_UP);
+    return fee.min(amount).max(BigDecimal.ZERO.setScale(2));
+  }
+
   /**
    * Called from PaymentService when a member's charge succeeds. Creates a pending payout for the
    * room owner.
@@ -171,6 +206,7 @@ public class PayoutService {
             "holdMinutes",
             String.valueOf(payoutHoldMinutes)));
 
+    notifyPayoutScheduled(payout); // B9: one per payment, in-app
     return payout;
   }
 
@@ -219,6 +255,15 @@ public class PayoutService {
               .map(this::payoutPayableAmount)
               .reduce(BigDecimal.ZERO, BigDecimal::add)
               .setScale(2, RoundingMode.HALF_UP);
+      // B7: accumulate sub-minimum payouts into the owner's batch instead of sending tiny amounts,
+      // but never hold one longer than max-defer-days.
+      if (minPayoutAmount != null
+          && minPayoutAmount.signum() > 0
+          && groupAmount.compareTo(minPayoutAmount) < 0
+          && !deferWindowExhausted(group, now)) {
+        deferGroupForMinAmount(group.stream().map(Payout::getId).toList(), now);
+        continue;
+      }
       if (available != null && spent.add(groupAmount).compareTo(available) > 0) {
         holdGroupForBalance(group.stream().map(Payout::getId).toList(), now);
         heldForBalance = true;
@@ -249,6 +294,38 @@ public class PayoutService {
    * top-up). The owner is never told — the delay is not their fault; their payout stays "queued"
    * internally.
    */
+  /**
+   * B7: true once any payout in the group has waited for the minimum longer than max-defer-days.
+   */
+  private boolean deferWindowExhausted(List<Payout> group, LocalDateTime now) {
+    LocalDateTime cutoff = now.minusDays(Math.max(0, maxDeferDays));
+    return group.stream()
+        .anyMatch(
+            p -> {
+              LocalDateTime since = p.getReleaseAt() != null ? p.getReleaseAt() : p.getCreatedAt();
+              return since != null && since.isBefore(cutoff);
+            });
+  }
+
+  /** B7: hold sub-minimum payouts one more day (keeps them PENDING, just not yet dispatched). */
+  private void deferGroupForMinAmount(List<Long> payoutIds, LocalDateTime now) {
+    tx().executeWithoutResult(
+            status -> {
+              for (Long id : payoutIds) {
+                Payout payout = payoutRepository.findWithLockById(id).orElse(null);
+                if (payout == null
+                    || payout.getPayoutBatch() != null
+                    || (payout.getStatus() != PayoutStatus.PENDING
+                        && payout.getStatus() != PayoutStatus.PENDING_METHOD)) {
+                  continue;
+                }
+                payout.setDeferredReason("BELOW_MIN_AMOUNT");
+                payout.setNextRetryAt(now.plusDays(1));
+                payoutRepository.save(payout);
+              }
+            });
+  }
+
   private void holdGroupForBalance(List<Long> payoutIds, LocalDateTime now) {
     tx().executeWithoutResult(
             status -> {
@@ -572,15 +649,26 @@ public class PayoutService {
                 .leaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES))
                 .build());
     batch.setProviderOrderId("ecopay-batch-" + batch.getId());
+    BigDecimal feeAdjustedTotal = BigDecimal.ZERO;
     for (Payout payout : payouts) {
       payout.setPayoutBatch(batch);
       payout.setPayoutMethod(method);
       payout.setStatus(PayoutStatus.PROCESSING);
       payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
-      payout.setAmount(payoutPayableAmount(payout));
-      payout.setSubmittedAmount(payoutPayableAmount(payout));
+      payout.setDeferredReason(null);
+      // B7: same fee attribution as a single payout, per child.
+      BigDecimal childPayable = payoutPayableAmount(payout);
+      BigDecimal childFee = computeProviderFee(childPayable);
+      payout.setProviderFeeKzt(childFee);
+      BigDecimal childSubmitted = deductFee() ? childPayable.subtract(childFee) : childPayable;
+      payout.setAmount(childSubmitted);
+      payout.setSubmittedAmount(childSubmitted);
       payout.setSubmittedAt(now);
+      feeAdjustedTotal = feeAdjustedTotal.add(childSubmitted);
     }
+    feeAdjustedTotal = feeAdjustedTotal.setScale(2, RoundingMode.HALF_UP);
+    batch.setAmount(feeAdjustedTotal);
+    total = feeAdjustedTotal;
     payoutRepository.saveAll(payouts);
     return new BatchDispatchClaim(
         batch.getId(),
@@ -694,7 +782,13 @@ public class PayoutService {
     payout.setStatus(PayoutStatus.PROCESSING);
     payout.setLeaseUntil(now.plusMinutes(DISPATCH_LEASE_MINUTES));
     payout.setPayoutMethod(method);
-    payout.setSubmittedAmount(payoutPayableAmount(payout));
+    payout.setDeferredReason(null);
+    // B7: attribute the provider fee. DEDUCT takes it out of what the owner receives; ABSORB sends
+    // the full share and books the fee as an EcoPay expense when the payout settles.
+    BigDecimal payable = payoutPayableAmount(payout);
+    BigDecimal fee = computeProviderFee(payable);
+    payout.setProviderFeeKzt(fee);
+    payout.setSubmittedAmount(deductFee() ? payable.subtract(fee) : payable);
     payout.setSubmittedAt(now);
     payout.setAmount(payout.getSubmittedAmount());
     int attempt = payout.getRetryCount() == null ? 0 : payout.getRetryCount();
@@ -811,10 +905,15 @@ public class PayoutService {
 
   private void notifyPayoutCardInvalid(Payout payout) {
     if (payout.getUser() == null) return;
+    // B9: owner-facing — the payout is delayed because their card needs reconnecting.
     notificationService.notify(
         payout.getUser(),
-        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_REQUIRES_REVIEW,
-        java.util.Map.of("reason", "CARD_INVALID", "payoutId", String.valueOf(payout.getId())),
+        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_DELAYED,
+        java.util.Map.of(
+            "amount",
+            String.valueOf(payout.getAmount()),
+            "reason",
+            "карта для выплат недействительна, подключите новую"),
         "/payment/payout",
         java.util.Map.of("payoutId", payout.getId()));
   }
@@ -1239,6 +1338,36 @@ public class PayoutService {
         java.util.Map.of("payoutId", payout.getId()));
   }
 
+  private void notifyPayoutScheduled(Payout payout) {
+    if (payout.getUser() == null) return;
+    notificationService.notify(
+        payout.getUser(),
+        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_SCHEDULED,
+        java.util.Map.of(
+            "amount",
+            String.valueOf(payout.getAmount()),
+            "releaseAt",
+            payout.getReleaseAt() == null ? "" : payout.getReleaseAt().toLocalDate().toString()),
+        "/payment/payout",
+        payoutMetadata(payout));
+  }
+
+  private void notifyPayoutReduced(Payout payout, BigDecimal was, BigDecimal now) {
+    if (payout.getUser() == null) return;
+    notificationService.notify(
+        payout.getUser(),
+        kz.hrms.splitupauth.entity.NotificationType.PAYOUT_REDUCED,
+        java.util.Map.of("was", String.valueOf(was), "now", String.valueOf(now)),
+        "/payment/payout",
+        payoutMetadata(payout));
+  }
+
+  private static java.util.Map<String, Object> payoutMetadata(Payout payout) {
+    return payout.getId() == null
+        ? java.util.Map.of()
+        : java.util.Map.of("payoutId", payout.getId());
+  }
+
   private void notifyPayoutBatchSent(PayoutBatch batch) {
     if (batch.getOwner() == null) return;
     notificationService.notify(
@@ -1278,6 +1407,22 @@ public class PayoutService {
         payout,
         payout.getUser(),
         "payout-" + payout.getId());
+    // B7: in ABSORB mode EcoPay pays the provider fee on top of the owner's full share — record it
+    // as an expense. (In DEDUCT mode the fee was already subtracted from `amount`, so no entry.)
+    BigDecimal fee = payout.getProviderFeeKzt();
+    if (!deductFee() && fee != null && fee.signum() > 0) {
+      moneyLedgerService.append(
+          "PAYOUT_FEE_EXPENSE",
+          fee,
+          payout.getCurrency(),
+          "DEBIT",
+          payout.getTriggeringPaymentIntent(),
+          null,
+          null,
+          payout,
+          payout.getUser(),
+          "payout-fee-" + payout.getId());
+    }
   }
 
   /**
@@ -1401,6 +1546,7 @@ public class PayoutService {
               "clawbackAmount", exposure.toPlainString()));
       return;
     }
+    BigDecimal previousAmount = payout.getAmount();
     payout.setAmount(payable);
     if (payable.signum() == 0) {
       payout.setStatus(PayoutStatus.REVERSED);
@@ -1408,6 +1554,10 @@ public class PayoutService {
       payout.setFailureReason("Reversed: successful refunds exhausted owner share");
     }
     payoutRepository.save(payout);
+    // B9: tell the owner their upcoming payout shrank because a participant was refunded.
+    if (previousAmount != null && payable.compareTo(previousAmount) < 0) {
+      notifyPayoutReduced(payout, previousAmount, payable);
+    }
     eventLogger.log(
         "PAYOUT",
         payout.getId(),
