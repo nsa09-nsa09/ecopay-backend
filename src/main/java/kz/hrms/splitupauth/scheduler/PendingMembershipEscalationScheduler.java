@@ -1,5 +1,8 @@
 package kz.hrms.splitupauth.scheduler;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
 import kz.hrms.splitupauth.entity.MemberStatus;
 import kz.hrms.splitupauth.entity.RoomMember;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
@@ -9,63 +12,68 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.List;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class PendingMembershipEscalationScheduler {
 
-    private final RoomMemberRepository roomMemberRepository;
-    private final SupportTicketService supportTicketService;
-    private final ModerationService moderationService;
-    @Scheduled(fixedDelay = 300000)
-    @Transactional
-    public void escalateStalePendingMemberships() {
-        List<RoomMember> pendingMembers = roomMemberRepository.findByStatusAndDeletedAtIsNull(MemberStatus.PENDING);
+  private final RoomMemberRepository roomMemberRepository;
+  private final SupportTicketService supportTicketService;
+  private final ModerationService moderationService;
+  private final SchedulerLock schedulerLock;
+  private final PlatformTransactionManager transactionManager;
 
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime ownerGrantDeadline = now.minusHours(24);
-        LocalDateTime memberConfirmDeadline = now.minusHours(24);
+  @Scheduled(fixedDelay = 300000)
+  public void escalateStalePendingMemberships() {
+    schedulerLock.runExclusive(
+        "pending-membership-escalation",
+        Duration.ofMinutes(10),
+        () -> new TransactionTemplate(transactionManager).executeWithoutResult(s -> escalate()));
+  }
 
-        for (RoomMember roomMember : pendingMembers) {
-            boolean shouldEscalate = false;
-            String subject = "Access issue for room membership";
-            String message = null;
+  private void escalate() {
+    List<RoomMember> pendingMembers =
+        roomMemberRepository.findByStatusAndDeletedAtIsNull(MemberStatus.PENDING);
 
-            if (roomMember.getOwnerAccessConfirmedAt() == null
-                    && roomMember.getUpdatedAt() != null
-                    && roomMember.getUpdatedAt().isBefore(ownerGrantDeadline)) {
-                shouldEscalate = true;
-                message = "Automatic escalation: owner did not confirm access in time.";
-            }
+    LocalDateTime now = LocalDateTime.now();
+    LocalDateTime ownerGrantDeadline = now.minusHours(24);
+    LocalDateTime memberConfirmDeadline = now.minusHours(24);
 
-            if (roomMember.getOwnerAccessConfirmedAt() != null
-                    && roomMember.getMemberConfirmedAt() == null
-                    && roomMember.getOwnerAccessConfirmedAt().isBefore(memberConfirmDeadline)) {
-                shouldEscalate = true;
-                message = "Automatic escalation: member did not confirm access in time.";
-            }
+    for (RoomMember roomMember : pendingMembers) {
+      boolean shouldEscalate = false;
+      String subject = "Access issue for room membership";
+      String message = null;
 
-            if (!shouldEscalate) {
-                continue;
-            }
+      if (roomMember.getOwnerAccessConfirmedAt() == null
+          && roomMember.getUpdatedAt() != null
+          && roomMember.getUpdatedAt().isBefore(ownerGrantDeadline)) {
+        shouldEscalate = true;
+        message = "Automatic escalation: owner did not confirm access in time.";
+      }
 
-            if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
-                roomMember.setRequiresAdminReview(true);
-                roomMemberRepository.save(roomMember);
-            }
+      if (roomMember.getOwnerAccessConfirmedAt() != null
+          && roomMember.getMemberConfirmedAt() == null
+          && roomMember.getOwnerAccessConfirmedAt().isBefore(memberConfirmDeadline)) {
+        shouldEscalate = true;
+        message = "Automatic escalation: member did not confirm access in time.";
+      }
 
-            supportTicketService.createSystemAccessIssueTicket(roomMember, subject, message);
+      if (!shouldEscalate) {
+        continue;
+      }
 
-            moderationService.enqueueMembershipForReview(
-                    roomMember,
-                    "PENDING_TIMEOUT",
-                    java.math.BigDecimal.ZERO
-            );
-        }
+      if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
+        roomMember.setRequiresAdminReview(true);
+        roomMemberRepository.save(roomMember);
+      }
+
+      supportTicketService.createSystemAccessIssueTicket(roomMember, subject, message);
+
+      moderationService.enqueueMembershipForReview(
+          roomMember, "PENDING_TIMEOUT", java.math.BigDecimal.ZERO);
     }
+  }
 }

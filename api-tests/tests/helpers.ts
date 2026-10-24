@@ -163,11 +163,12 @@ export async function joinRoom(api: APIRequestContext, memberToken: string, room
   return res.json();
 }
 
-/** Freedom Pay sandbox secret (backend .env FREEDOMPAY_SECRET_KEY). */
-export const FREEDOMPAY_SECRET = process.env.FREEDOMPAY_SECRET_KEY ?? "vA6xhdLDfq3SVHf9";
+/** Freedom Pay sandbox secret — from the environment only (same value as the backend .env). */
+export const FREEDOMPAY_SECRET = process.env.FREEDOMPAY_SECRET_KEY ?? "";
 
 /** MD5 signature the way Freedom Pay computes it: "<script>;<values sorted by key>;<secret>". */
 export function fpSign(script: string, params: Record<string, string>, secret = FREEDOMPAY_SECRET) {
+  if (!secret) throw new Error("Set FREEDOMPAY_SECRET_KEY to sign Freedom Pay sandbox callbacks");
   const values = Object.keys(params)
     .filter((k) => k !== "pg_sig")
     .sort()

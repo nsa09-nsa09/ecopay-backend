@@ -9,7 +9,7 @@ Rules:
 
 ---
 
-# Ecopay — Developer Reference (MVP v1)
+# EcoPay — Developer Reference (MVP v1)
 
 ## Tech Stack
 
@@ -288,7 +288,7 @@ created_at, resolved_at
 ### Review Fields
 ```
 id, author_id, recipient_id, room_id,
-rating (1–5), text,
+rating (1–10), text,
 created_at, hidden_by_admin: boolean
 ```
 
@@ -298,7 +298,8 @@ created_at, hidden_by_admin: boolean
 - Admin can hide a review (logged)
 
 ### Reputation Score Inputs
-- Average rating from reviews
+- Average rating from reviews (10-point scale; stored ×10 as 0–100)
+- New user with no reviews → neutral default 5.0/10 (score 50)
 - Count of successfully completed periods
 - Count of confirmed disputes/complaints
 - Confirmed fraud/violations
@@ -391,7 +392,10 @@ Event types: `room_created`, `member_joined`, `payment_intent_created`, `payment
 - Logout = revoke refresh token
 
 ### Registration / Login
-- Email + password (min 8 chars, unique email)
+- Phone + OTP + password (primary sign-up path; SMS code confirms the phone) OR email + password (code emailed). Exactly one identifier per registration; email is optional and can be added/changed later in the profile (confirmed via emailed one-time code, `pending_email` on `email_verification_tokens`)
+- Login: phone or email + password; JWT subject is the immutable `public_id` (legacy email-subject tokens still resolve)
+- Password reset works only through a verified email (silent otherwise)
+- Password min 8 chars; email unique among non-null values, phone unique
 - Google Sign-In (validate issuer/audience)
 - Password reset via email
 - Rate limit on login / forgot-password

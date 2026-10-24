@@ -1,4 +1,4 @@
-# Ecopay API E2E tests
+# EcoPay API E2E tests
 
 HTTP-level end-to-end tests for the core business chain, run with Playwright's
 `request` API (no browser needed) against a **running** backend.

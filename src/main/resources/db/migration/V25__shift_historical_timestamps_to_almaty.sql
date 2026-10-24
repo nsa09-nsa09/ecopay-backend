@@ -33,10 +33,10 @@
 --   re-enable them so append-only enforcement resumes.
 -- =========================================================
 
--- Allow the one-off shift on append-only audit log tables.
-ALTER TABLE admin_action_log DISABLE TRIGGER trg_block_aal_update;
-ALTER TABLE room_event_log   DISABLE TRIGGER trg_block_rel_update;
-ALTER TABLE payment_event_log DISABLE TRIGGER trg_block_pel_update;
+-- NOTE: CockroachDB does not support ALTER TABLE ... DISABLE/ENABLE TRIGGER.
+-- This is a one-off historical shift; on a fresh database the audit log tables
+-- are empty, so the UPDATEs below touch 0 rows and the append-only BEFORE UPDATE
+-- triggers never fire. Hence no trigger toggling is needed here.
 
 -- ----- users -----
 UPDATE users
@@ -157,7 +157,4 @@ UPDATE site_content SET updated_at = updated_at + INTERVAL '5 hours' WHERE updat
 UPDATE freedom_webhook_inbox SET received_at  = received_at  + INTERVAL '5 hours' WHERE received_at IS NOT NULL;
 UPDATE freedom_webhook_inbox SET processed_at = processed_at + INTERVAL '5 hours' WHERE processed_at IS NOT NULL;
 
--- Restore append-only enforcement.
-ALTER TABLE admin_action_log ENABLE TRIGGER trg_block_aal_update;
-ALTER TABLE room_event_log   ENABLE TRIGGER trg_block_rel_update;
-ALTER TABLE payment_event_log ENABLE TRIGGER trg_block_pel_update;
+-- (No trigger re-enable needed — see the note at the top of this migration.)

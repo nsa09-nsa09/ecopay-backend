@@ -26,34 +26,32 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AdminFeedbackController {
 
-    private final FeedbackService feedbackService;
+  private final FeedbackService feedbackService;
 
-    @GetMapping
-    @PreAuthorize("hasAuthority('ADMIN')")
-    public ResponseEntity<PagedResponse<AdminFeedbackDto>> list(
-            @RequestParam(required = false) FeedbackType type,
-            @RequestParam(required = false) FeedbackStatus status,
-            @RequestParam(required = false) String q,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
-    ) {
-        return ResponseEntity.ok(feedbackService.adminList(type, status, q, page, size));
-    }
+  @GetMapping
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<PagedResponse<AdminFeedbackDto>> list(
+      @RequestParam(required = false) FeedbackType type,
+      @RequestParam(required = false) FeedbackStatus status,
+      @RequestParam(required = false) String q,
+      @RequestParam(defaultValue = "0") int page,
+      @RequestParam(defaultValue = "20") int size) {
+    return ResponseEntity.ok(feedbackService.adminList(type, status, q, page, size));
+  }
 
-    @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('ADMIN')")
-    public ResponseEntity<AdminFeedbackDto> get(@PathVariable Long id) {
-        return ResponseEntity.ok(feedbackService.adminGet(id));
-    }
+  @GetMapping("/{id}")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<AdminFeedbackDto> get(@PathVariable Long id) {
+    return ResponseEntity.ok(feedbackService.adminGet(id));
+  }
 
-    @PatchMapping("/{id}")
-    @PreAuthorize("hasAuthority('ADMIN')")
-    public ResponseEntity<AdminFeedbackDto> update(
-            @AuthenticationPrincipal User admin,
-            @PathVariable Long id,
-            @Valid @RequestBody UpdateFeedbackRequest request,
-            HttpServletRequest http
-    ) {
-        return ResponseEntity.ok(feedbackService.adminUpdate(admin, id, request, http));
-    }
+  @PatchMapping("/{id}")
+  @PreAuthorize("hasAuthority('ADMIN')")
+  public ResponseEntity<AdminFeedbackDto> update(
+      @AuthenticationPrincipal User admin,
+      @PathVariable Long id,
+      @Valid @RequestBody UpdateFeedbackRequest request,
+      HttpServletRequest http) {
+    return ResponseEntity.ok(feedbackService.adminUpdate(admin, id, request, http));
+  }
 }

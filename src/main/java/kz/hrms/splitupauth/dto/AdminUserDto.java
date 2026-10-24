@@ -1,91 +1,100 @@
 package kz.hrms.splitupauth.dto;
 
+import java.time.LocalDateTime;
 import kz.hrms.splitupauth.entity.User;
 import lombok.Builder;
 import lombok.Data;
 
-import java.time.LocalDateTime;
-
 @Data
 @Builder
 public class AdminUserDto {
-    private Long id;
-    private String publicId;
-    private String email;
-    private String emailMasked;
-    private String displayName;
-    private String phone;
-    private String phoneMasked;
-    private Boolean phoneVerified;
-    private String avatar;
-    private String role;
-    private String status;
-    private Integer reputation;
-    // Risk score is not yet stored on the User entity. We return 0 so the
-    // frontend type stays stable; introduce a real column + scorer later.
-    private Integer riskScore;
-    private Integer roomsOwned;
-    private Integer roomsJoined;
-    private Integer tickets;
-    private Integer disputes;
-    private LocalDateTime createdAt;
-    private LocalDateTime lastLoginAt;
+  private Long id;
+  private String publicId;
+  private String email;
+  private String emailMasked;
+  private String displayName;
+  private String phone;
+  private String phoneMasked;
+  private Boolean phoneVerified;
+  private String avatar;
+  private String role;
+  private String status;
+  private Integer reputation;
 
-    /** Cheap variant: zero counters. Used by the paginated list endpoint to avoid N+1. */
-    public static AdminUserDto from(User u) {
-        return baseBuilder(u)
-                .roomsOwned(0)
-                .roomsJoined(0)
-                .tickets(0)
-                .disputes(0)
-                .build();
-    }
+  /**
+   * B7: lets the admin UI render the "проверенный владелец" badge and decide between "Mark as
+   * verified" and "Unmark". {@code ownerVerifiedByAdmin} tracks whether an admin set it manually
+   * (so the phone-verification logic in PhoneVerificationService leaves it alone).
+   */
+  private Boolean ownerVerified;
 
-    /** Detail variant: caller supplies the real counters. */
-    public static AdminUserDto fromWithCounters(
-            User u,
-            long roomsOwned,
-            long roomsJoined,
-            long tickets,
-            long disputes
-    ) {
-        return baseBuilder(u)
-                .roomsOwned(Math.toIntExact(roomsOwned))
-                .roomsJoined(Math.toIntExact(roomsJoined))
-                .tickets(Math.toIntExact(tickets))
-                .disputes(Math.toIntExact(disputes))
-                .build();
-    }
+  private Boolean ownerVerifiedByAdmin;
 
-    private static AdminUserDtoBuilder baseBuilder(User u) {
-        return AdminUserDto.builder()
-                .id(u.getId())
-                .publicId(u.getPublicId())
-                .email(u.getEmail())
-                .emailMasked(maskEmail(u.getEmail()))
-                .displayName(u.getDisplayName())
-                .phone(u.getPhone())
-                .phoneMasked(maskPhone(u.getPhone()))
-                .phoneVerified(u.getPhoneVerifiedAt() != null)
-                .avatar(u.getAvatar())
-                .role(u.getRole() == null ? null : u.getRole().name())
-                .status(u.getStatus() == null ? null : u.getStatus().name())
-                .reputation(u.getReputation())
-                .riskScore(0)
-                .createdAt(u.getCreatedAt())
-                .lastLoginAt(u.getLastLoginAt());
-    }
+  // Risk score is not yet stored on the User entity. We return 0 so the
+  // frontend type stays stable; introduce a real column + scorer later.
+  private Integer riskScore;
+  private Integer roomsOwned;
+  private Integer roomsJoined;
+  private Integer tickets;
+  private Integer disputes;
+  private LocalDateTime createdAt;
+  private LocalDateTime lastLoginAt;
+  private String banReason;
+  private LocalDateTime bannedAt;
+  private LocalDateTime banStartsAt;
+  private LocalDateTime banUntil;
 
-    private static String maskEmail(String email) {
-        if (email == null || email.isEmpty()) return null;
-        int at = email.indexOf('@');
-        if (at <= 1) return "***" + (at >= 0 ? email.substring(at) : "");
-        return email.charAt(0) + "***" + email.substring(at);
-    }
+  /** Cheap variant: zero counters. Used by the paginated list endpoint to avoid N+1. */
+  public static AdminUserDto from(User u) {
+    return baseBuilder(u).roomsOwned(0).roomsJoined(0).tickets(0).disputes(0).build();
+  }
 
-    private static String maskPhone(String phone) {
-        if (phone == null || phone.length() < 4) return phone;
-        String tail = phone.substring(phone.length() - 4);
-        return "***" + tail;
-    }
+  /** Detail variant: caller supplies the real counters. */
+  public static AdminUserDto fromWithCounters(
+      User u, long roomsOwned, long roomsJoined, long tickets, long disputes) {
+    return baseBuilder(u)
+        .roomsOwned(Math.toIntExact(roomsOwned))
+        .roomsJoined(Math.toIntExact(roomsJoined))
+        .tickets(Math.toIntExact(tickets))
+        .disputes(Math.toIntExact(disputes))
+        .build();
+  }
+
+  private static AdminUserDtoBuilder baseBuilder(User u) {
+    return AdminUserDto.builder()
+        .id(u.getId())
+        .publicId(u.getPublicId())
+        .email(u.getEmail())
+        .emailMasked(maskEmail(u.getEmail()))
+        .displayName(u.getDisplayName())
+        .phone(u.getPhone())
+        .phoneMasked(maskPhone(u.getPhone()))
+        .phoneVerified(u.getPhoneVerifiedAt() != null)
+        .avatar(u.getAvatar())
+        .role(u.getRole() == null ? null : u.getRole().name())
+        .status(u.getStatus() == null ? null : u.getStatus().name())
+        .reputation(u.getReputation())
+        .ownerVerified(Boolean.TRUE.equals(u.getOwnerVerified()))
+        .ownerVerifiedByAdmin(Boolean.TRUE.equals(u.getOwnerVerifiedByAdmin()))
+        .riskScore(0)
+        .createdAt(u.getCreatedAt())
+        .lastLoginAt(u.getLastLoginAt())
+        .banReason(u.getBanReason())
+        .bannedAt(u.getBannedAt())
+        .banStartsAt(u.getBanStartsAt())
+        .banUntil(u.getBanUntil());
+  }
+
+  private static String maskEmail(String email) {
+    if (email == null || email.isEmpty()) return null;
+    int at = email.indexOf('@');
+    if (at <= 1) return "***" + (at >= 0 ? email.substring(at) : "");
+    return email.charAt(0) + "***" + email.substring(at);
+  }
+
+  private static String maskPhone(String phone) {
+    if (phone == null || phone.length() < 4) return phone;
+    String tail = phone.substring(phone.length() - 4);
+    return "***" + tail;
+  }
 }

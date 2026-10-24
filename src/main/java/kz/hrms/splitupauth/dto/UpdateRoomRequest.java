@@ -6,49 +6,43 @@ import kz.hrms.splitupauth.entity.AccessType;
 import kz.hrms.splitupauth.entity.ConnectionType;
 import lombok.Data;
 
-import java.math.BigDecimal;
-
 @Data
 public class UpdateRoomRequest {
 
-    @Size(max = 150, message = "Title must be at most 150 characters")
-    private String title;
+  @Size(min = 3, max = 150, message = "Название должно быть от 3 до 150 символов")
+  private String title;
 
-    @Size(max = 2000, message = "Description must be at most 2000 characters")
-    private String description;
+  @Size(max = 2000, message = "Описание должно быть не длиннее 2000 символов")
+  private String description;
 
-    @Min(value = 2, message = "Max members must be at least 2")
-    private Integer maxMembers;
+  // Price, currency, billing period, and seat count are tariff-controlled
+  // (set by the admin on the tariff plan) and intentionally NOT editable here.
 
-    private BigDecimal priceTotal;
+  @Size(max = 1000, message = "Политика отмены должна быть не длиннее 1000 символов")
+  private String cancellationPolicy;
 
-    private BigDecimal pricePerMember;
+  @Size(max = 120, message = "Название провайдера должно быть не длиннее 120 символов")
+  private String providerName;
 
-    @Size(max = 1000, message = "Cancellation policy must be at most 1000 characters")
-    private String cancellationPolicy;
+  @Size(max = 150, message = "Название тарифа должно быть не длиннее 150 символов")
+  private String tariffNameSnapshot;
 
-    @Size(max = 120, message = "Provider name must be at most 120 characters")
-    private String providerName;
+  private ConnectionType connectionType;
 
-    @Size(max = 150, message = "Tariff name snapshot must be at most 150 characters")
-    private String tariffNameSnapshot;
+  @Size(max = 1000, message = "Ограничения оператора должны быть не длиннее 1000 символов")
+  private String operatorRestrictions;
 
-    private ConnectionType connectionType;
+  private Boolean operatorTermsConfirmed;
 
-    @Size(max = 1000, message = "Operator restrictions must be at most 1000 characters")
-    private String operatorRestrictions;
+  private AccessType accessType;
 
-    private Boolean operatorTermsConfirmed;
+  @Size(max = 10, message = "Код региона должен быть не длиннее 10 символов")
+  private String regionRestriction;
 
-    private AccessType accessType;
+  private Boolean requiresEmailForInvite;
 
-    @Size(max = 10, message = "Region restriction must be at most 10 characters")
-    private String regionRestriction;
+  private Boolean emailChangeForbidden;
 
-    private Boolean requiresEmailForInvite;
-
-    private Boolean emailChangeForbidden;
-
-    @Min(value = 0, message = "Access grant SLA hours cannot be negative")
-    private Integer accessGrantSlaHours;
+  @Min(value = 0, message = "Срок выдачи доступа не может быть отрицательным")
+  private Integer accessGrantSlaHours;
 }

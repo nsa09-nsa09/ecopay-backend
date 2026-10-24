@@ -1,96 +1,283 @@
 package kz.hrms.splitupauth.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import kz.hrms.splitupauth.entity.FreedomWebhookInbox;
-import kz.hrms.splitupauth.payment.gateway.GatewayWebhookEvent;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import kz.hrms.splitupauth.exception.TooManyRequestsException;
 import kz.hrms.splitupauth.payment.gateway.freedom.FreedomPayGateway;
-import kz.hrms.splitupauth.repository.FreedomWebhookInboxRepository;
+import kz.hrms.splitupauth.service.FreedomWebhookInboxCoordinator;
 import kz.hrms.splitupauth.service.PaymentService;
+import kz.hrms.splitupauth.service.RateLimiter;
+import kz.hrms.splitupauth.util.ClientIp;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
-
+/**
+ * FreedomPay server-to-server callbacks. Every callback is stored durably in the inbox (signature
+ * checked first; an invalid one is dead-lettered without touching money) before it is acknowledged.
+ * Parameters are kept multi-valued so a signed repeated field is never silently collapsed.
+ *
+ * <p>Browser redirects (success/failure URLs) are NOT handled here and are never proof of payment.
+ */
 @RestController
 @RequestMapping("/api/v1/webhooks/freedompay")
 @RequiredArgsConstructor
 @Slf4j
 public class FreedomPayWebhookController {
 
-    private final FreedomPayGateway gateway;
-    private final FreedomWebhookInboxRepository inboxRepository;
-    private final PaymentService paymentService;
-    private final ObjectMapper objectMapper;
+  private static final int MAX_WEBHOOK_PARAM_BYTES = 32_768;
 
-    @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
-    public ResponseEntity<String> result(@RequestParam Map<String, String> params) {
-        // Freedom Pay signs callbacks with the last path segment of the result URL.
-        return processWebhook("result", params);
+  private final FreedomPayGateway gateway;
+  private final FreedomWebhookInboxCoordinator inboxCoordinator;
+  private final PaymentService paymentService;
+  private final RateLimiter rateLimiter;
+
+  /**
+   * Per-IP cap on callbacks accepted into the durable inbox per minute. This is a public,
+   * unauthenticated URL, so an abusive sender could otherwise cost one DB row per request. The
+   * default is far above a single provider's real retry rate; set to 0 to disable.
+   */
+  @Value("${app.webhooks.freedompay.rate-limit-per-minute:120}")
+  private int rateLimitPerMinute = 120;
+
+  @PostMapping(value = "/result", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> result(@RequestParam MultiValueMap<String, String> params) {
+    return processResultWebhook(params);
+  }
+
+  @PostMapping(value = "/check", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> check(@RequestParam MultiValueMap<String, String> params) {
+    return processCheckWebhook(params);
+  }
+
+  @PostMapping(value = "/payout-result", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> payoutResult(@RequestParam MultiValueMap<String, String> params) {
+    return processWebhook(FreedomPayGateway.PAYOUT_RESULT_SCRIPT, params);
+  }
+
+  /** Callback for payout-card tokenization ({@code cardstoragepayout/add}). */
+  @PostMapping(value = "/payout-card-result", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> payoutCardResult(
+      @RequestParam MultiValueMap<String, String> params) {
+    return processWebhook(FreedomPayGateway.PAYOUT_CARD_RESULT_SCRIPT, params);
+  }
+
+  /**
+   * Legacy callback for purchase card storage ({@code cardstorage/add2}). Still accepted and
+   * recorded so in-flight provider retries are acknowledged, but such tokens are never registered
+   * as payout destinations any more.
+   */
+  @PostMapping(value = "/card-storage-result", produces = MediaType.APPLICATION_XML_VALUE)
+  public ResponseEntity<String> cardStorageResult(
+      @RequestParam MultiValueMap<String, String> params) {
+    return processWebhook(FreedomPayGateway.CARD_STORAGE_RESULT_SCRIPT, params);
+  }
+
+  private ResponseEntity<String> processCheckWebhook(MultiValueMap<String, String> params) {
+    String script = FreedomPayGateway.CHECK_SCRIPT;
+    if (rateLimitPerMinute > 0) {
+      String ip = ClientIp.current();
+      try {
+        rateLimiter.check("freedompay-webhook:" + ip, rateLimitPerMinute, 60, "rate limited");
+      } catch (TooManyRequestsException ex) {
+        log.warn("Freedom Pay {} callback rate limited for ip={}", script, ip);
+        return errorResponse(script, "rate limited");
+      }
+    }
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay {} callback rejected: payload too large", script);
+      return errorResponse(script, "payload too large");
     }
 
-    @PostMapping(value = "/payout-result", produces = MediaType.APPLICATION_XML_VALUE)
-    public ResponseEntity<String> payoutResult(@RequestParam Map<String, String> params) {
-        return processWebhook("payout-result", params);
+    Map<String, List<String>> copy = new LinkedHashMap<>();
+    params.forEach((k, v) -> copy.put(k, v == null ? List.of() : new ArrayList<>(v)));
+    boolean signatureValid;
+    try {
+      signatureValid = gateway.verifyCheckCallback(copy);
+    } catch (RuntimeException ex) {
+      log.error(
+          "Freedom Pay check callback verification failed: {}", ex.getClass().getSimpleName());
+      return errorResponse(script, "temporarily unavailable");
+    }
+    if (!signatureValid) {
+      log.warn("Freedom Pay check callback signature invalid");
+      return errorResponse(script, "invalid signature");
     }
 
-    private ResponseEntity<String> processWebhook(String script, Map<String, String> params) {
-        Map<String, String> safe = new HashMap<>(params);
-        GatewayWebhookEvent event = gateway.verifyAndParseWebhook(script, safe);
+    Long orderId = parseLongOrNull(firstValue(params, "pg_order_id"));
+    BigDecimal amount = parseBigDecimalOrNull(firstValue(params, "pg_amount"));
+    String currency = firstValue(params, "pg_currency");
+    if (orderId == null) {
+      return errorResponse(script, "missing pg_order_id");
+    }
 
-        boolean signatureValid = gateway.verifyWebhookSignature(script, safe);
-        String requestId = event.getProviderRequestId();
+    PaymentService.MerchantDecision decision =
+        paymentService.decideOnProviderSuccess(orderId, amount, currency);
+    if (!decision.accepted()) {
+      log.info(
+          "Merchant rejected payment intent {} on check callback: {}",
+          orderId,
+          decision.reasonRu());
+      return rejectedResponse(script, decision.reasonRu());
+    }
+    return okResponse(script);
+  }
 
-        // Inbox dedup — UNIQUE(provider_request_id) guarantees once-only.
-        try {
-            FreedomWebhookInbox existing = inboxRepository
-                    .findByProviderRequestId(requestId).orElse(null);
-            if (existing != null) {
-                log.info("Duplicate Freedom Pay webhook for {}, replying ok", requestId);
-                return okResponse(script);
-            }
-            FreedomWebhookInbox inbox = FreedomWebhookInbox.builder()
-                    .providerRequestId(requestId)
-                    .rawBody(objectMapper.valueToTree(safe))
-                    .signatureValid(signatureValid)
-                    .processingStatus("PENDING")
-                    .build();
-            inboxRepository.save(inbox);
+  private ResponseEntity<String> processResultWebhook(MultiValueMap<String, String> params) {
+    String script = FreedomPayGateway.RESULT_SCRIPT;
+    if (rateLimitPerMinute > 0) {
+      String ip = ClientIp.current();
+      try {
+        rateLimiter.check("freedompay-webhook:" + ip, rateLimitPerMinute, 60, "rate limited");
+      } catch (TooManyRequestsException ex) {
+        log.warn("Freedom Pay {} callback rate limited for ip={}", script, ip);
+        return errorResponse(script, "rate limited");
+      }
+    }
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay {} callback rejected before inbox store: payload too large", script);
+      return errorResponse(script, "payload too large");
+    }
 
-            if (!signatureValid) {
-                inbox.setProcessingStatus("INVALID_SIGNATURE");
-                inbox.setProcessedAt(LocalDateTime.now());
-                inboxRepository.save(inbox);
-                log.warn("Freedom Pay webhook signature invalid for {}", requestId);
-                return errorResponse(script, "invalid signature");
-            }
+    Map<String, List<String>> copy = new LinkedHashMap<>();
+    params.forEach((k, v) -> copy.put(k, v == null ? List.of() : new ArrayList<>(v)));
+    try {
+      FreedomWebhookInboxCoordinator.Acceptance accepted =
+          inboxCoordinator.acceptAndProcessMulti(script, copy);
+      if (accepted.invalidSignature()) {
+        log.warn("Freedom Pay webhook signature invalid; inbox={}", accepted.inboxId());
+        return errorResponse(script, "invalid signature");
+      }
 
-            paymentService.applyWebhookEvent(event);
+      // Idempotent replay: if this inbox already has a stored decision, return it.
+      if ("REJECTED_BY_MERCHANT".equals(accepted.merchantDecision())) {
+        return rejectedResponse(script, "Повторный запрос: оплата была отклонена");
+      }
+      if ("ACCEPTED".equals(accepted.merchantDecision())) {
+        return okResponse(script);
+      }
 
-            inbox.setProcessingStatus("PROCESSED");
-            inbox.setProcessedAt(LocalDateTime.now());
-            inboxRepository.save(inbox);
-            return okResponse(script);
-        } catch (Exception ex) {
-            log.error("Freedom Pay webhook handler failed: {}", ex.getMessage(), ex);
-            // Reply ok to avoid endless retries; inbox row remains PENDING for offline retry.
-            return okResponse(script);
+      // pg_can_reject=1 + pg_result=1: merchant may reject the payment before capture.
+      boolean canReject = "1".equals(firstValue(params, "pg_can_reject"));
+      boolean providerSuccess = "1".equals(firstValue(params, "pg_result"));
+      if (canReject && providerSuccess) {
+        Long orderId = parseLongOrNull(firstValue(params, "pg_order_id"));
+        BigDecimal amount = parseBigDecimalOrNull(firstValue(params, "pg_amount"));
+        String currency = firstValue(params, "pg_currency");
+        if (orderId != null) {
+          PaymentService.MerchantDecision decision =
+              paymentService.decideOnProviderSuccess(orderId, amount, currency);
+          if (!decision.accepted()) {
+            inboxCoordinator.markMerchantDecision(accepted.inboxId(), "REJECTED_BY_MERCHANT");
+            paymentService.applyMerchantRejection(orderId, decision.reasonRu());
+            log.info(
+                "Merchant rejected payment intent {} on result callback: {}",
+                orderId,
+                decision.reasonRu());
+            return rejectedResponse(script, decision.reasonRu());
+          }
+          inboxCoordinator.markMerchantDecision(accepted.inboxId(), "ACCEPTED");
         }
+      }
+      return okResponse(script);
+    } catch (RuntimeException ex) {
+      log.error("Freedom Pay webhook could not be stored: {}", ex.getClass().getSimpleName());
+      return errorResponse(script, "temporarily unavailable");
+    }
+  }
+
+  private ResponseEntity<String> processWebhook(
+      String script, MultiValueMap<String, String> params) {
+    if (rateLimitPerMinute > 0) {
+      String ip = ClientIp.current();
+      try {
+        rateLimiter.check("freedompay-webhook:" + ip, rateLimitPerMinute, 60, "rate limited");
+      } catch (TooManyRequestsException ex) {
+        // Reject before any inbox write; a signed error reply makes Freedom Pay retry later.
+        log.warn("Freedom Pay {} callback rate limited for ip={}", script, ip);
+        return errorResponse(script, "rate limited");
+      }
     }
 
-    // Freedom Pay requires the merchant reply to be signed (pg_salt + pg_sig).
-    private ResponseEntity<String> okResponse(String script) {
-        return ResponseEntity.ok(gateway.buildWebhookResponse(script, "ok", "Order processed"));
+    if (payloadTooLarge(params)) {
+      log.warn("Freedom Pay {} callback rejected before inbox store: payload too large", script);
+      return errorResponse(script, "payload too large");
     }
 
-    private ResponseEntity<String> errorResponse(String script, String description) {
-        return ResponseEntity.ok(gateway.buildWebhookResponse(script, "error", description));
+    Map<String, List<String>> copy = new LinkedHashMap<>();
+    params.forEach((k, v) -> copy.put(k, v == null ? List.of() : new ArrayList<>(v)));
+    try {
+      FreedomWebhookInboxCoordinator.Acceptance accepted =
+          inboxCoordinator.acceptAndProcessMulti(script, copy);
+      if (accepted.invalidSignature()) {
+        log.warn("Freedom Pay webhook signature invalid; inbox={}", accepted.inboxId());
+        return errorResponse(script, "invalid signature");
+      }
+      return okResponse(script);
+    } catch (RuntimeException ex) {
+      // Never acknowledge a callback that was not durably stored. Freedom Pay will retry it.
+      log.error("Freedom Pay webhook could not be stored: {}", ex.getClass().getSimpleName());
+      return errorResponse(script, "temporarily unavailable");
     }
+  }
+
+  private boolean payloadTooLarge(MultiValueMap<String, String> params) {
+    long bytes = 0;
+    for (Map.Entry<String, List<String>> entry : params.entrySet()) {
+      bytes += entry.getKey() == null ? 0 : entry.getKey().getBytes(StandardCharsets.UTF_8).length;
+      if (entry.getValue() != null) {
+        for (String value : entry.getValue()) {
+          bytes += value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length;
+        }
+      }
+      if (bytes > MAX_WEBHOOK_PARAM_BYTES) return true;
+    }
+    return false;
+  }
+
+  private ResponseEntity<String> okResponse(String script) {
+    return ResponseEntity.ok(gateway.buildWebhookResponse(script, "ok", "Order processed"));
+  }
+
+  private ResponseEntity<String> errorResponse(String script, String description) {
+    return ResponseEntity.ok(gateway.buildWebhookResponse(script, "error", description));
+  }
+
+  private ResponseEntity<String> rejectedResponse(String script, String description) {
+    return ResponseEntity.ok(gateway.buildWebhookResponse(script, "rejected", description));
+  }
+
+  private static String firstValue(MultiValueMap<String, String> params, String key) {
+    List<String> values = params.get(key);
+    return values != null && !values.isEmpty() ? values.get(0) : null;
+  }
+
+  private static Long parseLongOrNull(String value) {
+    if (value == null || value.isBlank()) return null;
+    try {
+      return Long.parseLong(value.trim());
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
+
+  private static BigDecimal parseBigDecimalOrNull(String value) {
+    if (value == null || value.isBlank()) return null;
+    try {
+      return new BigDecimal(value.trim());
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
 }

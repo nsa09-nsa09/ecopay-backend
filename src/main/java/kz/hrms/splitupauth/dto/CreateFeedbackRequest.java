@@ -9,13 +9,13 @@ import lombok.Data;
 @Data
 public class CreateFeedbackRequest {
 
-    @NotNull(message = "Feedback type is required")
-    private FeedbackType type;
+  @NotNull(message = "Выберите тип обратной связи")
+  private FeedbackType type;
 
-    @Size(max = 150, message = "Subject must be at most 150 characters")
-    private String subject;
+  @Size(max = 150, message = "Тема должна быть не длиннее 150 символов")
+  private String subject;
 
-    @NotBlank(message = "Message is required")
-    @Size(min = 5, max = 4000, message = "Message must be 5..4000 characters")
-    private String message;
+  @NotBlank(message = "Введите сообщение")
+  @Size(min = 5, max = 4000, message = "Сообщение должно быть от 5 до 4000 символов")
+  private String message;
 }

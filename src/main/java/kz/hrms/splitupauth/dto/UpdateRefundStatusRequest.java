@@ -6,6 +6,6 @@ import lombok.Data;
 @Data
 public class UpdateRefundStatusRequest {
 
-    @Size(max = 150, message = "Provider refund id must be at most 150 characters")
-    private String providerRefundId;
+  @Size(max = 150, message = "Provider refund id must be at most 150 characters")
+  private String providerRefundId;
 }
