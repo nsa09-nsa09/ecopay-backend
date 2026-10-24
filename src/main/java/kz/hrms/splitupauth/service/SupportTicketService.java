@@ -490,15 +490,28 @@ public class SupportTicketService {
 
     RoomMember roomMember = ticket.getRoomMember();
 
-    // Moderation queue + requiresAdminReview still only applies when there is a specific
-    // membership to review; owner-only tickets go straight to the dispute queue.
+    // If the ticket has no membership link but the author is a member of the room, attach it
+    // so the dispute has a concrete membership to act on (payout block, refund, etc.).
+    if (roomMember == null) {
+      boolean isOwner = ticket.getRoom().getOwner().getId().equals(ticket.getUser().getId());
+      if (!isOwner) {
+        roomMember =
+            roomMemberRepository
+                .findByRoomAndUserAndDeletedAtIsNull(ticket.getRoom(), ticket.getUser())
+                .orElse(null);
+        if (roomMember != null) {
+          ticket.setRoomMember(roomMember);
+        }
+      }
+    }
+
+    // Moderation is only for auto-flags; escalation sets requiresAdminReview but does NOT
+    // enqueue into the moderation queue.
     if (roomMember != null) {
       if (!Boolean.TRUE.equals(roomMember.getRequiresAdminReview())) {
         roomMember.setRequiresAdminReview(true);
         roomMemberRepository.save(roomMember);
       }
-      moderationService.enqueueMembershipForReview(
-          roomMember, "SUPPORT_ESCALATION", BigDecimal.ZERO);
     }
 
     Dispute existingDispute = disputeRepository.findByTicket(ticket).orElse(null);
@@ -543,13 +556,37 @@ public class SupportTicketService {
     supportMessageRepository.save(systemMessage);
     supportTicketRepository.save(ticket);
 
-    // Let the user who filed the ticket know their case is now an admin dispute.
+    // Notify the ticket author.
     notificationService.notify(
         ticket.getUser(),
         NotificationType.DISPUTE_OPENED,
         java.util.Map.of(),
         "/support",
         java.util.Map.of("ticketId", ticket.getId(), "disputeId", dispute.getId()));
+
+    // Notify the room owner so they know a dispute has been opened against their room.
+    Long roomId = ticket.getRoom().getId();
+    User roomOwner = ticket.getRoom().getOwner();
+    if (roomOwner != null && !roomOwner.getId().equals(ticket.getUser().getId())) {
+      notificationService.notify(
+          roomOwner,
+          NotificationType.DISPUTE_OPENED,
+          java.util.Map.of(),
+          "/rooms/owner/" + roomId,
+          java.util.Map.of("ticketId", ticket.getId(), "disputeId", dispute.getId()));
+    }
+
+    // Notify the participant (roomMember's user) if different from the ticket author and owner.
+    if (roomMember != null
+        && !roomMember.getUser().getId().equals(ticket.getUser().getId())
+        && !roomMember.getUser().getId().equals(roomOwner != null ? roomOwner.getId() : -1)) {
+      notificationService.notify(
+          roomMember.getUser(),
+          NotificationType.DISPUTE_OPENED,
+          java.util.Map.of(),
+          "/rooms/member/" + roomId,
+          java.util.Map.of("ticketId", ticket.getId(), "disputeId", dispute.getId()));
+    }
 
     return publishAndReturn(ticket);
   }

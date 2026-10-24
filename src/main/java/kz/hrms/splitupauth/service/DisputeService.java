@@ -12,17 +12,23 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import kz.hrms.splitupauth.dto.ApplyDisputeSanctionsRequest;
+import kz.hrms.splitupauth.dto.CreateDisputeStatementRequest;
 import kz.hrms.splitupauth.dto.CreateRefundRequest;
 import kz.hrms.splitupauth.dto.CreateRoomComplaintRequest;
 import kz.hrms.splitupauth.dto.DisputeDecisionRequest;
 import kz.hrms.splitupauth.dto.DisputeResponse;
+import kz.hrms.splitupauth.dto.DisputeStatementDto;
 import kz.hrms.splitupauth.dto.PageResponse;
+import kz.hrms.splitupauth.dto.SupportMessageDto;
 import kz.hrms.splitupauth.entity.*;
+import kz.hrms.splitupauth.entity.SupportSenderRole;
 import kz.hrms.splitupauth.exception.ForbiddenOperationException;
 import kz.hrms.splitupauth.exception.InvalidRequestException;
 import kz.hrms.splitupauth.exception.ResourceNotFoundException;
 import kz.hrms.splitupauth.repository.*;
+import kz.hrms.splitupauth.repository.DisputeStatementRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
+import kz.hrms.splitupauth.repository.SupportMessageRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import kz.hrms.splitupauth.util.TextSanitizer;
 import lombok.RequiredArgsConstructor;
@@ -49,6 +55,8 @@ public class DisputeService {
   private final ReputationService reputationService;
   private final NotificationService notificationService;
   private final PayoutBlockService payoutBlockService;
+  private final DisputeStatementRepository disputeStatementRepository;
+  private final SupportMessageRepository supportMessageRepository;
 
   /**
    * Opens an administrator-visible case directly from a paid room member. A report of an owner
@@ -311,15 +319,42 @@ public class DisputeService {
               .build());
     }
 
+    // Write a system message to the linked ticket and close it.
+    if (dispute.getTicket() != null) {
+      SupportTicket ticket = dispute.getTicket();
+      String decisionFavor =
+          newStatus == DisputeStatus.RESOLVED ? "в пользу участника" : "в пользу владельца";
+      String refundText =
+          refundTriggered ? "Возврат: " + request.getRefundAmount() : "Возврат: нет";
+      String systemText =
+          "Решение по спору #"
+              + dispute.getId()
+              + ": "
+              + decisionFavor
+              + ". "
+              + request.getComment()
+              + ". "
+              + refundText;
+      SupportMessage systemMsg =
+          SupportMessage.builder()
+              .ticket(ticket)
+              .senderUser(currentUser)
+              .senderRole(SupportSenderRole.SYSTEM)
+              .message(systemText)
+              .build();
+      supportMessageRepository.save(systemMsg);
+
+      ticket.setStatus(SupportTicketStatus.CLOSED);
+      ticket.setClosedAt(LocalDateTime.now());
+      supportTicketRepository.save(ticket);
+    }
+
     // A decided dispute can confirm an owner violation, which penalises reputation.
     if (dispute.getRoom() != null) {
       reputationService.recompute(dispute.getRoom().getOwner());
     }
 
-    // Notify whoever opened the dispute of the admin's decision. The old link ("/disputes-flows")
-    // pointed at an internal dev page that returned 404 in production. Point the complainant at
-    // the member view of the affected room so they can see the outcome in context, and also tell
-    // the room owner so a payout release or refund does not come as a surprise.
+    // Notify both sides of the admin's decision.
     Long roomId = dispute.getRoom() != null ? dispute.getRoom().getId() : null;
     if (dispute.getOpenedByUser() != null && roomId != null) {
       notificationService.notify(
@@ -395,6 +430,81 @@ public class DisputeService {
       if (budget != null) budget = budget.subtract(amount);
     }
     return anyCreated;
+  }
+
+  @Transactional
+  public DisputeStatementDto addStatement(
+      Long disputeId, User currentUser, CreateDisputeStatementRequest request) {
+    Dispute dispute =
+        disputeRepository
+            .findById(disputeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Dispute not found"));
+
+    if (dispute.getStatus() == DisputeStatus.RESOLVED
+        || dispute.getStatus() == DisputeStatus.REJECTED) {
+      throw new InvalidRequestException("Cannot add statement to a decided dispute");
+    }
+
+    String side = resolveDisputeSide(dispute, currentUser);
+    if (side == null) {
+      throw new ForbiddenOperationException("You are not a party to this dispute");
+    }
+
+    DisputeStatement existing =
+        disputeStatementRepository.findByDisputeAndSide(dispute, side).orElse(null);
+    if (existing != null) {
+      existing.setText(TextSanitizer.sanitize(request.getText()));
+      existing = disputeStatementRepository.save(existing);
+      return DisputeStatementDto.from(existing);
+    }
+
+    DisputeStatement statement =
+        DisputeStatement.builder()
+            .dispute(dispute)
+            .author(currentUser)
+            .side(side)
+            .text(TextSanitizer.sanitize(request.getText()))
+            .build();
+    statement = disputeStatementRepository.save(statement);
+    return DisputeStatementDto.from(statement);
+  }
+
+  @Transactional(readOnly = true)
+  public DisputeResponse getPartyDispute(Long disputeId, User currentUser) {
+    Dispute dispute =
+        disputeRepository
+            .findById(disputeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Dispute not found"));
+
+    String side = resolveDisputeSide(dispute, currentUser);
+    if (side == null) {
+      throw new ForbiddenOperationException("You are not a party to this dispute");
+    }
+
+    DisputeResponse response = map(dispute);
+    response.setStatements(
+        disputeStatementRepository.findByDisputeOrderByCreatedAtAsc(dispute).stream()
+            .map(DisputeStatementDto::from)
+            .toList());
+    return response;
+  }
+
+  private String resolveDisputeSide(Dispute dispute, User user) {
+    Room room = dispute.getRoom();
+    if (room != null && room.getOwner() != null && room.getOwner().getId().equals(user.getId())) {
+      return "OWNER";
+    }
+    RoomMember member = dispute.getRoomMember();
+    if (member != null
+        && member.getUser() != null
+        && member.getUser().getId().equals(user.getId())) {
+      return "MEMBER";
+    }
+    if (dispute.getOpenedByUser() != null
+        && dispute.getOpenedByUser().getId().equals(user.getId())) {
+      return "MEMBER";
+    }
+    return null;
   }
 
   private void ensureAdmin(User currentUser) {
@@ -631,7 +741,28 @@ public class DisputeService {
         .refundedAmountKzt(refunded)
         .refundableAmountKzt(refundable)
         .refundTriggered(refundTriggered)
+        .ticketMessages(buildTicketMessages(dispute))
+        .statements(
+            disputeStatementRepository.findByDisputeOrderByCreatedAtAsc(dispute).stream()
+                .map(DisputeStatementDto::from)
+                .toList())
         .build();
+  }
+
+  private List<SupportMessageDto> buildTicketMessages(Dispute dispute) {
+    if (dispute.getTicket() == null) return null;
+    return supportMessageRepository.findByTicketOrderByCreatedAtAsc(dispute.getTicket()).stream()
+        .map(
+            msg ->
+                SupportMessageDto.builder()
+                    .id(msg.getId())
+                    .senderUserId(msg.getSenderUser().getId())
+                    .senderRole(msg.getSenderRole().name())
+                    .message(msg.getMessage())
+                    .attachmentUrl(msg.getAttachmentUrl())
+                    .createdAt(msg.getCreatedAt())
+                    .build())
+        .toList();
   }
 
   private DisputeResponse.PartyRef partyRef(User user) {

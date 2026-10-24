@@ -187,8 +187,92 @@ class StaffTwoFactorServiceTest {
     service.resendChallenge("c-1");
 
     assertEquals("HASH2", challenge.getCodeHash());
+    assertEquals(1, challenge.getResendCount());
     verify(emailService, times(1))
         .sendStaffTwoFactorCode(eq(user.getEmail()), anyString(), any(MailLocale.class));
+  }
+
+  @Test
+  void resendChallenge_setsNewExpiry_cappedAtAbsoluteDeadline() {
+    User user = staffUser(Role.ADMIN);
+    StaffTwoFactorChallenge challenge = pendingChallenge(user);
+    // Created 25 minutes ago → only 5 minutes until the 30-min absolute deadline.
+    challenge.setCreatedAt(LocalDateTime.now().minusMinutes(25));
+    challenge.setLastSentAt(
+        LocalDateTime.now().minusSeconds(StaffTwoFactorService.RESEND_COOLDOWN_SECONDS + 5));
+    when(challengeRepository.findById("c-1")).thenReturn(Optional.of(challenge));
+    when(passwordEncoder.encode(anyString())).thenReturn("HASH3");
+
+    service.resendChallenge("c-1");
+
+    // New expiry should not exceed createdAt + 30min.
+    LocalDateTime absoluteDeadline =
+        challenge.getCreatedAt().plusMinutes(StaffTwoFactorService.CHALLENGE_MAX_LIFETIME_MINUTES);
+    assertTrue(
+        !challenge.getExpiresAt().isAfter(absoluteDeadline),
+        "Expiry must not exceed absolute deadline");
+  }
+
+  @Test
+  void resendChallenge_rejectsAfterMaxResends() {
+    User user = staffUser(Role.ADMIN);
+    StaffTwoFactorChallenge challenge = pendingChallenge(user);
+    challenge.setResendCount(StaffTwoFactorService.MAX_RESENDS);
+    challenge.setLastSentAt(
+        LocalDateTime.now().minusSeconds(StaffTwoFactorService.RESEND_COOLDOWN_SECONDS + 5));
+    when(challengeRepository.findById("c-1")).thenReturn(Optional.of(challenge));
+
+    TwoFactorChallengeException ex =
+        assertThrows(TwoFactorChallengeException.class, () -> service.resendChallenge("c-1"));
+    assertEquals("TWO_FACTOR_EXPIRED", ex.getCode());
+    assertEquals(StaffTwoFactorChallengeStatus.EXPIRED, challenge.getStatus());
+  }
+
+  @Test
+  void resendChallenge_rejectsWhenAbsoluteLifetimeExceeded() {
+    User user = staffUser(Role.ADMIN);
+    StaffTwoFactorChallenge challenge = pendingChallenge(user);
+    // Created 31 minutes ago.
+    challenge.setCreatedAt(
+        LocalDateTime.now().minusMinutes(StaffTwoFactorService.CHALLENGE_MAX_LIFETIME_MINUTES + 1));
+    challenge.setLastSentAt(
+        LocalDateTime.now().minusSeconds(StaffTwoFactorService.RESEND_COOLDOWN_SECONDS + 5));
+    when(challengeRepository.findById("c-1")).thenReturn(Optional.of(challenge));
+
+    TwoFactorChallengeException ex =
+        assertThrows(TwoFactorChallengeException.class, () -> service.resendChallenge("c-1"));
+    assertEquals("TWO_FACTOR_EXPIRED", ex.getCode());
+    assertEquals(StaffTwoFactorChallengeStatus.EXPIRED, challenge.getStatus());
+  }
+
+  @Test
+  void resendChallenge_wrapsSmtpFailureAs503() {
+    User user = staffUser(Role.ADMIN);
+    StaffTwoFactorChallenge challenge = pendingChallenge(user);
+    challenge.setLastSentAt(
+        LocalDateTime.now().minusSeconds(StaffTwoFactorService.RESEND_COOLDOWN_SECONDS + 5));
+    when(challengeRepository.findById("c-1")).thenReturn(Optional.of(challenge));
+    when(passwordEncoder.encode(anyString())).thenReturn("HASH_NEW");
+    org.mockito.Mockito.doThrow(new RuntimeException("SMTP connection refused"))
+        .when(emailService)
+        .sendStaffTwoFactorCode(anyString(), anyString(), any(MailLocale.class));
+
+    TwoFactorChallengeException ex =
+        assertThrows(TwoFactorChallengeException.class, () -> service.resendChallenge("c-1"));
+    assertEquals("EMAIL_SEND_FAILED", ex.getCode());
+  }
+
+  @Test
+  void verifyChallenge_returnsExpiredCode_whenChallengeExpired() {
+    User user = staffUser(Role.ADMIN);
+    StaffTwoFactorChallenge challenge = pendingChallenge(user);
+    challenge.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    when(challengeRepository.findById("c-1")).thenReturn(Optional.of(challenge));
+
+    TwoFactorChallengeException ex =
+        assertThrows(
+            TwoFactorChallengeException.class, () -> service.verifyChallenge("c-1", "123456"));
+    assertEquals("TWO_FACTOR_EXPIRED", ex.getCode());
   }
 
   @Test

@@ -31,6 +31,8 @@ public class StaffTwoFactorService {
   public static final int CODE_TTL_MINUTES = 10;
   public static final int RESEND_COOLDOWN_SECONDS = 30;
   public static final int MAX_ATTEMPTS = 5;
+  public static final int CHALLENGE_MAX_LIFETIME_MINUTES = 30;
+  public static final int MAX_RESENDS = 5;
 
   private final StaffTwoFactorChallengeRepository challengeRepository;
   private final PasswordEncoder passwordEncoder;
@@ -160,7 +162,8 @@ public class StaffTwoFactorService {
     if (challenge.isExpired()) {
       challenge.setStatus(StaffTwoFactorChallengeStatus.EXPIRED);
       challengeRepository.save(challenge);
-      throw new TwoFactorChallengeException("Invalid or expired verification code");
+      throw new TwoFactorChallengeException(
+          "TWO_FACTOR_EXPIRED", "Challenge expired. Please sign in again.");
     }
 
     if (challenge.getAttempts() >= MAX_ATTEMPTS
@@ -187,8 +190,9 @@ public class StaffTwoFactorService {
   }
 
   /**
-   * Rotate the code for an existing challenge. Cooldown protected to prevent email flooding.
-   * Returns the (possibly mutated) challenge.
+   * Rotate the code for an existing challenge. Each resend issues a new code with a fresh 10-minute
+   * expiry, but the overall challenge lifetime (from createdAt) must not exceed 30 minutes and the
+   * total number of resends must not exceed 5.
    */
   public StaffTwoFactorChallenge resendChallenge(String challengeId) {
     record ResendPayload(
@@ -203,15 +207,37 @@ public class StaffTwoFactorService {
                       .orElseThrow(
                           () ->
                               new TwoFactorChallengeException(
-                                  "Invalid or expired verification code"));
+                                  "TWO_FACTOR_EXPIRED",
+                                  "Challenge expired. Please sign in again."));
 
               if (challenge.getStatus() != StaffTwoFactorChallengeStatus.PENDING
                   || challenge.isUsed()) {
                 throw new TwoFactorChallengeException(
-                    "Challenge cannot be resent. Please sign in again.");
+                    "TWO_FACTOR_EXPIRED", "Challenge expired. Please sign in again.");
               }
 
               LocalDateTime now = LocalDateTime.now();
+
+              // Overall challenge lifetime check (30 minutes from creation).
+              LocalDateTime absoluteDeadline =
+                  challenge.getCreatedAt().plusMinutes(CHALLENGE_MAX_LIFETIME_MINUTES);
+              if (now.isAfter(absoluteDeadline)) {
+                challenge.setStatus(StaffTwoFactorChallengeStatus.EXPIRED);
+                challengeRepository.save(challenge);
+                throw new TwoFactorChallengeException(
+                    "TWO_FACTOR_EXPIRED", "Challenge expired. Please sign in again.");
+              }
+
+              // Max resends check.
+              int currentResends =
+                  challenge.getResendCount() != null ? challenge.getResendCount() : 0;
+              if (currentResends >= MAX_RESENDS) {
+                challenge.setStatus(StaffTwoFactorChallengeStatus.EXPIRED);
+                challengeRepository.save(challenge);
+                throw new TwoFactorChallengeException(
+                    "TWO_FACTOR_EXPIRED", "Too many resend attempts. Please sign in again.");
+              }
+
               LocalDateTime nextAllowed =
                   challenge.getLastSentAt().plusSeconds(RESEND_COOLDOWN_SECONDS);
               if (now.isBefore(nextAllowed)) {
@@ -223,14 +249,19 @@ public class StaffTwoFactorService {
                 challenge.setStatus(StaffTwoFactorChallengeStatus.EXPIRED);
                 challengeRepository.save(challenge);
                 throw new TwoFactorChallengeException(
-                    "Challenge cannot be resent. Please sign in again.");
+                    "TWO_FACTOR_EXPIRED", "Challenge expired. Please sign in again.");
               }
 
               String code = generate6DigitCode();
               challenge.setCodeHash(passwordEncoder.encode(code));
               challenge.setLastSentAt(now);
-              // Keep the original expires_at so attackers cannot extend the window
-              // indefinitely by spamming resends.
+              challenge.setResendCount(currentResends + 1);
+              // New code gets a fresh 10-minute window, capped at absolute deadline.
+              LocalDateTime newExpiry = now.plusMinutes(CODE_TTL_MINUTES);
+              if (newExpiry.isAfter(absoluteDeadline)) {
+                newExpiry = absoluteDeadline;
+              }
+              challenge.setExpiresAt(newExpiry);
               challenge = challengeRepository.save(challenge);
 
               User user = challenge.getUser();
@@ -241,8 +272,14 @@ public class StaffTwoFactorService {
                   user != null ? user.getLocale() : null);
             });
 
-    emailService.sendStaffTwoFactorCode(
-        payload.email(), payload.code(), MailLocale.from(payload.locale()));
+    try {
+      emailService.sendStaffTwoFactorCode(
+          payload.email(), payload.code(), MailLocale.from(payload.locale()));
+    } catch (Exception e) {
+      log.error("SMTP delivery failed during 2FA resend: {}", e.getMessage());
+      throw new TwoFactorChallengeException(
+          "EMAIL_SEND_FAILED", "Failed to send verification email. Please try again.");
+    }
 
     return payload.challenge();
   }

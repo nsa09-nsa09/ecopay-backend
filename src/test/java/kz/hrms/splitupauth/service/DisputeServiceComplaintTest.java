@@ -37,11 +37,13 @@ import kz.hrms.splitupauth.payment.gateway.PaymentGateway;
 import kz.hrms.splitupauth.payment.gateway.PaymentGatewayRegistry;
 import kz.hrms.splitupauth.repository.AdminActionLogRepository;
 import kz.hrms.splitupauth.repository.DisputeRepository;
+import kz.hrms.splitupauth.repository.DisputeStatementRepository;
 import kz.hrms.splitupauth.repository.PaymentTransactionRepository;
 import kz.hrms.splitupauth.repository.RefundTransactionRepository;
 import kz.hrms.splitupauth.repository.RoomEventLogRepository;
 import kz.hrms.splitupauth.repository.RoomMemberRepository;
 import kz.hrms.splitupauth.repository.RoomRepository;
+import kz.hrms.splitupauth.repository.SupportMessageRepository;
 import kz.hrms.splitupauth.repository.SupportTicketRepository;
 import kz.hrms.splitupauth.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,6 +74,8 @@ class DisputeServiceComplaintTest {
   @Mock private ReputationService reputationService;
   @Mock private NotificationService notificationService;
   @Mock private PayoutBlockService payoutBlockService;
+  @Mock private DisputeStatementRepository disputeStatementRepository;
+  @Mock private SupportMessageRepository supportMessageRepository;
   @Mock private PaymentGatewayRegistry gatewayRegistry;
   @Mock private PaymentGateway paymentGateway;
 
@@ -93,7 +97,9 @@ class DisputeServiceComplaintTest {
             refundService,
             reputationService,
             notificationService,
-            payoutBlockService);
+            payoutBlockService,
+            disputeStatementRepository,
+            supportMessageRepository);
   }
 
   @Test

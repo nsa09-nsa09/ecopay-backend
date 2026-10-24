@@ -42,6 +42,9 @@ public class DisputeResponse {
   private BigDecimal refundableAmountKzt;
   private Boolean refundTriggered;
 
+  private java.util.List<kz.hrms.splitupauth.dto.SupportMessageDto> ticketMessages;
+  private java.util.List<kz.hrms.splitupauth.dto.DisputeStatementDto> statements;
+
   @Data
   @Builder
   @NoArgsConstructor

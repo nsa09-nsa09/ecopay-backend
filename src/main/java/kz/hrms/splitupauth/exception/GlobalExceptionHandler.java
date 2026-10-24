@@ -178,6 +178,17 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(TwoFactorChallengeException.class)
   public ResponseEntity<ErrorResponse> handleTwoFactorChallenge(TwoFactorChallengeException ex) {
+    if ("TWO_FACTOR_EXPIRED".equals(ex.getCode())) {
+      ErrorResponse error = new ErrorResponse(HttpStatus.GONE.value(), ex.getMessage());
+      error.setCode("TWO_FACTOR_EXPIRED");
+      return ResponseEntity.status(HttpStatus.GONE).body(error);
+    }
+    if ("EMAIL_SEND_FAILED".equals(ex.getCode())) {
+      ErrorResponse error =
+          new ErrorResponse(HttpStatus.SERVICE_UNAVAILABLE.value(), ex.getMessage());
+      error.setCode("EMAIL_SEND_FAILED");
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+    }
     ErrorResponse error = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
     error.setCode("TWO_FACTOR_REQUIRED");
     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);

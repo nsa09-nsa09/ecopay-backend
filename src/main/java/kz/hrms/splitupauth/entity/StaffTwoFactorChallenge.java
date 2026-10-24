@@ -46,6 +46,10 @@ public class StaffTwoFactorChallenge {
   @Column(name = "used_at")
   private LocalDateTime usedAt;
 
+  @Column(name = "resend_count")
+  @Builder.Default
+  private Integer resendCount = 0;
+
   @Column(name = "last_sent_at", nullable = false)
   private LocalDateTime lastSentAt;
 
@@ -65,6 +69,9 @@ public class StaffTwoFactorChallenge {
     }
     if (attempts == null) {
       attempts = 0;
+    }
+    if (resendCount == null) {
+      resendCount = 0;
     }
   }
 

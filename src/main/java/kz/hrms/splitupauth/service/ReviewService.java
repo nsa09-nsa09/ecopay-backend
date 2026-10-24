@@ -1,6 +1,5 @@
 package kz.hrms.splitupauth.service;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -10,7 +9,6 @@ import kz.hrms.splitupauth.dto.ReputationDto;
 import kz.hrms.splitupauth.dto.ReviewDto;
 import kz.hrms.splitupauth.dto.ReviewEligibilityDto;
 import kz.hrms.splitupauth.entity.PaymentTransactionStatus;
-import kz.hrms.splitupauth.entity.PeriodType;
 import kz.hrms.splitupauth.entity.Review;
 import kz.hrms.splitupauth.entity.Room;
 import kz.hrms.splitupauth.entity.RoomMember;
@@ -163,33 +161,44 @@ public class ReviewService {
   }
 
   /**
-   * The review window opens as soon as the room is COMPLETED, OR the non-owner participant has
-   * ended their participation, OR their first paid period has fully elapsed. Pulls the activatedAt
-   * from the non-owner participant to anchor the period math.
+   * The review window opens when: - the room is COMPLETED, OR - a non-owner participant has
+   * activatedAt set (access confirmed), OR - a non-owner participant has ended their participation
+   * after payment, OR - between two non-owner participants of the same room, if both have
+   * activatedAt.
+   *
+   * <p>No month wait required.
    */
   private boolean reviewWindowOpen(Room room, User author, User recipient) {
     if (room.getStatus() == RoomStatus.COMPLETED) return true;
 
-    // Use whichever side is NOT the owner to anchor the period — that participant's billing is
-    // what defines "the period closed".
-    User nonOwner = author;
-    if (room.getOwner() != null && room.getOwner().getId().equals(author.getId())) {
-      nonOwner = recipient;
+    boolean authorIsOwner =
+        room.getOwner() != null && room.getOwner().getId().equals(author.getId());
+    boolean recipientIsOwner =
+        room.getOwner() != null && room.getOwner().getId().equals(recipient.getId());
+
+    // Between two non-owner participants: both must have activatedAt.
+    if (!authorIsOwner && !recipientIsOwner) {
+      RoomMember authorMember =
+          roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, author).orElse(null);
+      RoomMember recipientMember =
+          roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, recipient).orElse(null);
+      if (authorMember == null || recipientMember == null) return false;
+      return authorMember.getActivatedAt() != null && recipientMember.getActivatedAt() != null;
     }
+
+    // One side is the owner, the other is a member.
+    User nonOwner = authorIsOwner ? recipient : author;
     if (room.getOwner() != null && room.getOwner().getId().equals(nonOwner.getId())) {
-      // Both are the owner (never happens — author != recipient was asserted earlier).
       return false;
     }
     RoomMember member =
         roomMemberRepository.findByRoomAndUserAndDeletedAtIsNull(room, nonOwner).orElse(null);
     if (member == null) return false;
+
+    if (member.getActivatedAt() != null) return true;
     if (member.getEndedAt() != null) return true;
 
-    LocalDateTime anchor = member.getActivatedAt();
-    if (anchor == null) return false;
-    LocalDateTime deadline =
-        room.getPeriodType() == PeriodType.YEARLY ? anchor.plusYears(1) : anchor.plusMonths(1);
-    return LocalDateTime.now().isAfter(deadline);
+    return false;
   }
 
   @Transactional(readOnly = true)
